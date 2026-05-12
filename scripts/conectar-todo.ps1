@@ -22,6 +22,11 @@ $git = Get-GitExe
 Write-Host "Proyecto: $root" -ForegroundColor Cyan
 Write-Host "Git: $git" -ForegroundColor Cyan
 
+if (-not (& $git config user.email 2>$null)) {
+    & $git config user.email "gilsonarevalo.leo@gmail.com"
+    & $git config user.name "Gilson Arevalo"
+}
+
 if (-not (Test-Path (Join-Path $root "package.json"))) {
     throw "No se encontro package.json en $root"
 }
