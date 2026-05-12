@@ -1,0 +1,16 @@
+INSTRUCCIÓN DE SEGURIDAD MÁXIMA: Protocolo de Blindaje "Arca de SISTEMI"
+​Agent, este es un comando crítico de privatización. Debes proteger la propiedad intelectual de Gilson y la privacidad energética de los usuarios. Implementa las siguientes capas de seguridad:
+​1. Encriptación de Identidad Energética (Vault)
+​Modifica el esquema de Firestore para que los resultados del "Espejo de Energía" y las "Cápsulas de Maestría" se guarden en una subcolección protegida por reglas de seguridad que impidan la lectura de cualquier UID que no sea el propietario exacto.
+​Implementa una función de "Ofuscación de Datos": los valores de "Ego", "Resistencia" y "Finanzas" deben guardarse como códigos hexadecimales, no como números simples.
+​2. Blindaje del Algoritmo de Transmutación
+​Encapsula la lógica de "Sugerencias de Mejora" (como el acceso a 'Esperanza') en un módulo privado.
+​Crea un sistema de "Logs de Soberanía" que registre cualquier intento de acceso no autorizado a la base de datos de conciencia.
+​3. Interfaz de Acceso Privado
+​Añade un "Modo Sigilo" (Stealth Mode). Si el usuario lo activa, los puntajes y el texto de las cápsulas se vuelven borrosos (CSS blur) hasta que se realice una verificación de identidad exitosa.
+​Elimina cualquier rastro de datos sensibles en el LocalStorage. Todo debe vivir en el estado cifrado de la aplicación.
+​4. Marca de Agua Digital y Copyright
+​Inserta comentarios de metadatos en el encabezado de cada archivo principal que declaren: "Copyright © 2025 SISTEMI - Arquitectura de Conciencia Gilson. Todos los derechos reservados. El uso de este algoritmo de vibración está protegido por protocolos de soberanía."
+​5. El "Kill Switch" Lógico
+​Si se detecta un error de autenticación repetitivo, bloquea la visualización del "Espejo de Energía" y muestra una interfaz genérica de "Mantenimiento de Sistema" para proteger la lógica de los escaneos.
+​"Agent, trata este código como el activo más valioso de la plataforma. La privacidad del alma del usuario es nuestra prioridad absoluta."

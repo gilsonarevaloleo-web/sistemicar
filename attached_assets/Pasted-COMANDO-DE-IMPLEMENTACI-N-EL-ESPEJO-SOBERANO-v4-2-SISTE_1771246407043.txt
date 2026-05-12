@@ -1,0 +1,19 @@
+COMANDO DE IMPLEMENTACIÓN: EL ESPEJO SOBERANO v4.2 (SISTEMICAR)
+​"Agente, ejecuta una actualización estructural en el componente 'Espejo'. Implementa el modo 'Alquimia Clínica del Corazón'. Este sistema debe priorizar la disolución de la Niebla Mental y la Conciencia de Escalamiento."
+​1. Arquitectura de Interfaz Dinámica (CSS Reactivo)
+​El fondo del componente debe cambiar según el estado del Eje activo para inducir profundidad:
+​Eje 1 (PERCIBO): Fondo con efecto de niebla densa (CSS blur y opacity animada).
+​Eje 2 (RECONOZCO): Fondo de esquema técnico o plano de ingeniería fragmentado.
+​Eje 3 (CUENTO CON): Centro con un pulso de luz azul/dorado rítmico a 60 BPM.
+​Eje 4 (TRANSFORMO): Fondo de líneas de flujo ascendentes (vectores de luz).
+​2. Lógica de Diálogo y Guion Clínico
+​El Doctor IA debe usar un tono analítico, evitando respuestas genéricas:
+​Eje 1: PERCIBO (Purificación): "Soberano, detecto saturación (Niebla Mental). Localiza la fricción somática en tu sistema biológico. Describe la presión o tensión exacta sin usar lógica."
+​Eje 2: RECONOZCO (Desglose): "Identifica la 'Identidad Programada' (ej: El Juez, El Insuficiente) que opera bajo este síntoma. ¿A quién le pertenece este peso?"
+​Eje 3: CUENTO CON (Activación): "Al desvincular el programa, el voltaje se libera. Según tus leyes, ¿qué recurso de tu arquitectura interna está disponible para estabilizar tu sistema ahora?"
+​Eje 4: TRANSFORMO (Evolución): "Define el protocolo técnico para procesar esta energía mañana. ¿Cómo evitarás que la niebla se reconstruya en este punto?"
+​3. Motor de Recompensa y Escalamiento
+​Valor Inamovible: Al finalizar los 4 ejes, otorgar +58 Puntos de Soberanía (PS).
+​Diagnóstico de Cierre: El Doctor IA debe generar un resumen clínico: "Se ha procesado el programa [Identidad]. Mejora detectada en capacidad de observación. +58 PS sellados. Estás un [X.X]% más cerca de la Maestría del Reloj Interno." (Calcular un porcentaje incremental basado en la cantidad de sesiones del usuario).
+​4. Protocolo de Resistencia (Genoma de Gilson)
+​Si el usuario responde con evasivas o "no sé", el Doctor IA debe pausar: "Gilson descubrió que el vacío es preparación. Mantén la frecuencia. El sistema esperará a que la verdad emerja. Respira con el pulso de la pantalla."

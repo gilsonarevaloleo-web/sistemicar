@@ -1,0 +1,175 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, collection, addDoc, query, onSnapshot, 
+  serverTimestamp, doc, setDoc, updateDoc, orderBy, limit 
+} from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { 
+  Brain, Sparkles, Zap, Shield, Target, 
+  History, Info, ChevronRight, Lock, Trophy, 
+  Plus, X, Flame, Eye, Compass
+} from 'lucide-react';
+
+// --- INFRAESTRUCTURA BLINDADA ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'sistemicar-v2-5';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('radar'); // radar, vehiculos, historia, manifiesto
+  const [userData, setUserData] = useState({ rango: 'Iniciado', esperanza: 50, consistencia: 0 });
+  const [ideas, setIdeas] = useState([]);
+  const [vehiculos, setVehiculos] = useState([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [patrones, setPatrones] = useState([]);
+  const [nuevoChispazo, setNuevoChispazo] = useState('');
+
+  // 1. GESTIÓN DE ACCESO (FUSIBLE DE SEGURIDAD)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) { console.error("Error Silencioso Auth"); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsubscribe();
+  }, []);
+
+  // 2. SINCRONIZACIÓN DE DATOS (LECTURA ÚNICA)
+  useEffect(() => {
+    if (!user) return;
+    
+    // Perfil y Esperanza
+    const userDoc = doc(db, 'artifacts', appId, 'users', user.uid);
+    const unsubUser = onSnapshot(userDoc, (d) => {
+      if (d.exists()) setUserData(d.data());
+      else setDoc(userDoc, { rango: 'Iniciado', esperanza: 50, consistencia: 0, updatedAt: serverTimestamp() });
+    });
+
+    // Chispazos (Radar)
+    const qC = query(collection(db, 'artifacts', appId, 'users', user.uid, 'chispazos'), limit(10));
+    const unsubC = onSnapshot(qC, (s) => setIdeas(s.docs.map(d => ({id: d.id, ...d.data()}))));
+
+    // Vehículos (Planificación)
+    const qV = query(collection(db, 'artifacts', appId, 'users', user.uid, 'misiones'), limit(10));
+    const unsubV = onSnapshot(qV, (s) => setVehiculos(s.docs.map(d => ({id: d.id, ...d.data()}))));
+
+    return () => { unsubUser(); unsubC(); unsubV(); };
+  }, [user]);
+
+  // 3. MOTOR DE IA (MANUAL Y CONTROLADO)
+  const ejecutarAnalisisIA = async () => {
+    if (isAnalyzing || ideas.length < 3) return;
+    setIsAnalyzing(true);
+    
+    const prompt = `Analiza estos deseos y chispazos: ${ideas.map(i => i.texto).join(' | ')}. Identifica 3 patrones. Devuelve SOLO JSON: {"patrones":[{"titulo":"string","explicacion":"string","energia":number}]}`;
+
+    try {
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      });
+      const res = await resp.json();
+      const content = JSON.parse(res.candidates[0].content.parts[0].text);
+      setPatrones(content.patrones);
+    } catch (e) { console.error("IA Ocupada"); }
+    finally { setIsAnalyzing(false); }
+  };
+
+  // 4. ACCIONES DE SOBERANÍA
+  const guardarChispazo = async () => {
+    if (!nuevoChispazo.trim() || !user) return;
+    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'chispazos'), {
+      texto: nuevoChispazo,
+      createdAt: serverTimestamp()
+    });
+    setNuevoChispazo('');
+  };
+
+  // --- VISTAS DE PODER ---
+  const VistaRadar = () => (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <header className="text-center py-4">
+        <h1 className="text-3xl font-serif italic text-white tracking-tighter">Radar</h1>
+        <div className="flex justify-center items-center gap-2 mt-2">
+          <div className="h-[1px] w-8 bg-blue-900"></div>
+          <span className="text-[7px] font-black uppercase tracking-[0.4em] text-blue-500">Subconsciente</span>
+          <div className="h-[1px] w-8 bg-blue-900"></div>
+        </div>
+      </header>
+
+      <div className="glass p-6 rounded-[2.5rem] border border-white/5 space-y-4">
+        <textarea 
+          className="w-full bg-transparent border-none outline-none text-white font-serif italic placeholder:text-zinc-800"
+          placeholder="¿Qué susurra tu mente hoy?"
+          value={nuevoChispazo}
+          onChange={(e) => setNuevoChispazo(e.target.value)}
+        />
+        <button onClick={guardarChispazo} className="w-full py-3 bg-blue-600/20 border border-blue-500/30 rounded-full text-[8px] font-black uppercase text-blue-100 tracking-widest hover:bg-blue-600 transition-all">
+          Capturar Insight
+        </button>
+      </div>
+
+      <button 
+        onClick={ejecutarAnalisisIA}
+        disabled={isAnalyzing || ideas.length < 3}
+        className="w-full py-4 glass border border-blue-400/20 rounded-2xl flex items-center justify-center gap-3 group"
+      >
+        {isAnalyzing ? <div className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full"/> : <Brain size={14} className="text-blue-400" />}
+        <span className="text-[9px] font-black uppercase text-blue-200">Analizar Patrones Invisibles</span>
+      </button>
+
+      <div className="space-y-4">
+        {patrones.map((p, i) => (
+          <div key={i} className="p-5 glass rounded-[2rem] border-blue-500/10 animate-in slide-in-from-bottom-2">
+            <h4 className="text-[9px] font-black uppercase text-blue-400 mb-1">{p.titulo}</h4>
+            <p className="text-[11px] text-zinc-400 italic">"{p.explicacion}"</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#020202] text-zinc-400 p-6 pb-32">
+      <main className="max-w-md mx-auto">
+        {activeTab === 'radar' && <VistaRadar />}
+        {activeTab === 'vehiculos' && <div className="py-20 text-center italic opacity-20">Monitor de Vehículos...</div>}
+        {activeTab === 'manifiesto' && (
+          <div className="space-y-6 animate-in fade-in">
+            <h2 className="text-2xl font-serif italic text-white text-center">Manifiesto de Soberanía</h2>
+            <p className="text-xs text-zinc-500 leading-relaxed italic">"Sistemicar no es una app, es tu infraestructura de poder mental."</p>
+          </div>
+        )}
+      </main>
+
+      {/* Navegación Blindada */}
+      <nav className="fixed bottom-6 left-6 right-6 flex justify-center">
+        <div className="glass px-6 py-3 rounded-full border border-white/10 flex gap-8 shadow-2xl">
+          <button onClick={() => setActiveTab('radar')} className={activeTab === 'radar' ? 'text-blue-400' : 'text-zinc-600'}><Target size={20}/></button>
+          <button onClick={() => setActiveTab('vehiculos')} className={activeTab === 'vehiculos' ? 'text-blue-400' : 'text-zinc-600'}><Compass size={20}/></button>
+          <button onClick={() => setActiveTab('manifiesto')} className={activeTab === 'manifiesto' ? 'text-blue-400' : 'text-zinc-600'}><Shield size={20}/></button>
+        </div>
+      </nav>
+
+      <style>{`
+        .glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(12px); }
+        body { background-color: #020202; }
+      `}</style>
+    </div>
+  );
+}
+

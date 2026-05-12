@@ -1,0 +1,109 @@
+quiero vender la suscripción de mi api. para eso necesito vendedores que ofrescan mi api
+
+
+
++11
+Vender suscripciones de una API (SaaS) requiere un enfoque de ventas B2B (empresa a empresa) enfocado en el valor técnico y los beneficios operativos. Para conseguir vendedores, necesitas estructurar una oferta atractiva, principalmente basada en comisiones.
+Aquí tienes una guía estratégica y las plataformas donde encontrar vendedores:
+1. Dónde encontrar vendedores para tu API
+Para vender software, buscas perfiles de "Account Executives" o "Freelance Sales Representatives" con experiencia en tecnología (SaaS).
+Upwork / Freelancer / Workana: Ideal para encontrar freelancers de ventas técnicas o B2B que pueden trabajar por comisión o por proyecto.
+LinkedIn: Publica búsquedas de "Freelance API Sales", "Business Development Representative" o busca perfiles con experiencia en ventas de software.
+RepHunter: Plataforma especializada en conectar empresas con representantes de ventas independientes, ideal para encontrar agentes de ventas comisionistas.
+Comunidades de Desarrolladores: Hacker News o foros especializados (donde los desarrolladores ya saben el valor de una API). 
+RepHunter
+RepHunter
+ +4
+2. Estructura de incentivos (Cómo motivarlos)
+Los vendedores de software buscan un buen equilibrio entre sueldo base y comisiones, o una comisión alta si es 100% freelance. 
+Modelo de Comisión Pura (Straight Commission): Ofrece un 20%-40% del primer año de suscripción o una comisión recurrente menor (ej. 10% mensual) mientras el cliente siga pagando.
+Modelo de Comisiones Escalonadas (Tiered): Aumenta el porcentaje a medida que el vendedor logra hitos (ej. 15% hasta 10 ventas, 25% si pasan de 10 ventas).
+Gross-margin commission: Paga una comisión basada en el beneficio neto generado por el cliente, no solo en la venta total. 
+Xactly
+Xactly
+ +1
+3. Qué necesitas preparado para los vendedores
+Un vendedor necesita herramientas para confiar en tu producto y venderlo con éxito:
+Documentación clara (Developer Portal): Es fundamental tener documentación técnica sólida.
+API Key de Prueba: Permite a tus vendedores probar la API y mostrar demostraciones en vivo.
+Propuesta de Valor Clara: Define qué problema resuelve tu API y por qué es mejor que la competencia.
+Material de Marketing (Sales Deck): Un resumen con los beneficios, casos de uso y precios. 
+YouTube
+YouTube
+ +3
+4. Plataformas de soporte para la venta
+Para automatizar la gestión de vendedores, utiliza plataformas que permitan gestionar las suscripciones y comisiones: 
+Stripe Billing/Subscripciones: Para gestionar el cobro recurrente.
+PartnerStack: (Alternativa) Plataforma para gestionar redes de revendedores o afiliados de software. 
+Consejo clave: Busca vendedores que ya tengan cartera de clientes en sectores que necesiten tu API (ej. e-commerce, finanzas, analítica). 
+Impartner
+Impartner
+4 prácticas para monetizar tus APIs - APIAddicts
+23 feb 2026 — 1. Planifica la estrategia de monetización de tus APIs. La planificación de una estrategia es un factor importante y esencial para poder monetizar nuestra API. ...
+
+APIAddicts
+
+Monetización de API - WSO2
+Traducido — ¿Qué necesito para empezar? Contar con las herramientas adecuadas para gestionar tu estrategia de monetización es tan importante como el modelo que elijas. Verá...
+
+WSO2
+
+
+1:00
+Cómo Monetizar una API en 2025: ¡Estrategias que Funcionan!
+
+YouTube·Ingeniero Binario
+
+5m
+How I Find Paying Clients For My Code
+
+
+YouTube·Andy Tries Coding
+Find Software Sales Reps - RepHunter
+Contact Sales Reps with RepHunter: * 100% Guaranteed to Work. * Search for reps before you pay to subscribe - no limit. * Fast track searches with "Find My Matc...
+
+RepHunter
+
+Sales Commission Structure Template & Best Practices - Xactly
+9 mar 2026 — Flat Rate Commission. This is the simplest choice. One commission rate applies to all revenue. Companies often use it early on or when prices are standard. Howe...
+
+Xactly
+
+Create A Sales Commission Plan Structure 2024 (With Examples)
+31 ene 2024 — 8 types of sales commission structures and templates * Straight commission. 100% commission, also known as straight commission, is a sales compensation structur...
+
+Freshworks
+How to hire a great API developer | Mulesoft
+Now that you know how to qualify candidates, the only thing you need to do is find them. There are a number of proven on- and offline approaches to finding cand...
+
+Mulesoft
+
+Best Freelance Sales Representatives for Hire (Apr 2026)
+Use the filters on Upwork to narrow the candidate pool by experience, rate, and location. Have Uma conduct instant video interviews and provide shortlists with ...
+
+Upwork
+
+Las 7 mejores plataformas para encontrar trabajos freelance en ...
+10 mar 2026 — * Freelancer.es. Web de Freelancer > ... * Workana. Web de Workana > ... * Malt. * Domestika. Web de Domestika > ... * Upwork. Web de Upwork > ... * Fiverr. Web...
+
+Xolo
+
+How to Find Resellers for Your Products: 8 Top Strategies - Impartner
+19 oct 2023 — How to find resellers that are a perfect fit * Define your ideal reseller. ... * Attend industry events. ... * Leverage word of mouth recommendations. ... * Use...
+
+Impartner
+
+A Guide to Sales Commission Structures [2023] - Clari
+11 nov 2022 — This is one of the most commonly used compensation structures. Sales reps love it because it guarantees a base salary, and employers like it. In this structure,
+
+Clari
+
+Best Commission Software with API 2026 - GetApp
+15 abr 2026 — Read more about Prowi. Peimi. 4.8. (5) Commission platform for commercial and HR directors. learn more. Peimi is a commission platform that automates the calcul...
+
+www.getapp.com
+Cómo montar un negocio de suscripciones [Guía de inicio rápido]
+28 mar 2022 — Una plataforma de suscripción debe ofrecerte la posibilidad de realizar fácilmente ventas online, incorporar los métodos de pago que más utilizan tus clientes, ...
+
+MONEI
+La IA puede cometer errores, así que verifica las respuestas

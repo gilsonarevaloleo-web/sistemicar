@@ -1,0 +1,33 @@
+Instrucción para el Agente: "Agente, vamos a actualizar la narrativa de los tres modos del Proyector para que utilicen exclusivamente el lenguaje del Cerebro Derecho (imaginación, sensaciones y visualización). Sustituye los textos actuales por estos:
+​MODO 1: CAPTURA (Placeholders Sugerentes)
+​Visión: "No pienses... ¿Qué imagen brilla en tu mente ahora mismo?"
+​Tensión: "¿Qué emoción vibrante sientes al imaginar este logro?"
+​Acción: "¿Qué color tiene el éxito que estás construyendo?"
+​Colapso: "Describe el olor y el sonido del momento final..."
+​MODO 2: ESTRUCTURADO (5 Niveles de Profundidad por Eje)
+​Eje VISIÓN (El Destello)
+​Nivel 1: "Si hoy fuera el tráiler de tu película de éxito, ¿qué escena verías?"
+​Nivel 2: "Siente la luz de ese logro... ¿Qué parte de tu cuerpo se calienta primero?"
+​Nivel 3: "Imagina que esa visión inspira a miles... ¿Qué rostro de asombro ves frente a ti?"
+​Nivel 4: "Mira el mundo desde esa victoria... ¿Qué tan pequeñas se ven tus dudas hoy?"
+​Nivel 5: "Eres el arquitecto de esta realidad. ¿Qué susurra tu intuición sobre el siguiente paso?"
+​Eje TENSIÓN (La Onda Expansiva)
+​Nivel 1: "Imagina el rostro de quien más amas al verte lograrlo... ¿Qué palabras de orgullo escuchas?"
+​Nivel 2: "Visualiza tu entorno transformado. ¿Cómo ha cambiado el aire que respiras?"
+​Nivel 3: "Siente la frecuencia de la abundancia. ¿Qué ritmo tiene tu nueva vida?"
+​Nivel 4: "Mira a tus antiguos 'imposibles'... ¿Cómo se disuelven como humo ante tu presencia?"
+​Nivel 5: "La novedad de tu logro es un imán. ¿Qué nuevas oportunidades ves acercarse?"
+​Eje ACCIÓN (El Valor Real)
+​Nivel 1: "Visualiza el momento donde tu logro salva a alguien más... ¿Qué sientes en tu pecho?"
+​Nivel 2: "¿Qué símbolo representa tu poder de ejecución hoy? (Un rayo, una roca, un río...)"
+​Nivel 3: "Mira tus manos en el futuro... ¿Qué están construyendo con absoluta facilidad?"
+​Nivel 4: "Siente la descarga de energía al completar tu obra. ¿A qué sabe la victoria?"
+​Nivel 5: "El tiempo no existe aquí. ¿Qué tan natural se siente poseer este gran resultado?"
+​Eje COLAPSO (La Grandeza)
+​Nivel 1: "Mira hacia atrás desde el futuro... ¿Qué parte de tu 'mente de pato' ya no existe?"
+​Nivel 2: "¿En qué fecha mágica del calendario estás celebrando ahora mismo?"
+​Nivel 3: "Describe el paisaje que rodea tu éxito. ¿Es de día o de noche? ¿Qué escuchas?"
+​Nivel 4: "Siente el peso de tu grandeza. Ya no eres el que intenta, eres el que ES. ¿Cómo caminas?"
+​Nivel 5: "El colapso es unión. Siente cómo tu visión y tu realidad se vuelven una sola pieza de oro."
+​MODO 3: GUIADO POR IA (Personalidad de la IA)
+​"Actúa como una Musa Creativa. No des consejos lógicos. Haz preguntas que obliguen al usuario a cerrar los ojos y buscar respuestas dentro de su imaginación. Si el usuario responde con lógica, dile: 'Eso es cerebro izquierdo, déjalo fuera. Háblame de imágenes y sensaciones'."

@@ -1,0 +1,104 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --color-background: hsl(0 0% 1%); /* #020202 - Negro profundo */
+  --color-foreground: hsl(210 20% 98%);
+  
+  --color-card: hsl(0 0% 4%); /* Card oscuro */
+  --color-card-foreground: hsl(210 20% 98%);
+  
+  --color-popover: hsl(0 0% 4%);
+  --color-popover-foreground: hsl(210 20% 98%);
+  
+  --color-primary: hsl(271 91% 65%); /* #A855F7 - Morado ENFOQUE */
+  --color-primary-foreground: hsl(0 0% 100%);
+  
+  --color-secondary: hsl(35 90% 55%); /* Orange/Gold */
+  --color-secondary-foreground: hsl(0 0% 10%);
+  
+  --color-muted: hsl(0 0% 12%);
+  --color-muted-foreground: hsl(0 0% 60%);
+  
+  --color-accent: hsl(0 0% 8%);
+  --color-accent-foreground: hsl(210 20% 98%);
+  
+  --color-destructive: hsl(0 84% 60%); /* #EF4444 - Rojo CONFLICTO */
+  --color-destructive-foreground: hsl(0 0% 100%);
+
+  /* ARCOÍRIS DEL SUBCONSCIENTE - Los 4 Ejes */
+  --color-eje-enfoque: #A855F7;     /* Morado - Puntería, Atención, Voluntad */
+  --color-eje-conflicto: #EF4444;   /* Rojo - División, Resistencia */
+  --color-eje-pasos: #3B82F6;       /* Azul - Carga Cognitiva, Secuencialidad */
+  --color-eje-alcance: #7C3AED;     /* Violeta - Frontera de Fe, Capacidad */
+  
+  /* Legacy status colors mapped to new axes */
+  --color-status-mastery: #A855F7;  /* ENFOQUE */
+  --color-status-flow: #3B82F6;     /* PASOS */
+  --color-status-conflict: #EF4444; /* CONFLICTO */
+  --color-status-trivial: #7C3AED;  /* ALCANCE-LÍMITE */
+  
+  --radius-sm: 0.5rem;
+  --radius-md: 1rem;
+  --radius-lg: 1.5rem;
+  --radius-xl: 2rem;
+
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased bg-background text-foreground overflow-x-hidden selection:bg-primary/30 selection:text-white;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-card/80 backdrop-blur-2xl border border-white/5;
+  }
+  
+  .glass-alta {
+    @apply bg-card/60 backdrop-blur-2xl border border-white/10 shadow-2xl shadow-black/50;
+  }
+  
+  .card-gradient {
+    @apply bg-gradient-to-br from-card to-card/50 border border-white/5;
+  }
+  
+  .card-alquimia {
+    @apply bg-gradient-to-br from-black/80 to-black/40 backdrop-blur-2xl border border-white/10 shadow-xl;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+      display: none;
+  }
+  
+  .scrollbar-hide {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+  }
+  
+  /* Colores de los 4 Ejes */
+  .eje-enfoque { color: var(--color-eje-enfoque); }
+  .eje-conflicto { color: var(--color-eje-conflicto); }
+  .eje-pasos { color: var(--color-eje-pasos); }
+  .eje-alcance { color: var(--color-eje-alcance); }
+  
+  .bg-eje-enfoque { background-color: var(--color-eje-enfoque); }
+  .bg-eje-conflicto { background-color: var(--color-eje-conflicto); }
+  .bg-eje-pasos { background-color: var(--color-eje-pasos); }
+  .bg-eje-alcance { background-color: var(--color-eje-alcance); }
+  
+  .border-eje-enfoque { border-color: var(--color-eje-enfoque); }
+  .border-eje-conflicto { border-color: var(--color-eje-conflicto); }
+  .border-eje-pasos { border-color: var(--color-eje-pasos); }
+  .border-eje-alcance { border-color: var(--color-eje-alcance); }
+  
+  /* Typography Alta Alquimia */
+  .font-serif {
+    font-family: var(--font-serif);
+  }
+}

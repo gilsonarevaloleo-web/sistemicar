@@ -1,0 +1,86 @@
+PROMPT FASE 2: PARTE B (LA FLOTA Y MOTOR DE GUERRERO)
+"Agente, activa la Flota de Vehículos v5.0 sobre la base de la Fase A. Sigue estas reglas de interfaz y matemática:
+1. Interfaz de Selección (La Flota):
+Sustituye 'Vehículo Express' por un selector de 4 tarjetas visuales antes de escribir:
+TIEMPO (Naranja): 'Conquista de objetivos'. (Muestra Reloj Opcional: Proyectivo, Producción o Manual).
+SITUACIÓN (Plata): 'Gestión de imprevistos'. (Muestra Cronómetro adelante).
+DESCANSO (Verde): 'Recarga consciente'. (Reloj OCULTO en ejecución).
+VERDAD (Gris): 'Sinceridad ante el vacío'. (Reloj OCULTO en ejecución).
+2. Registro Obligatorio de Duración:
+Sin excepción, los 4 vehículos deben calcular internamente el tiempo transcurrido desde la apertura hasta el cierre. Al guardar, muestra la duración final con el Glow (resplandor) de su color respectivo para generar conciencia.
+3. El Salto del Guerrero (Intersecciones):
+Descuento de Tránsito: Si un vehículo activo cruza un bloque de 'Descanso/Comida' en la planilla, permite marcar un 'Paréntesis de Recarga'. El sistema debe sumar esa duración a la Hora Fin proyectada sin marcar retraso.
+Bono de Temple (+10 PS): Si el inicio de un vehículo ocurre en los últimos 15 min previos a un descanso programado, etiqueta como 'VOLUNTAD SOBRE EL HORARIO'.
+4. Lógica de Puntos y Doctor IA:
+Modo Verdad: +1 PS de Sinceridad.
+Modo Descanso: +5 PS por cierre manual exitoso.
+Feedback: Si el usuario cierra manual en los 5 min de margen, mostrar: 'Puerta sellada. Voltaje recuperado'.
+Monitor: Si hay 'Cierre por Entropía', bloquea el campo de reporte con la reflexión de 'LA TRAICIÓN SILENCIOSA'."
+
+PROMPT FASE 2: PARTE B (LA FLOTA Y MOTOR DE GUERRERO)
+"Agente, activa la Flota de Vehículos v5.0 sobre la base de la Fase A. Sigue estas reglas de interfaz y matemática:
+1. Interfaz de Selección (La Flota):
+Sustituye 'Vehículo Express' por un selector de 4 tarjetas visuales antes de escribir:
+TIEMPO (Naranja): 'Conquista de objetivos'. (Muestra Reloj Opcional: Proyectivo, Producción o Manual).
+SITUACIÓN (Plata): 'Gestión de imprevistos'. (Muestra Cronómetro adelante).
+DESCANSO (Verde): 'Recarga consciente'. (Reloj OCULTO en ejecución).
+VERDAD (Gris): 'Sinceridad ante el vacío'. (Reloj OCULTO en ejecución).
+2. Registro Obligatorio de Duración:
+Sin excepción, los 4 vehículos deben calcular internamente el tiempo transcurrido desde la apertura hasta el cierre. Al guardar, muestra la duración final con el Glow (resplandor) de su color respectivo para generar conciencia.
+3. El Salto del Guerrero (Intersecciones):
+Descuento de Tránsito: Si un vehículo activo cruza un bloque de 'Descanso/Comida' en la planilla, permite marcar un 'Paréntesis de Recarga'. El sistema debe sumar esa duración a la Hora Fin proyectada sin marcar retraso.
+Bono de Temple (+10 PS): Si el inicio de un vehículo ocurre en los últimos 15 min previos a un descanso programado, etiqueta como 'VOLUNTAD SOBRE EL HORARIO'.
+4. Lógica de Puntos y Doctor IA:
+Modo Verdad: +1 PS de Sinceridad.
+Modo Descanso: +5 PS por cierre manual exitoso.
+Feedback: Si el usuario cierra manual en los 5 min de margen, mostrar: 'Puerta sellada. Voltaje recuperado'.
+Monitor: Si hay 'Cierre por Entropía', bloquea el campo de reporte con la reflexión de 'LA TRAICIÓN SILENCIOSA'."
+
+
+PROMPT FASE 2: PARTE B (LA FLOTA Y MOTOR DE GUERRERO)
+"Agente, activa la Flota de Vehículos v5.0 sobre la base de la Fase A. Sigue estas reglas de interfaz y matemática:
+1. Interfaz de Selección (La Flota):
+Sustituye 'Vehículo Express' por un selector de 4 tarjetas visuales antes de escribir:
+TIEMPO (Naranja): 'Conquista de objetivos'. (Muestra Reloj Opcional: Proyectivo, Producción o Manual).
+SITUACIÓN (Plata): 'Gestión de imprevistos'. (Muestra Cronómetro adelante).
+DESCANSO (Verde): 'Recarga consciente'. (Reloj OCULTO en ejecución).
+VERDAD (Gris): 'Sinceridad ante el vacío'. (Reloj OCULTO en ejecución).
+2. Registro Obligatorio de Duración:
+Sin excepción, los 4 vehículos deben calcular internamente el tiempo transcurrido desde la apertura hasta el cierre. Al guardar, muestra la duración final con el Glow (resplandor) de su color respectivo para generar conciencia.
+3. El Salto del Guerrero (Intersecciones):
+Descuento de Tránsito: Si un vehículo activo cruza un bloque de 'Descanso/Comida' en la planilla, permite marcar un 'Paréntesis de Recarga'. El sistema debe sumar esa duración a la Hora Fin proyectada sin marcar retraso.
+Bono de Temple (+10 PS): Si el inicio de un vehículo ocurre en los últimos 15 min previos a un descanso programado, etiqueta como 'VOLUNTAD SOBRE EL HORARIO'.
+4. Lógica de Puntos y Doctor IA:
+Modo Verdad: +1 PS de Sinceridad.
+Modo Descanso: +5 PS por cierre manual exitoso.
+Feedback: Si el usuario cierra manual en los 5 min de margen, mostrar: 'Puerta sellada. Voltaje recuperado'.
+Monitor: Si hay 'Cierre por Entropía', bloquea el campo de reporte con la reflexión de 'LA TRAICIÓN SILENCIOSA'."
+
+
+
+PROMPT DE INGENIERÍA - FASE 2: PARTE B (MOTOR DE GUERRERO V5.0)
+​"Agente, ejecuta la Fase 2: Motor de Ejecución, Relojes y Lógica de Intersección. Este bloque activa la matemática de combate y premia la voluntad sobre la biología."
+​1. Lógica de Relojes y Visibilidad por Vehículo:
+​MODO TIEMPO (Naranja):
+​Visibilidad: Reloj SIEMPRE VISIBLE.
+​Opciones de Reloj: Proyectivo (Hora Fin), Producción (Cant x Tiempo) o Manual.
+​Comportamiento: Cuenta atrás + Tic-Tap + Sanción si llega a cero.
+​MODO SITUACIÓN (Plata):
+​Visibilidad: Cronómetro VISIBLE (cuenta adelante). Sin sanción.
+​MODO DESCANSO (Verde):
+​Visibilidad: RELOJ OCULTO durante ejecución.
+​Al cerrar: Revela duración y otorga +5 PS.
+​MODO VERDAD (Gris):
+​Visibilidad: RELOJ OCULTO. Sin presión numérica.
+​Al cerrar: Revela duración y otorga +1 PS de Sinceridad.
+​2. El Salto del Guerrero (Lógica de Intersección):
+​Implementa la gestión de tareas que cruzan bloques de descanso (ej. Almuerzo):
+​Descuento de Tránsito: Si un vehículo (Naranja) se inicia o continúa durante un bloque de 'Descanso/Comida', permite al usuario marcar un 'Paréntesis de Recarga'.
+​Recalculación Automática: El sistema debe sumar la duración del descanso (ej. 30 min) a la Hora Fin proyectada del vehículo, extendiendo la meta sin marcar retraso.
+​Premio de Temple (+10 PS): Si el usuario inicia un vehículo de producción en los últimos 15 minutos previos a un descanso programado, otorga este bono especial etiquetado como 'VOLUNTAD SOBRE EL HORARIO'.
+​3. Monitor de Fatiga e Intervención:
+​Reflexiones de Conciencia: Si hay 'Cierre por Entropía' o retraso, las etiquetas de LA OMISIÓN o LA TRAICIÓN SILENCIOSA aparecen bloqueadas sobre el campo de reporte.
+​Asistente de Salud: Si se marcó 'Energía Baja', el sistema sugiere reducir la intensidad de los relojes pero mantiene el registro de mérito doble si se logra el cierre manual.
+​4. Visualización y Reporte (Doctor IA):
+​Glow de Consagración: Solo brillan en el resumen las duraciones de vehículos cerrados manualmente.
+​Veredicto de Soberanía: Al final del día, el sistema destaca las veces que el usuario "venció al espejismo del cansancio" mediante las intersecciones gestionadas.

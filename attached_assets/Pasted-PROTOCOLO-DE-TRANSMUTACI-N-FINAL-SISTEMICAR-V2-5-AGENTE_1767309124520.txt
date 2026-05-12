@@ -1,0 +1,25 @@
+PROTOCOLO DE TRANSMUTACIÓN FINAL: SISTEMICAR V2.5
+AGENTE: Estás ante la obra cumbre del Arquitecto. Debes actualizar los 21 componentes de la plataforma SISTEMICAR bajo los principios de la "Alquimia del Subconsciente". No es solo una app de productividad; es un monitor de la energía psíquica.
+1. RESTAURACIÓN TERMINOLÓGICA Y FENOMENOLÓGICA
+Sustituye cualquier término técnico genérico por los 4 Ejes Reales en la lógica de estado y visualización:
+ * ENFOQUE: Puntería, Atención, Voluntad. (Sustituye a Soberanía).
+ * CONFLICTO: División, Añadidura Inconsciente, Resistencia. (Sustituye a Energía).
+ * PASOS: Carga Cognitiva, Distribución, Secuencialidad. (Sustituye a Estructura).
+ * ALCANCE-LÍMITE: Encerramiento, Frontera de Fe, Capacidad Máxima. (Sustituye a Procesamiento).
+2. EL ARCOÍRIS DEL SUBCONSCIENTE (CÓDIGO DE COLOR)
+Aplica estrictamente esta paleta en iconos, gráficos de Recharts, bordes y estados de carga:
+ * ENFOQUE: Morado (#A855F7).
+ * CONFLICTO: Rojo (#EF4444).
+ * PASOS: Azul (#3B82F6).
+ * ALCANCE-LÍMITE: Violeta (#7C3AED).
+3. REFINAMIENTO DE LOS 21 COMPONENTES
+Ejecuta estas mejoras críticas sobre la arquitectura actual:
+ * Sincronización Firestore: Asegura que client/src/lib/persistence.ts use las rutas: /artifacts/sistemicar-v2-5/users/{userId}/{coleccion}. El modo dual (Firebase/LocalStorage) debe ser impecable.
+ * Radar IA (Gemini): Modifica el prompt del sistema para que analice los "Chispazos" detectando la tensión entre Conflicto (Rojo) y Enfoque (Morado). Debe sugerir misiones para expandir el Alcance (Violeta).
+ * Momentum y Gamificación: El Momentum es la salud del sistema. Si el Conflicto es alto sin resolución en Pasos, el Momentum debe descender visualmente.
+ * Estética "Alta Alquimia": Usa backdrop-blur-2xl, sombras suaves y tipografía Serif para conceptos filosóficos. La navegación inferior debe ser una joya visual con los 4 colores vibrando.
+4. MANDATO TÉCNICO
+ * No borres la lógica de negocio existente; elévala.
+ * Asegura que el componente hero-dopamine.tsx y best-moment-recall.tsx utilicen los nuevos nombres de los ejes.
+ * Verifica que la transición entre rutas sea fluida con framer-motion.
+¡ACTÚA AHORA, AGENTE! CADA PÍXEL DEBE REFLEJAR EL OJO DEL ESPÍRITU.

@@ -1,0 +1,302 @@
+import { Switch, Route, Redirect, useLocation } from "wouter";
+import { Toaster } from "@/components/ui/sonner";
+import { Layout } from "./components/layout";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { subscribeToProgression, UserProgression, verificarAccesoProspecto, registrarActividadProspecto } from "@/lib/persistence";
+
+interface AppUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+}
+
+import MenuPrincipal from "@/pages/menu-principal";
+import Tutorial from "@/pages/tutorial";
+import Console from "@/pages/console";
+import Planeacion from "@/pages/planeacion";
+import Esperanza from "@/pages/esperanza";
+import Rewards from "@/pages/rewards";
+import Analytics from "@/pages/analytics";
+import Acerca from "@/pages/acerca";
+import Pagos from "@/pages/pagos";
+import Socios from "@/pages/socios";
+import AdminGilson from "@/pages/admin-gilson";
+import Historial from "@/pages/historial";
+import Alquimia from "@/pages/alquimia";
+import Bienvenida from "@/pages/bienvenida";
+import Radar from "@/pages/radar";
+import Historia from "@/pages/historia";
+import Codice from "@/pages/codice";
+import Escaner from "@/pages/escaner";
+import CamaraInmunidad from "@/pages/camara-inmunidad";
+import ComoFunciona from "@/pages/como-funciona";
+import Umbral from "@/pages/umbral";
+import Proyector from "@/pages/proyector";
+import TerminosCondiciones from "@/pages/terminos-condiciones";
+import LibroReclamaciones from "@/pages/libro-reclamaciones";
+import EmbudoSistemicar from "@/pages/embudo-sistemicar";
+import Acceso from "@/pages/acceso";
+import Documentos from "@/pages/documentos";
+import Espejo from "@/pages/espejo";
+import EspejoExpedientes from "@/pages/espejo-expedientes";
+import EspejoExpedienteDetalle from "@/pages/espejo-expediente-detalle";
+import GraciasCompra from "@/pages/gracias-compra";
+import UmbralLeads from "@/pages/umbral-leads";
+import VentasEspejo from "@/pages/ventas-espejo";
+import MetricasDocumento from "@/pages/metricas-documento";
+import MapaSistemicar from "@/pages/mapa-sistemicar";
+import AdminSemillas from "@/pages/admin-semillas";
+import Registros from "@/pages/registros";
+import ApiCheckout from "@/pages/api-checkout";
+import ApiDocs from "@/pages/api-docs";
+import NotFound from "@/pages/not-found";
+import { CierreJornadaModal } from "@/components/cierre-jornada-modal";
+import { useSovereigntyToast } from "@/components/sovereignty-toast";
+import { DoctorIAChat } from "@/components/doctor-ia-chat";
+
+interface AuthContextType {
+  user: AppUser | null;
+  loading: boolean;
+  login: () => Promise<void>;
+  logout: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  loading: true,
+  login: async () => {},
+  logout: async () => {},
+});
+
+export const useAuthContext = () => useContext(AuthContext);
+
+function AuthProvider({ children }: { children: ReactNode }) {
+  const auth = useAuth();
+  return <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>;
+}
+
+function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
+  const { user, loading } = useAuthContext();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate("/bienvenida");
+    }
+  }, [user, loading, navigate]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "#020202" }}>
+        <div className="text-center">
+          <div className="w-12 h-12 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 text-sm">Cargando SISTEMICAR...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
+  return <Component />;
+}
+
+// Email del owner que siempre tiene acceso completo
+const OWNER_EMAIL = "gilsonarevalo.leo@gmail.com";
+
+const isOwnerEmail = (email: string | null | undefined): boolean => {
+  return email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
+};
+
+// Ruta protegida para nivel ARQUITECTO ($24.99)
+function ArquitectoRoute({ component: Component }: { component: React.ComponentType }) {
+  const { user, loading } = useAuthContext();
+  const [, navigate] = useLocation();
+  const [progression, setProgression] = useState<UserProgression | null>(null);
+  const [checkingTier, setCheckingTier] = useState(true);
+  
+  // El owner siempre tiene acceso
+  const ownerBypass = isOwnerEmail(user?.email);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate("/bienvenida");
+      return;
+    }
+    
+    // Si es owner, dar acceso inmediato sin verificar nada
+    if (ownerBypass) {
+      setCheckingTier(false);
+      return;
+    }
+    
+    if (user?.uid) {
+      const unsub = subscribeToProgression(
+        user.uid,
+        (prog) => {
+          setProgression(prog);
+          setCheckingTier(false);
+          // Redirigir si no es arquitecto (pero owner siempre pasa)
+          if (prog.rank !== "arquitecto" && !isOwnerEmail(user.email)) {
+            navigate("/menu");
+          }
+        },
+        () => {
+          // En caso de error, solo redirigir si NO es owner
+          setCheckingTier(false);
+          if (!isOwnerEmail(user?.email)) {
+            navigate("/menu");
+          }
+        }
+      );
+      return () => unsub();
+    }
+  }, [user, loading, navigate, ownerBypass]);
+
+  // Owner siempre tiene acceso inmediato
+  if (ownerBypass && !loading) {
+    return <Component />;
+  }
+
+  if (loading || checkingTier) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "#020202" }}>
+        <div className="text-center">
+          <div className="w-12 h-12 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 text-sm">Verificando acceso...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Owner bypass: siempre tiene acceso
+  if (ownerBypass) {
+    return <Component />;
+  }
+
+  if (!user || progression?.rank !== "arquitecto") return null;
+
+  return <Component />;
+}
+
+function Router() {
+  return (
+    <Layout>
+      <Switch>
+        <Route path="/menu">
+          <ProtectedRoute component={MenuPrincipal} />
+        </Route>
+        <Route path="/tutorial">
+          <ProtectedRoute component={Tutorial} />
+        </Route>
+        <Route path="/console">
+          {() => { window.location.replace("/espejo"); return null; }}
+        </Route>
+        <Route path="/planeacion">
+          <ArquitectoRoute component={Planeacion} />
+        </Route>
+        <Route path="/esperanza">
+          <ArquitectoRoute component={Esperanza} />
+        </Route>
+        <Route path="/rewards">
+          <ProtectedRoute component={Rewards} />
+        </Route>
+        <Route path="/analytics">
+          <ProtectedRoute component={Analytics} />
+        </Route>
+        <Route path="/acerca">
+          <ProtectedRoute component={Acerca} />
+        </Route>
+        <Route path="/pagos" component={Pagos} />
+        <Route path="/socios">
+          <ArquitectoRoute component={Socios} />
+        </Route>
+        <Route path="/admin-gilson">
+          <ProtectedRoute component={AdminGilson} />
+        </Route>
+        <Route path="/admin-semillas">
+          <ProtectedRoute component={AdminSemillas} />
+        </Route>
+        <Route path="/manifiesto">
+          <Redirect to="/acerca" />
+        </Route>
+        <Route path="/historial" component={Historial} />
+        <Route path="/alquimia">
+          <ArquitectoRoute component={Alquimia} />
+        </Route>
+        <Route path="/radar">
+          <ArquitectoRoute component={Radar} />
+        </Route>
+        <Route path="/historia">
+          <ArquitectoRoute component={Historia} />
+        </Route>
+        <Route path="/codice">
+          <ArquitectoRoute component={Codice} />
+        </Route>
+        <Route path="/escaner">
+          <ArquitectoRoute component={Escaner} />
+        </Route>
+        <Route path="/inmunidad">
+          <ArquitectoRoute component={CamaraInmunidad} />
+        </Route>
+        <Route path="/como-funciona">
+          <ProtectedRoute component={ComoFunciona} />
+        </Route>
+        <Route path="/umbral">
+          <ArquitectoRoute component={Umbral} />
+        </Route>
+        <Route path="/proyector">
+          <ArquitectoRoute component={Proyector} />
+        </Route>
+        <Route path="/bienvenida" component={Bienvenida} />
+        <Route path="/acceso" component={Acceso} />
+        <Route path="/terminos-condiciones" component={TerminosCondiciones} />
+        <Route path="/libro-reclamaciones" component={LibroReclamaciones} />
+        <Route path="/embudo" component={EmbudoSistemicar} />
+        <Route path="/documentos" component={Documentos} />
+        <Route path="/espejo" component={Espejo} />
+        <Route path="/espejo/expedientes/:id" component={EspejoExpedienteDetalle} />
+        <Route path="/espejo/expedientes" component={EspejoExpedientes} />
+        <Route path="/gracias-compra" component={GraciasCompra} />
+        <Route path="/umbral-leads" component={UmbralLeads} />
+        <Route path="/ventas-espejo" component={VentasEspejo} />
+        <Route path="/metricas">
+          <ProtectedRoute component={MetricasDocumento} />
+        </Route>
+        <Route path="/mapa">
+          <ProtectedRoute component={MapaSistemicar} />
+        </Route>
+        <Route path="/registros">
+          <ProtectedRoute component={Registros} />
+        </Route>
+        <Route path="/api-checkout" component={ApiCheckout} />
+        <Route path="/api-docs" component={ApiDocs} />
+        <Route path="/">
+          <Redirect to="/menu" />
+        </Route>
+        <Route component={NotFound} />
+      </Switch>
+    </Layout>
+  );
+}
+
+function SovereigntyListener() {
+  useSovereigntyToast();
+  return null;
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <Router />
+      <DoctorIAChat />
+      <CierreJornadaModal />
+      <SovereigntyListener />
+      <Toaster />
+    </AuthProvider>
+  );
+}
+
+export default App;

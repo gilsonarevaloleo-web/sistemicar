@@ -1,0 +1,30 @@
+# Copia este archivo a la raíz de tu proyecto y ajusta publish/command según tu stack.
+# Valores por defecto: Vite (salida en dist).
+
+[build]
+  command = "npm run build"
+  publish = "dist/public"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# --- Alternativas (deja solo un bloque [build] activo; aquí están comentadas) ---
+#
+# Create React App:
+#   command = "npm run build"
+#   publish = "build"
+#
+# Astro:
+#   command = "npm run build"
+#   publish = "dist"
+#
+# Si tu package.json usa otro script (ej. "build:prod"):
+#   command = "npm run build:prod"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Nota: el redirect SPA anterior sirve para routers del lado del cliente en sitio estático.
+# Si usas Next.js u otro framework con SSR, NO uses este archivo genérico sin adaptarlo.

@@ -1,0 +1,21 @@
+"Agente, ejecuta esta actualización crítica de arquitectura. No omitas ningún paso, ya que redefine la inteligencia del sistema:
+​1. Configuración de la Fuente de Verdad (Firebase):
+​Crea la colección principios_maestros.
+​Configura firestore.rules: Escritura permitida solo al UID de gilsonarevalo.leo@gmail.com. Lectura permitida para todos.
+​En la colección de registros (ej. energyLogs), añade el campo es_principio_maestro: boolean (default: false).
+​2. Módulo de Minería de Consciencia (Destilación):
+​Implementa una función de backend que llame a Gemini para analizar el historial histórico de Gilson Arevalo.
+​Tarea de la IA: Identificar patrones de éxito, frases recurrentes y leyes de comportamiento en los escritos de Gilson.
+​Crea una vista en /admin-gilson llamada 'Laboratorio de Leyes'. Aquí, la IA presentará los patrones detectados y Gilson podrá:
+​Aceptar el patrón: Se guarda automáticamente en principios_maestros.
+​Descartar: Se elimina la sugerencia.
+​3. El Doctor IA (Motor de Diagnóstico):
+​Actualiza el System Prompt de Gemini: 'Eres el Doctor IA de SISTEMICAR. Tu conocimiento emana exclusivamente de la colección principios_maestros. Cuando un usuario escribe, actúa como un espejo clínico: detecta su Capa de Desvío y recetale la Ley de Gilson que corresponda. Si no hay una ley específica, guía al usuario a encontrar su propia fricción neuronal basándote en la filosofía de SISTEMICAR.'
+​4. Reestructuración de Historial y Copiado Estructurado:
+​Rediseña /historial con una arquitectura de Cápsulas Colapsables:
+​Modo Espejo: Dividir en 'Captura Rápida' (texto plano) y 'Cápsula de Poder' (los 4 ejes: Percibo, Reconozco, Cuento Con, Transformo).
+​Por defecto, el historial muestra la vista colapsada. Al expandir, se ve la estructura completa.
+​Botón de Exportación: Añade un botón 'Copiar Estructura' en cada registro. Al usarlo, debe copiar el texto formateado así:
+[SISTEMICAR - MODO ESPEJO] \n [PERCIBO]: ... \n [RECONOZCO]: ... etc.
+​5. Interfaz de Autoridad para Gilson:
+​En todos los componentes (Espejo, Alquimia, etc.), añade un icono de 'Estrella' o 'Sello de Soberanía' visible solo para Gilson. Al activarlo, el campo es_principio_maestro cambia a true y el Doctor IA integra ese texto como ley inmediata."

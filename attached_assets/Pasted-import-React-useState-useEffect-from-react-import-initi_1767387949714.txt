@@ -1,0 +1,166 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, addDoc, onSnapshot, query, doc, setDoc } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { Database, WifiOff, CloudOff, Save, AlertCircle } from 'lucide-react';
+
+// Configuración de Firebase (se asume proporcionada por el entorno)
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'sistemicar-v2';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [vehiculos, setVehiculos] = useState([]);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  // 1. GESTIÓN DE AUTENTICACIÓN Y PERSISTENCIA
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        console.error("Firebase Auth Error:", err);
+        activarModoSoberano("Error de autenticación/Saldo agotado");
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. ACTIVACIÓN DEL MODO SOBERANO (LOCALSTORAGE)
+  const activarModoSoberano = (motivo) => {
+    setIsOfflineMode(true);
+    setErrorMsg(motivo);
+    const localData = localStorage.getItem(`sistemicar_backup_${appId}`);
+    if (localData) {
+      setVehiculos(JSON.parse(localData));
+    }
+  };
+
+  // 3. CARGA DE DATOS (ESCUCHA DUAL)
+  useEffect(() => {
+    if (!user) return;
+
+    const q = collection(db, 'artifacts', appId, 'public', 'data', 'vehiculos');
+    
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setVehiculos(docs);
+        setIsOfflineMode(false);
+        // Backup local siempre por seguridad
+        localStorage.setItem(`sistemicar_backup_${appId}`, JSON.stringify(docs));
+      },
+      (error) => {
+        console.error("Firestore Error:", error);
+        activarModoSoberano("Conexión con la Nube interrumpida (Verificar Saldo)");
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // 4. GUARDADO DE VEHÍCULOS (ALQUIMIA DE EMERGENCIA)
+  const guardarVehiculo = async (nuevoVehiculo) => {
+    const vehiculoConMeta = {
+      ...nuevoVehiculo,
+      fecha: new Date().toISOString(),
+      timestamp: Date.now()
+    };
+
+    if (!isOfflineMode) {
+      try {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vehiculos'), vehiculoConMeta);
+      } catch (err) {
+        console.error("Error al guardar en nube:", err);
+        // Si falla la nube, guardar localmente de inmediato
+        const nuevaListaLocal = [...vehiculos, { id: 'temp-' + Date.now(), ...vehiculoConMeta }];
+        setVehiculos(nuevaListaLocal);
+        localStorage.setItem(`sistemicar_backup_${appId}`, JSON.stringify(nuevaListaLocal));
+        setIsOfflineMode(true);
+        setErrorMsg("Saldo agotado. Los datos se guardan en tu dispositivo.");
+      }
+    } else {
+      // Modo Soberano Puro
+      const nuevaListaLocal = [...vehiculos, { id: 'temp-' + Date.now(), ...vehiculoConMeta }];
+      setVehiculos(nuevaListaLocal);
+      localStorage.setItem(`sistemicar_backup_${appId}`, JSON.stringify(nuevaListaLocal));
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-300 p-6 font-sans">
+      <div className="max-w-4xl mx-auto">
+        
+        {/* INDICADOR DE ESTADO DE SOBERANÍA */}
+        <div className={`mb-8 p-4 rounded-2xl border flex items-center justify-between transition-all ${
+          isOfflineMode ? 'bg-amber-950/20 border-amber-500/50' : 'bg-emerald-950/20 border-emerald-500/50'
+        }`}>
+          <div className="flex items-center gap-3">
+            {isOfflineMode ? <CloudOff className="text-amber-500" /> : <Database className="text-emerald-500" />}
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest">
+                {isOfflineMode ? "Modo Soberano Local" : "Sincronizado con la Nube"}
+              </p>
+              <p className="text-[10px] text-zinc-500 italic">
+                {isOfflineMode ? `Aviso: ${errorMsg}` : "Tu sabiduría está respaldada globalmente."}
+              </p>
+            </div>
+          </div>
+          {isOfflineMode && (
+            <div className="flex items-center gap-2 text-amber-500 text-[10px] font-bold">
+              <WifiOff size={14} /> TRABAJANDO OFFLINE
+            </div>
+          )}
+        </div>
+
+        {/* INTERFAZ DE REGISTRO RÁPIDO */}
+        <div className="bg-zinc-900/50 p-8 rounded-[2.5rem] border border-zinc-800 mb-8">
+          <h2 className="text-xl font-serif italic text-white mb-6">Registrar Vehículo de Sabiduría</h2>
+          <button 
+            onClick={() => guardarVehiculo({ nombre: "Vehículo de Prueba", tipo: "Transmutación" })}
+            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-8 py-3 rounded-full font-bold transition-all active:scale-95"
+          >
+            <Save size={18} />
+            Sellar Registro
+          </button>
+        </div>
+
+        {/* LISTADO DE ACERVO */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {vehiculos.map((v) => (
+            <div key={v.id} className="p-5 bg-zinc-900 rounded-3xl border border-zinc-800">
+              <div className="flex justify-between items-start mb-2">
+                <h3 className="text-white font-medium">{v.nombre}</h3>
+                <span className="text-[10px] text-zinc-600 uppercase font-mono">{v.id.substring(0,8)}</span>
+              </div>
+              <p className="text-xs text-zinc-500 italic mb-3">"{v.tipo}"</p>
+              <div className="text-[9px] text-purple-500 font-bold uppercase tracking-widest">
+                Registrado el {new Date(v.fecha).toLocaleDateString()}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {isOfflineMode && (
+          <div className="mt-12 p-6 bg-red-950/10 border border-red-900/20 rounded-3xl flex gap-4 items-center">
+            <AlertCircle className="text-red-500 shrink-0" />
+            <p className="text-xs text-zinc-500">
+              <strong>Nota del Arquitecto:</strong> Al agotarse el saldo, Firebase ha bloqueado la escritura. 
+              Sistemicar ha activado el almacenamiento local. Tus datos NO se perderán, pero solo estarán en este navegador 
+              hasta que se restablezca el saldo de la nube.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+

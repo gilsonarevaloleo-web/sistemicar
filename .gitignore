@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Logs and caches
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.cache/
+
+# Environment and secrets (never commit)
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Build output (optional: remove these lines if you want to commit built assets)
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.netlify/
+
+# Replit
+.replit
+replit.nix
+.config/
+.agents/
+.local/
+.upm/
+
+# Local-only bundles / scratch
+Nueva carpeta/
+rendered-videos/

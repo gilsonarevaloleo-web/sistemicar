@@ -1,0 +1,29 @@
+PROMPT MAESTRO - FASE 2: INTERFAZ DE USUARIO (UX/UI) Y VISUALIZACIÓN DE VOLTAJE
+​Instrucción para el Agente: "Diseña e implementa la interfaz visual del componente Espejo siguiendo una estética Tech-Noir de Alta Gama. La interfaz debe comunicar autoridad, precisión técnica y soberanía. Sigue estas especificaciones:"
+​1. ESTÉTICA Y PALETA DE COLORES
+​Fondo: #0A0A0A (Negro absoluto/carbón).
+​Acentos Primarios: #D4AF37 (Oro mate) para elementos de éxito, soberanía y el Eje 3.
+​Indicadores de Datos: #00FFC3 (Cian neón sutil) para flujos de información y voltajes activos.
+​Alertas: #FF3131 (Rojo técnico) para interferencias críticas detectadas en el Eje 2.
+​2. EL ESQUEMA HUMANO DE VOLTAJE (EL NÚCLEO VISUAL)
+​Implementa en el centro de la pantalla una silueta humana minimalista estilizada (estilo wireframe o circuitos).
+​Iluminación por Secciones: La silueta debe tener 4 capas de iluminación independientes que se activan según el diagnóstico:
+​Zona Estabilidad (M01-M03): Ilumina la base y piernas.
+​Zona Conexión (M04-M05): Ilumina el plexo y brazos.
+​Zona Visión (M06-M07): Ilumina la parte superior y ojos.
+​Zona Mando (M08-M10): Ilumina un núcleo pulsante en el centro del pecho y cabeza.
+​3. BARRAS DE ESTADO LATERALES
+​A los costados de la silueta, coloca 4 barras de progreso verticales (vómetros de audio-frecuencia).
+​Cada barra representa una de las 4 Secciones de Presión.
+​Animación: Las barras deben tener un pequeño 'jitter' o movimiento constante que simule la medición de una frecuencia biológica en tiempo real.
+​4. TERMINAL DE AFLORAMIENTO (EJE 1)
+​El cuadro de texto del Eje 1 debe lucir como una Consola de Comandos Linux.
+​Incluye un cursor parpadeante y, mientras el usuario escribe, muestra líneas de código aleatorias en los bordes que digan: SCANNING_ANCLAJES..., DECODING_HARDWARE..., FILTERING_SHADOW....
+​5. EL MODAL DE DIAGNÓSTICO (EJE 2)
+​Cuando se activa el diagnóstico (1 crédito), la pantalla debe hacer un efecto de 'glitch' controlado.
+​La sección de la silueta afectada debe parpadear en rojo antes de estabilizarse.
+​Muestra el código de interferencia (ej. CÓDIGO 14) con una tipografía de gran tamaño antes de que el Doctor IA entregue su Verdad.
+​6. PANEL DE CONTROL DE CALIBRACIÓN (EJE 3)
+​Al llegar al Eje 3 (4 créditos), la interfaz se 'limpia' para enfocarse.
+​Muestra el Hábito de 24h dentro de un marco dorado (#D4AF37).
+​Incluye un contador de tiempo regresivo (24:00:00) y el botón de 'Confirmar Ejecución'.

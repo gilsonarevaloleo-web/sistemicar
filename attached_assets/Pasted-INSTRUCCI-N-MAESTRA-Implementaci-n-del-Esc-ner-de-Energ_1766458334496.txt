@@ -1,0 +1,23 @@
+INSTRUCCIÓN MAESTRA: Implementación del Escáner de Energía Biopsíquico
+Agent, vamos a actualizar el componente "Espejo" para convertirlo en un Escáner de Energía de tiempo real. Esta es la funcionalidad más importante de SISTEMI. Sigue estas especificaciones técnicas:
+1. El Nuevo Interfaz de Usuario (UI/UX)
+ * Cambia la entrada de texto por un "Campo de Escaneo" con animaciones de líneas de escaneo láser (CSS keyframes) que se activen mientras el usuario escribe.
+ * El marcador central debe ser un anillo dinámico que cambie de color según el puntaje (Rojo < 40, Amarillo 40-70, Dorado > 70).
+ * La pregunta base obligatoria sobre el campo es: "¿Desde qué estado de conciencia está operando su voluntad en este momento?"
+2. Lógica de Análisis (Gemini API)
+Configura el prompt del sistema para la API de Gemini de modo que analice el texto del usuario bajo estos 4 vectores y devuelva un JSON:
+ * Dimensión Social/Ego: Evalúa si el lenguaje es de "Víctima/Orgullo" (Bajo) o "Responsabilidad/Espíritu" (Alto).
+ * Resistencia Biológica: Evalúa si el usuario describe cansancio como derrota (Bajo) o como un desafío estratégico de escalada (Alto).
+ * Frecuencia Financiera: Evalúa si el enfoque es "Escasez/Miedo" o "Abundancia/Cálculo".
+ * Enfoque de Arquitecto: Evalúa si hay caos mental o intención clara.
+3. El Algoritmo de Honestidad (+5 Puntos)
+Implementa una regla lógica:
+ * Si el análisis detecta que el usuario admite un sentimiento negativo (ej: "Siento envidia" o "Estoy agotado") de forma consciente y analítica, el sistema debe otorgar un bono de +5 puntos de Maestría.
+ * Mensaje de Sistema: "Sinceridad detectada. +5 puntos de Maestría por transparencia energética."
+4. Estética Circadiana
+ * Mantén los fondos oscuros (#050505) y usa degradados dorados para los estados de alta energía.
+ * Las barras de progreso de las dimensiones deben tener un efecto de "pulso" neón.
+5. Persistencia
+Guarda el resultado del escaneo en la colección de Firestore /artifacts/{appId}/users/{userId}/espejos con los campos: puntuacionTotal, desgloseDimensiones y conclusionesIA.
+"Agent, no solo construyas una herramienta, construye un oráculo que el usuario sienta que conoce su verdad mejor que él mismo."
+"Agent, integra el 'Módulo de Sugerencias del Oráculo' en el Espejo. Si el puntaje de energía es bajo, Gemini debe sugerir acciones específicas basadas en el historial del usuario (ej: 'Ir a Esperanza para planificar'). Si la energía es alta, debe sugerir acciones de expansión y negocio. Haz que las sugerencias aparezcan con una animación elegante después del escaneo."

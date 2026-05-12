@@ -1,0 +1,19 @@
+🛠️ PROMPT DE ACTUALIZACIÓN SISTÉMICA v2.0
+​Instrucción para el Agente: Actualiza la estructura del sistema centrándote en los componentes de "Espejo" y "Depósito". NO modifiques el componente de Planificación actual, ya que es funcional. La actualización debe reflejar el cambio de un sistema de "gestión" a uno de "Ingeniería de Conciencia".
+​1. COMPONENTE: EL ESPEJO (Interfaz Emocional / Tiempo Presente)
+​Modifica los nombres de los 4 ejes en la vista de "Espejo" para personas con predominancia emocional. El objetivo es identificar el estado actual del ser:
+​Eje Enfoque ➔ PRESENCIA: (Anclaje al aquí y ahora).
+​Eje Conflicto ➔ TENSIÓN: (Reconocimiento honesto de la vibración de incomodidad).
+​Eje Pasos ➔ RITMO: (La cadencia del fluir emocional/latido).
+​Eje Alcance ➔ EXPANSIÓN: (Capacidad de irradiar el estado de paz/soberanía).
+​2. COMPONENTE: EL DEPÓSITO (Auditoría Racional / Batería de Poder)
+​Reemplaza el antiguo eje de "Esperanza" por "EL DEPÓSITO". Este componente debe funcionar como una auditoría racional del pasado para cargar la "Batería de Certeza".
+​Eje Enfoque ➔ APRENDER: (Pregunta: ¿Qué lección técnica extraje?).
+​Eje Conflicto ➔ GESTIÓN: (Pregunta: ¿Cómo ordené el caos en ese momento?).
+​Eje Pasos ➔ EJECUTAR: (Pregunta: ¿Cuál fue la secuencia mecánica de acciones?).
+​Eje Alcance ➔ RESOLUCIÓN/PROBLEMA: (Pregunta: ¿Qué problema específico resolví y qué impacto tuvo?).
+​3. LÓGICA DE INTERFAZ (UI/UX)
+​Visualización de Batería: Agrega un indicador visual (Barra de progreso o porcentaje) llamado "Carga de Soberanía" que se llene a medida que el usuario complete los campos del Depósito.
+​Integración: Asegúrate de que los datos introducidos en el Depósito alimenten la confianza del usuario antes de pasar al componente de Planificación.
+​Preservación: Mantén intacto el vehículo de Planificación (Enfoque, Conflicto, Pasos, Alcance) con sus cronómetros y repeticiones de objetivos.
+​Meta: Transformar la aplicación en un sistema donde el usuario primero se "Mire" (Espejo), luego se "Recargue" (Depósito) y finalmente "Conquiste" (Planificación).

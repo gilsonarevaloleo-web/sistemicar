@@ -1,0 +1,5 @@
+{
+  "out": "./drizzle",
+  "schema": "./shared/pg-schema.ts",
+  "dialect": "postgresql"
+}

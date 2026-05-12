@@ -1,0 +1,18 @@
+Prompt Maestro: Segmentación Dinámica y Mensajería Conductual
+​Contexto: Re-estructurar client/src/pages/planeacion.tsx para implementar Ciclos de Segmentos y corregir la ubicación de SeductionMessage.
+​1. Arquitectura de Segmentos (El "Día en Fases"):
+​Configuración de Planilla: Implementar un estado activePlanilla que contenga un array de segmentos. Cada segmento tiene: nombre, duracionEstimada, orden y estado (abierto/cerrado).
+​Lógica de Puntos: Otorgar +1 PS al crear el segmento, +1 PS al iniciarlo y +1 PS al cerrarlo.
+​Visualización de Estado: En el Monitor de Músculo Atencional, sustituir el texto estático por: "SEGMENTO X/N: [Nombre]".
+​2. Mensajería Basada en Comportamiento (Reactiva, no Pendiente):
+​Relocalización: Mover el componente SeductionMessage (o crear ConductualFeedback) para que solo sea visible dentro de un Vehículo en ejecución o inmediatamente después de cerrar un segmento.
+​Disparadores de Mensajes (Basado en Capas):
+​Capa 2 (Frustración): Si detecta la apertura de 3 vehículos situacion en menos de 15 min, disparar mensaje: "Detecto turbulencia. La frustración es energía sin canalizar. Respira y retoma el segmento."
+​Capa 3 (Aburrimiento): Si el segmento dura >2h y el ritmo de completado baja, disparar: "La monotonía es el filtro de los débiles. Supera esta fase para alcanzar la maestría."
+​Capa 4 (Cansancio): Si el usuario opera en su última hora circadiana, disparar: "Operando en zona roja. Cada minuto aquí vale el doble de soberanía."
+​3. Sistema de Introspección Diaria (Post-Segmento):
+​Eliminar los "Vehículos Profundos" de la lista de tareas.
+​Crear el modal "Laboratorio de Introspección" accesible solo al cerrar un segmento o la planilla diaria.
+​Implementar el flujo de 4 Preguntas Reflexivas con crecimiento exponencial de PS según la profundidad del texto.
+​4. Priorización por Tiempo:
+​La lista de misiones pendientes debe auto-ordenarse poniendo al inicio aquellas cuyo criterioDetalle (si es hora) esté más cerca de la hora actual del sistema.

@@ -1,0 +1,24 @@
+🛠️ ACTUALIZACIÓN DE INTELIGENCIA: MANÓMETRO Y MENTORÍA PERSONALIZADA
+Objetivo: Elevar la precisión del Manómetro de Alquimia y personalizar el cierre de jornada basándose en el comportamiento real del usuario dentro de la base de datos (Firestore).
+1. LÓGICA DEL MANÓMETRO (Auditoría de Alquimia)
+ * Instrucción para la IA: No otorgues puntajes altos por "frases bonitas". Evalúa la Consistencia de Ejes.
+ * Criterios de Deducción de Puntos:
+   * Si la "Crisis" no describe una resistencia real: -20%.
+   * Si la "Lección" no tiene pasos accionables: -15%.
+   * Si el "Oro" no tiene relación directa con el "Plomo" (la observación): -30%.
+ * Feedback de Mejora: Si el score es menor a 90%, la IA debe decir exactamente qué eje está "flojo" y qué pregunta debe responder el usuario para subir el nivel.
+2. CIERRE DE JORNADA PERSONALIZADO (Context Awareness)
+ * Acceso a Datos: La función de cierre debe recibir un objeto userStats que incluya:
+   * total_horas_planificadas vs total_horas_ejecutadas.
+   * limites_identificados en el Umbral de Expansión.
+   * frecuencia_emocional predominante en el Espejo.
+ * Generación del Consejo: El consejo de la IA debe seguir esta estructura:
+   * Reconocimiento de Data: "Hoy planificaste 3 horas pero solo ejecutaste 1..."
+   * Diagnóstico Sistémico: "...esto indica que tu 'Eje de Conflicto' sigue siendo la comodidad que identificaste en tu Alquimia de Sabiduría."
+   * Prescripción Técnica: "Mañana, no aumentes el Alcance. Enfócate en reducir la Tensión del Espejo antes de iniciar el vehículo."
+3. IMPLEMENTACIÓN TÉCNICA (Replit/Gemini API)
+ * Modifica el endpoint de generateContent para incluir en el systemInstruction el perfil histórico del usuario.
+ * Prompt System: "Eres el Auditor de Sistemicar. Tu lenguaje es técnico, directo y orientado a la ingeniería de conciencia. No uses lenguaje motivacional genérico. Usa los datos del usuario para confrontarlo con su propia estructura."
+4. INTERFAZ DEL MANÓMETRO
+ * Actualiza el componente ManometroSabiduria para que el score se anime solo después de que la IA devuelva la evaluación.
+ * Si el score es 100%, activa un efecto de "Partículas de Oro" en la pantalla.

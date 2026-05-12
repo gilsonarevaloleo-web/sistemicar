@@ -1,0 +1,19 @@
+PROMPT PARA EL AGENTE DE REPLIT
+​Contexto: Estamos actualizando el "Módulo de Introspección" a la versión 3.0 dentro de la ruta /planeacion. El objetivo es transformar el cierre de segmento en un ejercicio de alta consciencia.
+​Tareas a ejecutar:
+​Base de Datos de Preguntas: Integra las siguientes 16 preguntas categorizadas por "Capas de Fricción":
+​Capa 1 (Inercia): 1. ¿Qué distracción específica intentó retenerte? 2. ¿Qué pensamiento exacto te permitió romper la inercia? 3. ¿En qué parte del cuerpo sentiste la pesadez? 4. ¿Del 1 al 10, qué tan nublado estaba el objetivo?
+​Capa 2 (Frustración): 1. ¿Qué evento disparó la sensación de pérdida de control? 2. ¿Tu impulso fue abandonar o forzar el resultado? 3. ¿La frustración era externa o por una expectativa propia? 4. ¿Cómo recalibraste el segmento para seguir?
+​Capa 3 (Aburrimiento): 1. ¿A qué mundo imaginario intentó escaparse tu mente? 2. ¿En qué momento sentiste que lo que hacías no tenía sentido? 3. ¿Qué valor del Master Plan recordaste para seguir? 4. ¿El tiempo pasó lento o dejaste de estar presente?
+​Capa 4 (Fatiga): 1. ¿En qué minuto exacto se degradó tu lógica? 2. ¿Usaste el "tic-tap" o la culpa para el sprint final? 3. ¿La última tarea se hizo con excelencia o solo por cumplir? 4. ¿Te sientes vaciado con orgullo o agotado?
+​Lógica de Selección Aleatoria:
+​Al finalizar un segmento, el sistema debe elegir una pregunta al azar por cada capa activa.
+​Importante: Si el segmento duró menos de 120 min, solo se muestran preguntas de Capa 1 y 2. Si duró más de 120 min, se habilitan las 4 capas.
+​Algoritmo del Multiplicador de PS:
+​Implementa una función que analice la densidad de la respuesta.
+​Si la respuesta tiene < 50 caracteres: Multiplicador 1.0x.
+​Si la respuesta tiene > 150 caracteres: Multiplicador 1.5x (Bonificación por Consciencia).
+​Persistencia y Flag de IA:
+​Guarda las respuestas en la colección de Firebase del usuario bajo el objeto del segmento actual.
+​Añade un campo ai_feedback_status: "pending" para que, cuando se restablezca el crédito de la API, el Doctor IA pueda procesar estas respuestas retroactivamente.
+​Confirmación: Notifica al finalizar la estructura del componente de cierre para probar la interfaz.

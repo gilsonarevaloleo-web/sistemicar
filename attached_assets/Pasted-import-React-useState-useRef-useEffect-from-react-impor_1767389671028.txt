@@ -1,0 +1,134 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Camera, Send, Sparkles, Target, Zap, Megaphone, ShieldCheck } from 'lucide-react';
+
+export default function App() {
+  const [promo, setPromo] = useState("");
+  const [categoria, setCategoria] = useState("Reflexión");
+  const [isCapturing, setIsCapturing] = useState(false);
+  const videoRef = useRef(null);
+
+  // Lista de categorías con sus iconos y colores
+  const categorias = [
+    { id: 'Reflexión', icon: <Sparkles size={14} />, color: 'border-purple-500 text-purple-400' },
+    { id: 'Estrategia', icon: <Target size={14} />, color: 'border-blue-500 text-blue-400' },
+    { id: 'Oferta', icon: <Megaphone size={14} />, color: 'border-emerald-500 text-emerald-400' },
+    { id: 'Grito de Guerra', icon: <Zap size={14} />, color: 'border-red-500 text-red-400' }
+  ];
+
+  useEffect(() => {
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch (err) {
+        console.error("Error acceso cámara:", err);
+      }
+    }
+    startCamera();
+  }, []);
+
+  const handleCapture = () => {
+    setIsCapturing(true);
+    setTimeout(() => setIsCapturing(false), 150);
+  };
+
+  const handlePublish = () => {
+    if (!promo.trim()) return;
+    // Lógica para guardar el registro con su categoría
+    console.log(`Publicando [${categoria}]: ${promo}`);
+    setPromo("");
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-200 p-4 font-sans flex flex-col gap-4">
+      
+      {/* HEADER ELEGANTE */}
+      <header className="flex justify-between items-center px-2">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="text-blue-500" size={24} />
+          <h1 className="text-xl font-bold tracking-tighter text-white">SISTEMICAR</h1>
+        </div>
+        <div className="text-[10px] bg-slate-900 border border-slate-800 px-3 py-1 rounded-full text-slate-500 font-mono tracking-widest uppercase">
+          Modo Arquitecto
+        </div>
+      </header>
+
+      {/* VISTA PREVIA DE CÁMARA */}
+      <div className="relative w-full h-48 rounded-[2rem] overflow-hidden border border-slate-800 shadow-2xl bg-black">
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          playsInline 
+          muted 
+          className="w-full h-full object-cover scale-x-[-1]"
+        />
+        <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
+          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+          <span className="text-[10px] uppercase font-bold tracking-widest text-white">Live View</span>
+        </div>
+        <div className={`absolute inset-0 bg-white transition-opacity duration-100 ${isCapturing ? 'opacity-100' : 'opacity-0'}`} />
+      </div>
+
+      {/* SELECTOR DE CATEGORÍAS (CHIPS) */}
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold ml-2">Intención del Códice</span>
+        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+          {categorias.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => setCategoria(cat.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full border text-xs font-medium whitespace-nowrap transition-all ${
+                categoria === cat.id 
+                ? `${cat.color} bg-slate-900 shadow-[0_0_15px_rgba(0,0,0,0.5)] border-current` 
+                : 'border-slate-800 text-slate-500 bg-transparent'
+              }`}
+            >
+              {cat.icon}
+              {cat.id}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* CAMPO DE TEXTO (EL PROMO) */}
+      <div className="flex-1 flex flex-col bg-slate-900/50 rounded-[2.5rem] border border-slate-800 p-6 shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-8 opacity-5">
+            <Zap size={120} />
+        </div>
+        
+        <textarea
+          value={promo}
+          onChange={(e) => setPromo(e.target.value)}
+          placeholder={`Escribe tu ${categoria.toLowerCase()} aquí...`}
+          className="flex-1 bg-transparent border-none outline-none text-lg leading-relaxed placeholder-slate-700 resize-none z-10"
+        />
+
+        <div className="flex items-center gap-4 mt-4">
+          <button 
+            onClick={handleCapture}
+            className="p-4 bg-slate-800 rounded-full hover:bg-slate-700 transition-all active:scale-90 text-blue-400"
+          >
+            <Camera size={24} />
+          </button>
+          
+          <button 
+            onClick={handlePublish}
+            disabled={!promo.trim()}
+            className="flex-1 bg-white text-black py-4 rounded-3xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-30 disabled:grayscale"
+          >
+            Sellar Códice de {categoria}
+            <Send size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* BARRA DE ESTADO */}
+      <footer className="text-center">
+        <p className="text-[9px] text-slate-600 uppercase tracking-[0.4em]">
+          Eje de Enfoque Activo • Sistemicar OS
+        </p>
+      </footer>
+    </div>
+  );
+}
+

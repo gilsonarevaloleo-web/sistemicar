@@ -1,0 +1,20 @@
+​Prompt para el Agente de Replit
+​Contexto: Modificar client/src/pages/planeacion.tsx para evolucionar el sistema de planificación hacia la v2.6 (Estructura de 3 Cápsulas).
+​1. Re-configuración de Cápsulas (Lógica de Deuda):
+​Modificar el cálculo del Monitor de Minutos de Retraso: Los vehículos de tipo omitido (Cápsula Panorámica) NO deben sumar minutos de deuda al contador rojo, sin importar la hora.
+​Los vehículos de tipo situacion y hora (Cápsula Operativa) mantienen su lógica actual de deuda.
+​2. Evolución del Vehículo Profundo (Análisis de las 4 Capas):
+Cambiar los labels y los placeholders de los 4 ejes en el componente de creación/edición de Vehículos Profundos por los siguientes Observatorios de Capas, incluyendo sus 4 preguntas guía por eje:
+​Eje 1: Fricción de Inercia (Capa 1)
+​Preguntas: ¿Qué distracción intentó frenar el arranque? ¿Qué pensamiento de resistencia hubo? ¿Cómo fue el primer paso físico? ¿Cuánto duró la inercia?
+​Eje 2: Nudo de Frustración (Capa 2)
+​Preguntas: ¿Qué imprevisto rompió la fluidez? ¿Qué emoción sentiste al fallar? ¿Cómo reaccionaste al error? ¿Ajustaste el plan o te estresaste?
+​Eje 3: Ancla de Aburrimiento (Capa 3)
+​Preguntas: ¿En qué momento perdiste el interés? ¿Qué "dopamina barata" buscó tu cerebro? ¿Cómo recuperaste el enfoque? ¿Fue aburrimiento técnico o mental?
+​Eje 4: Umbral de Fatiga (Capa 4)
+​Preguntas: ¿Es cansancio físico real o mental? ¿Cómo varió tu velocidad al final? ¿Qué principio aplicaste para no rendirte? ¿Qué aprendiste de tu límite hoy?
+​3. Sistema de Puntos por Conciencia:
+​Reforzar la función countDetails: Mantener la lógica de otorgar +1 PS por cada detalle relevante (palabra clave o frase descriptiva) en estos nuevos ejes.
+​Si el usuario completa los 4 ejes con más de 10 palabras por eje, otorgar un bono automático de +15 PS por "Alta Introspección".
+​4. Interfaz:
+​Asegurar que la Cápsula Panorámica (Vehículos Express tipo Omitir) se visualice en la parte superior como un bloque de "Estructura" antes de la lista de ejecución.

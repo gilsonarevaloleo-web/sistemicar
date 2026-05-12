@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SISTEMI - El Tablero del Arquitecto</title>
+    <!-- Frameworks y Fuentes -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --gold: #bf953f;
+            --gold-light: #fcf6ba;
+            --deep-black: #050505;
+        }
+        body {
+            background-color: var(--deep-black);
+            color: #e5e5e5;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+        .font-cinzel { font-family: 'Cinzel', serif; }
+        .gold-text {
+            background: linear-gradient(to right, #bf953f, #fcf6ba, #b38728, #fbf5b7, #aa771c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(191, 149, 63, 0.2);
+            border-radius: 2rem;
+        }
+        .oracle-glow {
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.1);
+        }
+        input::placeholder { color: rgba(255, 255, 255, 0.2); }
+        .fade-in { animation: fadeIn 1.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <div id="app" class="max-w-6xl mx-auto p-6 md:p-12 space-y-12 fade-in">
+        
+        <!-- Header de Soberanía -->
+        <header class="flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="text-center md:text-left">
+                <h1 class="font-cinzel text-4xl gold-text font-bold tracking-tighter">SISTEMI</h1>
+                <p class="text-[10px] uppercase tracking-[0.4em] text-gray-500 mt-2 font-semibold">Tecnología de Soberanía Personal</p>
+            </div>
+            <div class="flex items-center gap-4 bg-white/5 px-6 py-2 rounded-full border border-white/10">
+                <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse shadow-[0_0_10px_#3b82f6]"></div>
+                <span class="text-[10px] font-bold uppercase tracking-widest text-blue-400">Oráculo Activo</span>
+            </div>
+        </header>
+
+        <!-- Sección del Oráculo (IA + Google Search) -->
+        <section class="glass-card p-8 md:p-12 oracle-glow relative overflow-hidden">
+            <div class="absolute top-0 right-0 p-8 opacity-10">
+                <span class="font-cinzel text-6xl">✧</span>
+            </div>
+            
+            <div class="relative z-10 space-y-6">
+                <h2 class="font-cinzel text-2xl gold-text uppercase">Consultar al Oráculo</h2>
+                <p class="text-sm text-gray-400 max-w-xl">
+                    Utilice la inteligencia planetaria para transmutar sus dudas en estrategias. El cálculo de 5 minutos está procesando datos globales ahora mismo.
+                </p>
+                
+                <div class="flex flex-col md:flex-row gap-4">
+                    <input type="text" id="userQuery" 
+                           placeholder="¿Qué cálculo de soberanía necesita hoy, Arquitecto?" 
+                           class="flex-1 bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:border-blue-500 outline-none transition-all">
+                    <button id="btnConsultar" class="bg-gradient-to-r from-blue-700 to-blue-500 text-white font-bold px-10 py-4 rounded-2xl text-xs uppercase tracking-widest hover:scale-105 transition-transform active:scale-95">
+                        Consultar
+                    </button>
+                </div>
+
+                <!-- Respuesta del Oráculo -->
+                <div id="oracleResponse" class="hidden mt-8 p-6 bg-blue-500/5 rounded-2xl border border-blue-500/20 text-sm leading-relaxed text-gray-300 italic">
+                    <!-- La respuesta se inyectará aquí -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Grid de Secciones -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Cápsulas de Conflicto -->
+            <div class="glass-card p-8 hover:border-yellow-600/40 transition-colors">
+                <h3 class="font-cinzel text-xl gold-text mb-4">Cápsulas de Conflicto</h3>
+                <p class="text-xs text-gray-500 mb-6 uppercase tracking-widest">Alquimia de Estado</p>
+                <div class="space-y-4">
+                    <textarea placeholder="Registre el conflicto aquí..." class="w-full h-32 bg-black/20 border border-white/5 rounded-xl p-4 text-sm focus:border-yellow-600/50 outline-none"></textarea>
+                    <button class="w-full py-3 border border-yellow-600/30 text-yellow-600 text-[10px] font-bold uppercase tracking-widest hover:bg-yellow-600 hover:text-black transition-all">
+                        Transmutar Conflicto
+                    </button>
+                </div>
+            </div>
+
+            <!-- El Códice -->
+            <div class="glass-card p-8">
+                <h3 class="font-cinzel text-xl gold-text mb-4">El Códice</h3>
+                <p class="text-xs text-gray-500 mb-6 uppercase tracking-widest">Sabiduría Acumulada</p>
+                <div class="space-y-4 opacity-40">
+                    <div class="p-4 border-b border-white/5 flex justify-between items-center">
+                        <span class="text-xs">Lección: Resiliencia ante la fiebre</span>
+                        <span class="text-[9px] text-yellow-600">19 DIC 24</span>
+                    </div>
+                    <div class="p-4 border-b border-white/5 flex justify-between items-center">
+                        <span class="text-xs">Estrategia: Mercado de Algodón</span>
+                        <span class="text-[9px] text-yellow-600">18 DIC 24</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="text-center py-12">
+            <p class="text-[9px] uppercase tracking-[0.6em] text-gray-600">Arquitecto Gilson — SISTEMI v2.5 — Lima, Perú</p>
+        </footer>
+    </div>
+
+    <!-- Script de Lógica e Integración -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Variables
+        const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
+        const appId = window.__app_id || 'default-sistemi';
+        const apiKey = ""; // Entorno gestiona la clave
+
+        // Init Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Auth Listener
+        let currentUser = null;
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                console.log("SISTEMI: Identidad Consolidada", user.uid);
+            } else {
+                signInAnonymously(auth);
+            }
+        });
+
+        // Gemini Function
+        async function fetchOracle(prompt) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                tools: [{ "google_search": {} }],
+                systemInstruction: { 
+                    parts: [{ text: "Eres SISTEMI, mentor de soberanía para el Arquitecto Gilson. Usa búsqueda en Google para dar respuestas exactas y estratégicas." }] 
+                }
+            };
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || "El Oráculo está en silencio. Intente de nuevo.";
+        }
+
+        // UI Interactions
+        document.getElementById('btnConsultar').addEventListener('click', async () => {
+            const query = document.getElementById('userQuery').value;
+            const responseBox = document.getElementById('oracleResponse');
+            
+            if (!query) return;
+
+            responseBox.classList.remove('hidden');
+            responseBox.innerHTML = "<span class='animate-pulse'>Sintonizando con la inteligencia planetaria...</span>";
+
+            try {
+                const result = await fetchOracle(query);
+                responseBox.innerText = result;
+                
+                // Save to history (Private Data Rule)
+                if (currentUser) {
+                    const docRef = doc(collection(db, 'artifacts', appId, 'users', currentUser.uid, 'consultas'));
+                    await setDoc(docRef, { query, result, timestamp: Date.now() });
+                }
+            } catch (err) {
+                responseBox.innerText = "Error en la conexión. Verifique la API Key o el modelo.";
+            }
+        });
+    </script>
+</body>
+</html>

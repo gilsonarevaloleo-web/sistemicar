@@ -1,0 +1,28 @@
+🛠️ PROMPT DE INGENIERÍA: COMPONENTE "UMBRAL DE EXPANSIÓN"
+Objetivo: Desarrollar un módulo de reprogramación neuro-visual basado en la lateralidad cerebral y la estructura de los 4 ejes (Identidad, Lenguaje, Acción, Tiempo).
+1. INTERFAZ DIVIDIDA (THE SPLIT UI)
+ * Divide la pantalla en dos mitades exactas: IZQUIERDA (Cerebro Lógico/Gris) y DERECHA (Cerebro Creativo/Color).
+ * El usuario debe sentir visualmente el cambio de "frecuencia" entre ambos lados.
+2. FASE DE AUTOPSIA (Lado Izquierdo - El Límite)
+ * Implementa un flujo obligatorio de 4 pasos para identificar la estructura del límite. No permitir el avance sin completar estos ejes:
+   * Eje de Identidad: "¿Quién eres cuando este límite te domina?" (Nombre de la Sombra).
+   * Eje de Lenguaje: "¿Qué frase o sentencia te repite este límite constantemente?"
+   * Eje de Acción: "¿Qué te impide hacer o qué te obliga a repetir este límite?"
+   * Eje de Tiempo: "¿A qué momento del pasado o miedo del futuro te ancla?"
+ * Visualización: Crea un "Personaje de Sombra" que se vista con estas 4 características.
+3. MECANISMO DE CRUCE (The Ocular Bridge)
+ * Al completar los ejes, activa un botón: "INICIAR CORTE DE ESTRUCTURA".
+ * Genera una animación de un punto de luz (o una sierra estilizada) que cruce la pantalla de Izquierda a Derecha.
+ * Instrucción en pantalla: "Sigue el estímulo con tus ojos. No muevas la cabeza. Rompe el vínculo."
+ * Lógica: El sistema debe procesar la inversión de los datos recolectados durante este movimiento.
+4. FASE DE RE-VESTIMIENTO (Lado Derecho - La Expansión)
+ * Utiliza la "materia prima" del límite para crear el "Personaje de Poder". Invierte los ejes automáticamente como sugerencia, pero permite que el usuario los refine:
+   * Identidad Inversa: Del nombre de sombra al Nombre de Soberanía.
+   * Lenguaje Inverso: De la sentencia al Decreto de Oro.
+   * Acción Inversa: De la parálisis al Hábito de Conquista.
+   * Tiempo Inverso: Del ancla al Presente Continuo de Poder.
+ * Visualización: El personaje de la derecha debe verse "iluminado" y con una geometría expansiva.
+5. REQUERIMIENTOS TÉCNICOS
+ * Estado (State): Almacena los personajes creados en una galería persistente (Firebase/Firestore) dentro del perfil del usuario bajo el nombre galeria_aliados.
+ * Gamificación: Suma "Puntos de Soberanía" por cada eje invertido con éxito.
+ * Sonido: Incluye un cambio de frecuencia auditiva (de grave a agudo/armónico) durante el cruce de hemisferios.

@@ -1,0 +1,269 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, doc, onSnapshot, setDoc, query, collection, orderBy, limit, serverTimestamp 
+} from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { Target, Flame, Shield, Share2, Zap, Lock, Archive, CheckCircle2, Crown } from 'lucide-react';
+
+// --- CONFIGURACIÓN DE INFRAESTRUCTURA ---
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
+};
+
+// Inicialización de Servicios
+let db, auth;
+const isConfigured = !!firebaseConfig.apiKey;
+
+if (isConfigured) {
+  try {
+    const app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (e) {
+    console.error("Error en la conexión del Núcleo:", e);
+  }
+}
+
+const APP_ID = 'sistemicar-v2-5';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('consola');
+  const [userData, setUserData] = useState({ soberania: 10, rango: 'Iniciado' });
+  const [pasoJefe, setPasoJefe] = useState(null);
+  const [plomo, setPlomo] = useState('');
+  const [oro, setOro] = useState('');
+  const [sabiduria, setSabiduria] = useState(0);
+
+  // Protocolo de Identidad Soberana (Acceso Anónimo)
+  useEffect(() => {
+    if (!auth) return;
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        try { 
+          await signInAnonymously(auth); 
+        } catch (e) { 
+          console.error("Fallo en la autenticación silenciosa");
+        }
+      }
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sincronización en Tiempo Real con Firebase
+  useEffect(() => {
+    if (!user || !db) return;
+    
+    // Sincronizar Perfil de Usuario
+    const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid);
+    const unsubProfile = onSnapshot(userRef, (d) => {
+      if (d.exists()) {
+        setUserData(d.data());
+      } else {
+        // Inicializar nuevo usuario en la nube
+        setDoc(userRef, { 
+          soberania: 10, 
+          rango: 'Iniciado', 
+          uid: user.uid,
+          createdAt: serverTimestamp() 
+        });
+      }
+    }, (err) => console.error("Error de lectura en Firestore:", err));
+    
+    // Sincronizar Último Paso Jefe
+    const qMisiones = query(
+      collection(db, 'artifacts', APP_ID, 'users', user.uid, 'misiones'), 
+      orderBy('createdAt', 'desc'), 
+      limit(1)
+    );
+    const unsubMisiones = onSnapshot(qMisiones, (s) => {
+      if (!s.empty) {
+        setPasoJefe({ id: s.docs[0].id, ...s.docs[0].data() });
+      }
+    }, (err) => console.error("Error en misiones:", err));
+
+    return () => { unsubProfile(); unsubMisiones(); };
+  }, [user]);
+
+  const transmutar = () => {
+    if (!plomo || !oro) return;
+    const ratio = Math.min(100, (plomo.length / (oro.length * 2)) * 10);
+    const total = Math.round((ratio + (userData.soberania || 10)) / 1.5);
+    setSabiduria(total > 100 ? 100 : total);
+  };
+
+  const copiarActivo = () => {
+    const certId = Math.random().toString(36).substring(7).toUpperCase();
+    const texto = `🏛️ ACTIVO INTELECTUAL - SISTEMICAR\n\n"${oro}"\n\nLegitimidad: ${sabiduria}%\nID Registro: ${certId}\nSoberanía: ${userData.soberania}%\n\nValidado por Sistemicar v2.5`;
+    
+    // Fallback para copiado en iFrames
+    const el = document.createElement('textarea');
+    el.value = texto;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    
+    alert("🏛️ Activo Registrado. Su soberanía ha sido magnetizada.");
+  };
+
+  if (!isConfigured) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-10 text-center">
+        <Zap className="text-yellow-500 animate-pulse mb-8" size={48} />
+        <h1 className="text-white font-serif italic text-2xl mb-4">Sincronizando ADN...</h1>
+        <div className="space-y-2">
+          <p className="text-zinc-600 text-[8px] font-black uppercase tracking-[0.4em]">Esperando Inyección de Secrets</p>
+          <div className="flex justify-center gap-1 opacity-20">
+            {[1,2,3,4,5].map(i => <div key={i} className="w-1 h-1 bg-yellow-500 rounded-full"></div>)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#020202] text-zinc-400 p-6 font-sans selection:bg-blue-500/30">
+      <main className="max-w-md mx-auto pb-32">
+        <header className="text-center py-8">
+          <h2 className="text-4xl font-serif italic text-white tracking-tighter uppercase">Sistemicar</h2>
+          <div className="flex justify-center items-center gap-3 mt-3">
+            <div className="h-[1px] w-8 bg-gradient-to-r from-transparent to-blue-500/40"></div>
+            <p className="text-[7px] font-black uppercase tracking-[0.5em] text-blue-500">Núcleo Operativo</p>
+            <div className="h-[1px] w-8 bg-gradient-to-l from-transparent to-blue-500/40"></div>
+          </div>
+        </header>
+
+        {activeTab === 'consola' && (
+          <div className="space-y-8 animate-in">
+            <section className="glass p-12 rounded-[4rem] border border-white/5 relative overflow-hidden shadow-2xl">
+              <div className="absolute -top-10 -right-10 opacity-5 rotate-12 text-white"><Target size={160} /></div>
+              <h3 className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600 mb-10 text-center">Paso Jefe Prioritario</h3>
+              
+              {pasoJefe ? (
+                <div className="space-y-10 text-center">
+                  <p className="text-2xl font-serif italic text-zinc-100 leading-relaxed px-2">"{pasoJefe.texto}"</p>
+                  <div className="flex gap-4">
+                    <button className="flex-1 py-5 bg-yellow-500/10 border border-yellow-500/20 rounded-full text-[9px] font-black uppercase text-yellow-500 hover:bg-yellow-500/20 active:scale-95 transition-all">Vencido</button>
+                    <button className="flex-1 py-5 bg-zinc-900 border border-white/5 rounded-full text-[9px] font-black uppercase text-zinc-500">Archivar</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-14 text-center">
+                  <p className="text-zinc-800 italic text-xs mb-8">El radar de misiones está en calma.</p>
+                  <button className="px-10 py-4 bg-blue-500/5 border border-blue-500/10 rounded-full text-[8px] font-black uppercase text-blue-500 tracking-widest hover:bg-blue-500/10 transition-all">Detectar Pulso</button>
+                </div>
+              )}
+            </section>
+
+            <div className="p-7 glass rounded-[2.5rem] border border-white/5 flex justify-between items-center group">
+              <div className="flex items-center gap-5">
+                <div className="p-4 bg-blue-500/10 rounded-2xl text-blue-500 shadow-inner group-hover:scale-110 transition-transform"><Shield size={22}/></div>
+                <div>
+                  <p className="text-[8px] font-black uppercase text-zinc-500 tracking-tighter">Estado de Soberanía</p>
+                  <p className="text-sm font-serif italic text-white">{userData.soberania}% Operativo</p>
+                </div>
+              </div>
+              <Crown className="text-zinc-900" size={20}/>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'alquimia' && (
+          <div className="space-y-8 animate-in">
+            <div className="glass p-10 rounded-[3.5rem] border border-white/5 space-y-8">
+              <div className="space-y-3">
+                <label className="text-[8px] font-black uppercase text-zinc-600 tracking-widest px-1">Materia Prima (Plomo)</label>
+                <textarea 
+                  value={plomo} 
+                  onChange={(e) => setPlomo(e.target.value)} 
+                  placeholder="Vuelca aquí el ruido mental o el problema denso..." 
+                  className="w-full bg-transparent border-none text-xs italic text-zinc-500 h-28 outline-none resize-none placeholder:text-zinc-800" 
+                />
+              </div>
+
+              <div className="flex justify-center relative">
+                <button 
+                  onClick={transmutar} 
+                  className="p-7 bg-yellow-500/10 border border-yellow-500/20 rounded-full hover:bg-yellow-500/20 transition-all z-10 relative group"
+                >
+                  <Flame className="text-yellow-500 group-hover:scale-110 transition-transform" size={32}/>
+                  <div className="absolute inset-0 rounded-full bg-yellow-500/5 animate-ping -z-10"></div>
+                </button>
+              </div>
+
+              <div className="space-y-3 pt-8 border-t border-white/5">
+                <label className="text-[8px] font-black uppercase text-yellow-600 tracking-widest px-1 text-center block">Esencia Destilada (Oro)</label>
+                <textarea 
+                  value={oro} 
+                  onChange={(e) => setOro(e.target.value)} 
+                  placeholder="La verdad concisa y absoluta..." 
+                  className="w-full bg-transparent border-none text-2xl font-serif italic text-yellow-100 h-24 outline-none text-center resize-none placeholder:text-yellow-900/30" 
+                />
+              </div>
+            </div>
+
+            {sabiduria > 0 && (
+              <div className="text-center animate-in space-y-10">
+                <div className="inline-flex items-center justify-center p-[3px] rounded-full bg-gradient-to-b from-yellow-500/30 via-yellow-500/5 to-transparent shadow-2xl">
+                  <div className="w-36 h-36 rounded-full bg-black flex flex-col items-center justify-center border border-white/5">
+                    <span className="text-4xl font-serif text-yellow-500 leading-none">{sabiduria}%</span>
+                    <span className="text-[7px] font-black uppercase text-yellow-700 tracking-[0.3em] mt-3">Legitimidad</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={copiarActivo} 
+                  className="w-full py-6 bg-yellow-500/5 border border-yellow-500/10 rounded-full text-[10px] font-black uppercase tracking-[0.2em] text-yellow-500 flex items-center justify-center gap-3 active:scale-95 transition-all shadow-lg"
+                >
+                  <Share2 size={18}/> Exportar Sabiduría
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* Navegación Inferior */}
+      <nav className="fixed bottom-10 left-10 right-10 flex justify-center z-50">
+        <div className="glass px-12 py-6 rounded-full border border-white/10 flex gap-14 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-3xl">
+          <button 
+            onClick={() => setActiveTab('consola')} 
+            className={`transition-all ${activeTab === 'consola' ? 'text-blue-500 scale-125' : 'text-zinc-800 hover:text-zinc-600'}`}
+          >
+            <Target size={26}/>
+          </button>
+          <button 
+            onClick={() => setActiveTab('alquimia')} 
+            className={`transition-all ${activeTab === 'alquimia' ? 'text-yellow-500 scale-125' : 'text-zinc-800 hover:text-zinc-600'}`}
+          >
+            <Flame size={26}/>
+          </button>
+          <button 
+            onClick={() => setActiveTab('manifiesto')} 
+            className={`transition-all ${activeTab === 'manifiesto' ? 'text-white scale-125' : 'text-zinc-800 hover:text-zinc-600'}`}
+          >
+            <Shield size={26}/>
+          </button>
+        </div>
+      </nav>
+
+      <style>{`
+        .glass { background: rgba(255, 255, 255, 0.01); backdrop-filter: blur(50px); }
+        body { background: #000; margin: 0; overflow-x: hidden; color-scheme: dark; }
+        .animate-in { animation: fadeIn 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        * { -webkit-tap-highlight-color: transparent; }
+        textarea::placeholder { transition: opacity 0.3s ease; }
+        textarea:focus::placeholder { opacity: 0; }
+      `}</style>
+    </div>
+  );
+}
+

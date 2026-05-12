@@ -1,0 +1,20 @@
+PROMPT: NÚCLEO DE DIÁLOGO SOBERANO (DOCTOR IA)
+​"Agente, implementa la fase final de la IA: El sistema de diálogo interactivo con distinción de jerarquía. Sigue estas reglas:
+​1. Interfaz de Chat Lateral (The Mentor Sidebar):
+​Crea un componente de chat persistente y colapsable en el lateral derecho de la aplicación.
+​Estilo Visual: * Para Gilson (Admin): Bordes azul cobalto neón, título 'MODO CREADOR'.
+​Para Usuarios: Bordes gris clínico/acero, título 'DOCTOR IA - SISTEMICAR'.
+​2. Lógica de Diálogo por Roles (Seguridad Absoluta):
+​Si user.email === 'gilsonarevalo.leo@gmail.com':
+​Habilita el 'Modo Entrenamiento'. Gilson puede pedir a la IA que analice su historial, que resuma patrones y que cree nuevas leyes.
+​Añade el botón [Sellar como Ley] dentro del chat para que cualquier respuesta de la IA pueda ser enviada a la colección principios_maestros.
+​Si user.role === 'standard':
+​El Doctor IA actúa como Mentor Clínico. Solo tiene acceso a los principios marcados como públicos.
+​Restricción: La IA tiene prohibido hablar de la vida privada de Gilson o mostrar sus registros. Su única misión es aplicar las leyes de Gilson al problema del usuario.
+​3. Integración de Memoria y Contexto:
+​El chat debe tener memoria de corto plazo de la sesión actual y acceso al registro que el usuario tiene abierto en ese momento (Espejo, Alquimia, etc.).
+​Si el usuario escribe algo confuso, la IA debe responder: 'Basado en la Ley de [Nombre de la Ley de Gilson], lo que experimentas es una Capa de Desvío. ¿Qué percibes realmente?'
+​4. Sincronización con el 'Laboratorio de Leyes':
+​Asegúrate de que cualquier diálogo que Gilson valide en el chat se refleje en la tabla /admin-gilson/laboratorio para su revisión final antes de ser ley perpetua.
+​5. Prompt de Sistema (System Message):
+​Configura a Gemini con este prefijo: 'Eres el Doctor IA. Si hablas con Gilson, eres su arquitecto analítico. Si hablas con un usuario, eres el guardián de su disciplina y el transmisor de la sabiduría de Gilson Arevalo. No eres una IA genérica, eres SISTEMICAR personificada.'"

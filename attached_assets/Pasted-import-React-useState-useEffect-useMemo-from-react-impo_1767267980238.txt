@@ -1,0 +1,187 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, collection, addDoc, query, onSnapshot, 
+  serverTimestamp, doc, setDoc, updateDoc, deleteDoc, orderBy, limit 
+} from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { 
+  Brain, Sparkles, Zap, Shield, Target, 
+  History, Info, ChevronRight, Lock, Trophy, 
+  Plus, X, Flame, Eye, Compass, Share2, Award, TrendingUp, Archive, CheckCircle2
+} from 'lucide-react';
+
+// --- INFRAESTRUCTURA SEGURA ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'sistemicar-v2-5';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('consola'); 
+  const [userData, setUserData] = useState({ rango: 'Iniciado', esperanza: 50, soberania: 10 });
+  const [ideas, setIdeas] = useState([]);
+  const [pasoJefe, setPasoJefe] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [patrones, setPatrones] = useState([]);
+  
+  // Estados Alquimia
+  const [plomo, setPlomo] = useState('');
+  const [oro, setOro] = useState('');
+  const [sabiduria, setSabiduria] = useState(0);
+
+  // 1. AUTENTICACIÓN
+  useEffect(() => {
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  // 2. SINCRONIZACIÓN (FIREBASE PURO)
+  useEffect(() => {
+    if (!user) return;
+    const userRef = doc(db, 'artifacts', appId, 'users', user.uid);
+    const unsub = onSnapshot(userRef, (d) => {
+      if (d.exists()) setUserData(d.data());
+      else setDoc(userRef, { rango: 'Iniciado', esperanza: 50, soberania: 10 });
+    });
+    
+    // Cargar Paso Jefe Activo
+    const qJ = query(collection(db, 'artifacts', appId, 'users', user.uid, 'pasoJefe'), orderBy('createdAt', 'desc'), limit(1));
+    const unsubJ = onSnapshot(qJ, (s) => {
+      if (!s.empty) setPasoJefe({ id: s.docs[0].id, ...s.docs[0].data() });
+    });
+
+    return () => { unsub(); unsubJ(); };
+  }, [user]);
+
+  // 3. LÓGICA DE ALQUIMIA (EL ALGORITMO DE SABIDURÍA)
+  const destilarSabiduria = () => {
+    if (!plomo || !oro) return;
+    const ratio = Math.min(100, (plomo.length / (oro.length * 2)) * 10);
+    const final = Math.round((ratio + (userData.soberania || 0)) / 1.5);
+    setSabiduria(final > 100 ? 100 : final);
+  };
+
+  const compartirActivo = () => {
+    const idCert = Math.random().toString(36).toUpperCase().substring(2, 10);
+    const texto = `🏛️ ACTIVO INTELECTUAL - SISTEMICAR\n\n" ${oro} "\n\nLegitimidad: ${sabiduria}%\nID: ${idCert}\nSoberanía Operativa: ${userData.soberania}%\n\nÚnete a la Red de Soberanía.`;
+    navigator.clipboard.writeText(texto);
+    alert("🏛️ Activo Copiado. Listo para Magnetizar.");
+  };
+
+  // 4. RADAR IA (USANDO SECRETS DE REPLIT)
+  const ejecutarAnalisis = async () => {
+    if (isAnalyzing || ideas.length < 2) return;
+    setIsAnalyzing(true);
+    // Intentamos obtener la llave de los secrets (inyectados en el entorno)
+    const apiKey = ""; // Replit maneja esto mediante el proxy de API si está configurado
+    
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `Analiza: ${ideas.map(i => i.texto).join('|')}. Dame 2 patrones. JSON: {"p":[{"t":"titulo","e":"explicacion"}]}` }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      });
+      const data = await res.json();
+      const content = JSON.parse(data.candidates[0].content.parts[0].text);
+      setPatrones(content.p);
+    } catch (e) { console.error("IA Silenciada"); }
+    finally { setIsAnalyzing(false); }
+  };
+
+  // --- VISTAS ---
+  const VistaConsola = () => (
+    <div className="space-y-6 animate-in fade-in">
+      <header className="text-center py-4">
+        <h2 className="text-2xl font-serif italic text-white">Consola Operativa</h2>
+        <div className="flex justify-center gap-1 mt-2">
+          <div className={`h-1 w-12 rounded-full ${userData.esperanza > 50 ? 'bg-blue-500' : 'bg-zinc-800'}`}></div>
+          <div className="h-1 w-12 rounded-full bg-zinc-800"></div>
+        </div>
+      </header>
+
+      {/* PASO JEFE */}
+      <div className="glass p-8 rounded-[3rem] border border-white/5 relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-4 opacity-10"><Zap size={40}/></div>
+        <h3 className="text-[8px] font-black uppercase tracking-widest text-zinc-500 mb-4">Paso Jefe Actual</h3>
+        
+        {pasoJefe ? (
+          <div className="space-y-6">
+            <p className="text-xl font-serif italic text-white">"{pasoJefe.texto}"</p>
+            <div className="flex gap-2">
+              <button className="flex-1 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-full text-[8px] font-black uppercase text-yellow-500 flex items-center justify-center gap-2">
+                <CheckCircle2 size={12}/> Vencido
+              </button>
+              <button className="flex-1 py-3 bg-zinc-800/50 border border-white/5 rounded-full text-[8px] font-black uppercase text-zinc-500 flex items-center justify-center gap-2">
+                <Archive size={12}/> Archivar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="py-4 text-center text-zinc-600 italic text-xs">No hay un Paso Jefe activo...</div>
+        )}
+      </div>
+
+      {/* ESTADO GUERRERO */}
+      <div className="p-6 glass rounded-[2.5rem] border-blue-500/20 flex justify-between items-center">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-blue-500/10 rounded-2xl"><Shield className="text-blue-500" size={20}/></div>
+          <div>
+            <p className="text-[8px] font-black uppercase text-zinc-500">Rango Actual</p>
+            <p className="text-sm font-serif italic text-white">{userData.rango}</p>
+          </div>
+        </div>
+        <Lock className="text-zinc-800" size={16}/>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#020202] text-zinc-400 p-6 pb-32">
+      <main className="max-w-md mx-auto">
+        {activeTab === 'consola' && <VistaConsola />}
+        {activeTab === 'alquimia' && (
+          <div className="space-y-6 animate-in fade-in">
+            <div className="glass p-6 rounded-3xl space-y-4">
+              <textarea value={plomo} onChange={(e) => setPlomo(e.target.value)} placeholder="Plomo (Conflicto)..." className="w-full bg-transparent border-none text-xs italic outline-none h-20" />
+              <div className="flex justify-center"><button onClick={destilarSabiduria} className="p-3 bg-yellow-500/10 rounded-full"><Flame className="text-yellow-500"/></button></div>
+              <textarea value={oro} onChange={(e) => setOro(e.target.value)} placeholder="Oro (Sabiduría)..." className="w-full bg-transparent border-none text-sm font-serif italic text-yellow-100 outline-none" />
+            </div>
+            {sabiduria > 0 && (
+              <div className="text-center animate-in zoom-in">
+                <div className="text-3xl font-serif text-yellow-500 mb-4">{sabiduria}%</div>
+                <button onClick={compartirActivo} className="w-full py-4 border border-yellow-500/30 rounded-full text-[9px] font-black uppercase text-yellow-500">Exportar Activo Intelectual</button>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      <nav className="fixed bottom-6 left-6 right-6 flex justify-center">
+        <div className="glass px-8 py-4 rounded-full border border-white/10 flex gap-10">
+          <button onClick={() => setActiveTab('consola')} className={activeTab === 'consola' ? 'text-blue-400' : 'text-zinc-600'}><Target size={22}/></button>
+          <button onClick={() => setActiveTab('alquimia')} className={activeTab === 'alquimia' ? 'text-yellow-500' : 'text-zinc-600'}><Flame size={22}/></button>
+          <button onClick={() => setActiveTab('manifiesto')} className={activeTab === 'manifiesto' ? 'text-white' : 'text-zinc-600'}><Shield size={22}/></button>
+        </div>
+      </nav>
+
+      <style>{`
+        .glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(20px); }
+        body { background: #020202; }
+      `}</style>
+    </div>
+  );
+}
+

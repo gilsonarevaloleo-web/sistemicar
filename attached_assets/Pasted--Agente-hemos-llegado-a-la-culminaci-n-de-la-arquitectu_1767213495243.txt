@@ -1,0 +1,21 @@
+​"Agente, hemos llegado a la culminación de la arquitectura. Realiza estas tareas finales:
+​Unificación: Elimina cualquier sección duplicada de 'Manifiesto' y consolida todo en el área de 'Acerca de / Manifiesto' utilizando el contenido de ManifiestoSistemicar.md.
+​Visual: Esta sección debe tener un diseño minimalista pero imponente. Usa un fondo oscuro profundo con texto en gris suave y resaltados en azul cobalto.
+​Lógica de Navegación: Asegúrate de que todos los componentes (Vehículos, Radar, Esperanza, Historial y Alianza) estén conectados bajo la lógica de permisos que definimos anteriormente.
+​Lanzamiento: El sistema ya está listo para que el usuario comience su fase de 'Iniciado'."*
+SISTEMICAR v2.5: MANIFIESTO DE SOBERANÍA
+"Donde la Disciplina se encuentra con la Intuición"
+1. LA VISIÓN: EL FIN DEL CAOS
+SISTEMICAR no es una herramienta de productividad; es un Protocolo de Recuperación de Voluntad. En un mundo diseñado para fragmentar tu atención, nosotros construimos la infraestructura para blindarla.
+2. LOS PILARES DEL PODER
+Este sistema se sostiene sobre tres tecnologías de desarrollo humano:
+ * Ingeniería de la Esperanza: No medimos tareas, medimos tu capacidad de ver el futuro con claridad. La Esperanza es el eje que desbloquea tu potencial de expansión.
+ * Apalancamiento Subconsciente: A través del Radar de IA (Gemini), capturamos tus "Deseos Locos" y revelamos los patrones ocultos que tu mente consciente no puede ver.
+ * Meritocracia del Guerrero: El acceso a las herramientas de élite no se compra, se conquista. Solo aquellos con disciplina probada a través del "Efecto Reto" acceden a la red de aliados.
+3. LA RED DE EXPANSIÓN (ALIANZA)
+Creemos en la soberanía financiera tanto como en la mental. Por ello, el nivel de Arquitecto de Red permite a nuestros guerreros más probados participar en la expansión del sistema, reteniendo el 30% de cada nueva voluntad incorporada a la red.
+4. COMPROMISO TÉCNICO
+ * Privacidad Absoluta: Tus chispazos y misiones son tuyos. La IA analiza patrones, pero no almacena tu identidad fuera de tu bóveda.
+ * Evolución Continua: El sistema aprende de tu historial para ofrecerte "Alquimia" personalizada.
+SISTEMICAR v2.5 Diseñado para el Arquitecto de Realidad. Ejecutado por la Voluntad.
+"La disciplina es el puente entre el deseo loco y la realidad soberana."

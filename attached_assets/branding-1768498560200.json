@@ -1,0 +1,80 @@
+{
+  "colorScheme": "dark",
+  "fonts": [
+    {
+      "family": "Inter",
+      "count": 54
+    },
+    {
+      "family": "sans-serif",
+      "count": 54
+    }
+  ],
+  "colors": {
+    "primary": "#62748E",
+    "accent": "#D4AF37",
+    "background": "#030303",
+    "textPrimary": "#030303",
+    "link": "#D4AF37"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "Inter",
+      "heading": "Inter"
+    },
+    "fontStacks": {
+      "body": [
+        "Inter",
+        "sans-serif"
+      ],
+      "heading": [
+        "Inter",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "Inter",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "30px",
+      "h2": "20px",
+      "body": "12px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 8,
+    "borderRadius": "0px"
+  },
+  "components": {},
+  "images": {
+    "logo": "File saved at: attached_assets/logo.svg",
+    "favicon": "https://sistemicar.app/favicon.svg",
+    "ogImage": null
+  },
+  "__framework_hints": [],
+  "__llm_logo_reasoning": {
+    "selectedIndex": 0,
+    "reasoning": "Logo rejected: Red flags detected (small square icon). Heuristic fallback: Moderate indicators: in header, header location, visible, small square icon (likely UI icon, heavy penalty), SVG format. Score: 51. May benefit from LLM validation.",
+    "confidence": 0.5,
+    "rejected": true
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": -1,
+      "text": "N/A",
+      "reasoning": "LLM failed"
+    },
+    "secondary": {
+      "index": -1,
+      "text": "N/A",
+      "reasoning": "LLM failed"
+    },
+    "confidence": 0
+  },
+  "confidence": {
+    "buttons": 0,
+    "colors": 0,
+    "overall": 0
+  }
+}

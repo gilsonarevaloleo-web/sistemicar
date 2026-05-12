@@ -1,0 +1,46 @@
+# SISTEMICAR - Robots.txt
+# Evitar indexación de rutas internas
+
+User-agent: *
+
+# Páginas públicas permitidas
+Allow: /
+Allow: /umbral
+Allow: /ventas-espejo
+Allow: /terminos-condiciones
+Allow: /libro-reclamaciones
+
+# Bloquear todas las rutas internas de la aplicación
+Disallow: /menu
+Disallow: /console
+Disallow: /planeacion
+Disallow: /esperanza
+Disallow: /rewards
+Disallow: /analytics
+Disallow: /acerca
+Disallow: /pagos
+Disallow: /socios
+Disallow: /admin-gilson
+Disallow: /historial
+Disallow: /alquimia
+Disallow: /radar
+Disallow: /historia
+Disallow: /codice
+Disallow: /escaner
+Disallow: /inmunidad
+Disallow: /como-funciona
+Disallow: /umbral
+Disallow: /proyector
+Disallow: /bienvenida
+Disallow: /acceso
+Disallow: /embudo
+Disallow: /documentos
+Disallow: /espejo
+Disallow: /gracias-compra
+Disallow: /tutorial
+
+# Bloquear acceso a archivos de assets
+Disallow: /assets/
+
+# Sitemap (si existe)
+# Sitemap: https://sistemicar.app/sitemap.xml

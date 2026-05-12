@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SISTEMI - Plataforma de Comando</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg: #050505; --accent: #eab308; }
+        body { background: var(--bg); color: #e2e8f0; font-family: 'Inter', sans-serif; overflow: hidden; }
+        .jetbrains { font-family: 'JetBrains Mono', monospace; }
+        .glass { background: rgba(15, 15, 15, 0.8); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.05); }
+        
+        /* Animaciones de Navegación */
+        .page-content { display: none; height: 100vh; overflow-y: auto; padding-bottom: 100px; }
+        .active-page { display: block; animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Estilos de Tutorial */
+        .step-card { position: relative; border-left: 2px solid rgba(255, 255, 255, 0.1); padding-left: 2rem; margin-bottom: 3rem; }
+        .step-number { position: absolute; left: -1.25rem; top: 0; background: var(--bg); padding: 0.5rem 0; font-weight: 900; color: var(--accent); }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar de Navegación -->
+    <nav class="fixed left-0 top-0 h-full w-20 flex flex-col items-center py-10 glass z-50">
+        <div class="mb-12">
+            <div class="w-10 h-10 bg-yellow-500 rounded-xl flex items-center justify-center font-black text-black italic">S</div>
+        </div>
+        <div class="flex flex-col gap-10">
+            <button onclick="showPage('page-tutorial')" title="Tutorial" class="nav-icon text-slate-500 hover:text-white transition-all text-xl">📖</button>
+            <button onclick="showPage('page-console')" title="Consola" class="nav-icon text-slate-500 hover:text-white transition-all text-xl">🎮</button>
+            <button onclick="showPage('page-rewards')" title="Beneficios" class="nav-icon text-slate-500 hover:text-white transition-all text-xl">🏆</button>
+        </div>
+    </nav>
+
+    <!-- Contenido Principal -->
+    <main class="ml-20">
+
+        <!-- PAGINA 1: TUTORIAL / INDUCCION -->
+        <div id="page-tutorial" class="page-content active-page p-10 max-w-4xl mx-auto">
+            <header class="mb-20 space-y-4">
+                <p class="text-[10px] tracking-[0.6em] text-yellow-500 font-black uppercase">Protocolo de Inicio</p>
+                <h1 class="text-6xl font-black tracking-tighter italic">MANUAL DE <br>OPERACIONES</h1>
+            </header>
+
+            <div class="space-y-16">
+                <div class="step-card">
+                    <span class="step-number jetbrains">01</span>
+                    <h3 class="text-2xl font-black italic mb-3">EL ESPEJO DE CONCIENCIA</h3>
+                    <p class="text-slate-400 leading-relaxed text-sm">Registra tu verdad cruda. Al usar la cápsula de <span class="text-red-500">Conflicto</span>, sacas el parásito mental al mundo físico. Esto crea el vacío necesario para la transmutación.</p>
+                </div>
+                <div class="step-card">
+                    <span class="step-number jetbrains">02</span>
+                    <h3 class="text-2xl font-black italic mb-3">ALQUIMIA DE MAESTRÍA</h3>
+                    <p class="text-slate-400 leading-relaxed text-sm">Tras el conflicto, obliga a tu mente a registrar una <span class="text-yellow-500">Maestría</span>. Este es el acto de voluntad que reprograma tu identidad de víctima a arquitecto.</p>
+                </div>
+                <div class="step-card">
+                    <span class="step-number jetbrains">03</span>
+                    <h3 class="text-2xl font-black italic mb-3">EL PASO JEFE</h3>
+                    <p class="text-slate-400 leading-relaxed text-sm">Ancla el desafío más denso del momento. Una vez vencido, se guarda como trofeo en tu historial para recargar tu esperanza en momentos de debilidad.</p>
+                </div>
+            </div>
+
+            <button onclick="showPage('page-console')" class="mt-20 px-10 py-4 bg-white text-black font-black rounded-full text-[10px] uppercase tracking-widest hover:bg-yellow-500 transition-all">Iniciar Operaciones</button>
+        </div>
+
+        <!-- PAGINA 2: CONSOLA DE OPERACIONES -->
+        <div id="page-console" class="page-content p-10 max-w-6xl mx-auto">
+            <div class="flex justify-between items-end mb-12">
+                <div>
+                    <h2 class="text-3xl font-black italic tracking-tighter">CONSOLA CENTRAL</h2>
+                    <p class="text-[9px] text-slate-500 tracking-widest uppercase mt-2">Espejo de Energía en Tiempo Real</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-[10px] font-bold text-slate-600 uppercase">Identidad (CP)</p>
+                    <p id="total-cp" class="text-4xl font-black jetbrains text-yellow-500">0</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <!-- Registro Principal -->
+                <div class="lg:col-span-8 space-y-8">
+                    <div class="glass p-10 rounded-[3rem] space-y-8">
+                        <textarea id="main-input" placeholder="Escribe tu verdad..." class="w-full bg-transparent text-2xl font-light outline-none border-b border-white/5 pb-4 focus:border-yellow-500/30 transition-all resize-none"></textarea>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <button onclick="addPoints(-15)" class="p-4 border border-red-500/20 rounded-2xl text-[10px] font-black text-red-500 hover:bg-red-500/5 transition-all uppercase">Conflicto</button>
+                            <button onclick="addPoints(30)" class="p-4 border border-yellow-500/20 rounded-2xl text-[10px] font-black text-yellow-500 hover:bg-yellow-500/5 transition-all uppercase">Maestría</button>
+                            <button onclick="addPoints(15)" class="p-4 border border-cyan-500/20 rounded-2xl text-[10px] font-black text-cyan-500 hover:bg-cyan-500/5 transition-all uppercase">Flujo</button>
+                            <button onclick="addPoints(5)" class="p-4 border border-slate-500/20 rounded-2xl text-[10px] font-black text-slate-500 hover:bg-slate-500/5 transition-all uppercase">Trivial</button>
+                        </div>
+                    </div>
+                    <!-- Slot Paso Jefe -->
+                    <div class="glass p-10 rounded-[3rem] border-2 border-yellow-500/20">
+                        <p class="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-4">Slot Paso Jefe</p>
+                        <div id="boss-display" class="space-y-6">
+                            <input id="boss-input" type="text" placeholder="¿Cuál es tu próximo Paso Jefe?" class="w-full bg-transparent text-xl font-bold outline-none border-b border-white/10 pb-2">
+                            <button onclick="setBoss()" class="w-full py-4 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em]">Anclar Comando</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Lateral -->
+                <div class="lg:col-span-4 space-y-6">
+                    <div class="glass p-8 rounded-[2.5rem]">
+                        <h3 class="text-[10px] font-black text-slate-500 uppercase mb-6 tracking-widest italic">Recarga de Esperanza</h3>
+                        <div id="hope-list" class="space-y-4">
+                            <p class="text-[9px] text-slate-600 italic">No hay maestrías registradas hoy.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGINA 3: BENEFICIOS / LOGROS -->
+        <div id="page-rewards" class="page-content p-10 max-w-6xl mx-auto">
+            <header class="text-center mb-20 space-y-4">
+                <h2 class="text-5xl font-black italic tracking-tighter">NIVELES DE ASCENSIÓN</h2>
+                <p class="text-[10px] text-slate-500 tracking-[0.5em] uppercase">Premios por compromiso de identidad</p>
+            </header>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Nivel 1 -->
+                <div class="glass p-10 rounded-[3rem] space-y-8 opacity-60">
+                    <div class="text-4xl">👁️</div>
+                    <div>
+                        <h3 class="text-xl font-black italic uppercase">Despertar</h3>
+                        <p class="text-[10px] text-slate-500 font-bold uppercase mt-1">Nivel Gratuito</p>
+                    </div>
+                    <ul class="text-[11px] text-slate-400 space-y-3">
+                        <li>✦ Espejo de Conciencia</li>
+                        <li>✦ Slot de Paso Jefe Simple</li>
+                        <li>✕ Datos Volátiles (Sin Guardado)</li>
+                    </ul>
+                </div>
+                <!-- Nivel 2 -->
+                <div class="glass p-10 rounded-[3rem] space-y-8 border-cyan-500/30 shadow-[0_0_30px_rgba(6,182,212,0.1)]">
+                    <div class="text-4xl">🏗️</div>
+                    <div>
+                        <h3 class="text-xl font-black italic uppercase text-cyan-500">Arquitecto</h3>
+                        <p class="text-[10px] text-cyan-500/60 font-bold uppercase mt-1">Uso Profesional</p>
+                    </div>
+                    <ul class="text-[11px] text-slate-300 space-y-3">
+                        <li class="font-bold">✦ Persistencia en Nube</li>
+                        <li class="font-bold">✦ Historial de Esperanza</li>
+                        <li class="font-bold">✦ Reporte Semanal de Ritmo</li>
+                    </ul>
+                </div>
+                <!-- Nivel 3 -->
+                <div class="glass p-10 rounded-[3rem] space-y-8 border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
+                    <div class="text-4xl">☀️</div>
+                    <div>
+                        <h3 class="text-xl font-black italic uppercase text-yellow-500">Dominio</h3>
+                        <p class="text-[10px] text-yellow-500/60 font-bold uppercase mt-1">Estatus de Élite</p>
+                    </div>
+                    <ul class="text-[11px] text-slate-300 space-y-3">
+                        <li class="font-bold">✦ Ingeniería de Futuro</li>
+                        <li class="font-bold">✦ Sincronización Circadiana</li>
+                        <li class="font-bold">✦ Mentoría IA de Identidad</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        let currentCP = 0;
+
+        function showPage(pageId) {
+            document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active-page'));
+            document.getElementById(pageId).classList.add('active-page');
+            window.scrollTo(0, 0);
+        }
+
+        function addPoints(pts) {
+            const input = document.getElementById('main-input');
+            if(!input.value) return;
+            currentCP += pts;
+            document.getElementById('total-cp').textContent = currentCP;
+            
+            if(pts > 0) {
+                const hope = document.getElementById('hope-list');
+                if(hope.innerHTML.includes('No hay')) hope.innerHTML = '';
+                const item = document.createElement('div');
+                item.className = 'p-3 bg-white/[0.03] border-l-2 border-yellow-500 rounded-lg animate-slide-in';
+                item.innerHTML = `<p class="text-[10px] leading-tight italic">"${input.value}"</p>`;
+                hope.prepend(item);
+            }
+            input.value = '';
+        }
+
+        function setBoss() {
+            const input = document.getElementById('boss-input');
+            if(!input.value) return;
+            const display = document.getElementById('boss-display');
+            display.innerHTML = `
+                <h4 class="text-2xl font-black italic text-white">${input.value.toUpperCase()}</h4>
+                <div class="flex gap-4">
+                    <button onclick="resolveBoss(true)" class="flex-1 py-4 bg-yellow-500 text-black font-black rounded-xl text-[10px] uppercase">Vencido (+100)</button>
+                    <button onclick="resolveBoss(false)" class="px-6 border border-white/10 text-slate-500 rounded-xl text-[9px] uppercase">Remplazar</button>
+                </div>
+            `;
+        }
+
+        function resolveBoss(success) {
+            if(success) {
+                currentCP += 100;
+                document.getElementById('total-cp').textContent = currentCP;
+            }
+            document.getElementById('boss-display').innerHTML = `
+                <input id="boss-input" type="text" placeholder="¿Cuál es tu próximo Paso Jefe?" class="w-full bg-transparent text-xl font-bold outline-none border-b border-white/10 pb-2">
+                <button onclick="setBoss()" class="w-full py-4 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em]">Anclar Comando</button>
+            `;
+        }
+    </script>
+</body>
+</html>
+

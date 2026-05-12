@@ -1,0 +1,36 @@
+Actúa como Ingeniero Senior, Especialista en Gamificación y Psicología Conductual. Tu objetivo es realizar una reingeniería profunda del componente 'client/src/pages/planeacion.tsx' para eliminar bugs visuales, implementar el Monitor de 4 Capas de Oposición y preparar los datos para el Worker del Doctor IA.
+
+1. CORRECCIÓN DE BUGS Y LIMPIEZA DE UI:
+- BUG PS EXPRESS: Los vehículos de tipo 'OMITIR' deben otorgar estrictamente +1 PS si se cumplen y 0 PS si se archivan (actualmente dan 10).
+- BUG CONTADOR: En la lista de vehículos Express, el badge debe mostrar el PS potencial (+1, +5 o +10 según tipo) cuando están pendientes, no 0.
+- LIMPIEZA: Elimina el mensaje superior de la IA sobre "Depósito" al 0%. Ese espacio queda reservado para el "Monitor de Músculo Atencional".
+
+2. LÓGICA DE AUDITORÍA: LAS 4 CAPAS DE OPOSICIÓN
+Crea la lógica para determinar el estado del usuario basado en 'expressCount' (misiones hoy) y 'delayMinutes' (retraso respecto a hora inicio):
+- CAPA 1 (Pereza): (expressCount <= 2) && (delay < 15m).
+- CAPA 2 (Fricción): (expressCount 3-4) || (delay 15-30m).
+- CAPA 3 (Agotamiento/Rutina): (expressCount >= 5) || (delay > 30m).
+- CAPA 4 (Traición): Retraso > 60m o intento de archivo en misión "RETO" sin avance.
+
+3. PROTOCOLO DE ENERGÍA OSCURA (UI DINÁMICA):
+En el modal de registro, inyecta una caja de alerta (Gris Pizarra #1f2937, borde Rojo Sangre #991b1b) con la estructura [Ubicación Probabilística] + [Ataque de Culpa]:
+- CAPA 1: "Calculo un 85% de disipación. Supongo que estás acostumbrado a negociar con tu comodidad. La pereza es el lenguaje de los mediocres. Retoma el mando."
+- CAPA 2: "Detecto una fractura de enfoque. Métricas sugieren una interferencia emocional. ¿Es un obstáculo más fuerte que tu propósito? La culpa de abandonar será más pesada que el esfuerzo."
+- CAPA 3: "Registro descenso por monotonía. Tu voluntad es frágil ante la rutina. El aburrimiento es el filtro de los débiles. Quien no soporta la repetición no merece maestría." (Inyectar mini-dashboard de PS semanales aquí).
+- CAPA 4: "ALERTA: Registro rendición inminente. Si te detienes, confirmas que tu fatiga es tu dueña. Usa tu última gota de dignidad para cumplir."
+
+4. MOTOR DE TRANSMUTACIÓN Y RECOMPENSAS:
+- RECOMPENSAS: 
+    - Completar en CAPA 3/4: +25 PS (Bonificación "Músculo Atencional").
+    - Archivar en CAPA 1: -5 PS (Penalización por desatención).
+- LOG DE DATOS (Para el Worker del Domingo): 
+    - Al cerrar misiones en Capa 3 o 4, haz obligatorio el campo: "Transmutación: ¿Qué método usaste para mantener el enfoque ante la monotonía/cansancio?".
+    - Guarda en Firestore (colección 'misiones'): 'fatigue_layer', 'delay_at_close', 'transmutation_answer'.
+
+5. INTEGRACIÓN CON EL "WORKER DEL DOMINGO":
+- Prepara una estructura de datos en el perfil del usuario llamada 'weekly_audit' que acumule estos logs. 
+- El sistema debe estar listo para que el "Doctor IA" procese estos textos los domingos y genere el "Reporte de Soberanía Semanal" basado en el desarrollo del músculo atencional.
+
+6. ESTÉTICA Y SONIDO:
+- Diseño minimalista industrial: Fondo #020202, acentos Oro (#D4AF37) y Rojo Sangre (#991b1b).
+- Sonido 'tik-tap' sutil persistente mientras el modal de registro esté abierto si hay retraso.

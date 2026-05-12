@@ -1,0 +1,22 @@
+PROMPT DE RECONSTRUCCIÓN: EL ESPEJO SOBERANO Y SISTEMA DE CRÉDITOS
+​"Agente, vamos a reconstruir el componente 'Espejo' para convertirlo en un sistema de curación de conciencia con lógica de créditos. Sigue estas instrucciones técnicas al pie de la letra:
+​1. Arquitectura del Doctor IA (Estratega de Conciencia):
+​Conecta el componente de chat del Espejo con la API de Gemini (usa el modelo Flash para velocidad).
+​Define el comportamiento del Doctor IA: Debe ser un Sintonizador de Frecuencia. Su objetivo no es escribir por el usuario, sino enseñarle a conectar con su corazón.
+​Instrucción Maestra: Si el usuario es superficial, el IA debe confrontarlo con honestidad brutal (Energía Oscura). Si el usuario es honesto, el IA debe validar su voltaje.
+​2. Sistema de Créditos de Claridad ($17):
+​Crea una tabla en la base de datos llamada creditos_ia vinculada al perfil del usuario.
+​El flujo es:
+​Cada consulta profunda al Doctor IA resta 1 crédito.
+​Si creditos_ia == 0, el botón de ayuda de IA se bloquea y muestra el mensaje: "Has alcanzado el modo de Maestría Manual. Usa tu propia sabiduría o adquiere nuevos Créditos de Claridad".
+​Implementa un sistema de '10 Créditos Iniciales' para usuarios que adquieran el módulo de $17.
+​3. Lógica de los 4 Ejes (Percibo, Reconozco, Cuento Con, Transformo):
+​El Doctor IA debe guiar al usuario eje por eje. No puede pasar al siguiente eje si la IA detecta que el usuario está "mintiéndose" o siendo puramente mental en el anterior.
+​Eje Percibo: La IA debe pedir sensaciones físicas, no opiniones.
+​Eje Reconozco: La IA debe ayudar a identificar la 'Identidad' que tiene el mando (Ej. El Niño con miedo, el Arquitecto cansado).
+​4. Interfaz y Experiencia (UX):
+​Mantén el diseño oscuro y dorado que ya tenemos en las capturas.
+​Asegúrate de que el contador de créditos sea visible en la esquina superior del chat.
+​Al final de la sesión, el Doctor IA debe generar un 'Mapa de Voltaje' basado en la honestidad de la sesión y guardarlo en el historial del usuario.
+​5. Aviso de Soberanía:
+​Antes de la primera sesión, muestra el popup: "Yo soy el Espejo, no tu médico. Tú eres el Soberano. ¿Aceptas el mando?". El usuario debe hacer clic en 'Acepto el Mando' para continuar."**

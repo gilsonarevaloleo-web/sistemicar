@@ -1,0 +1,210 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, collection, addDoc, query, onSnapshot, 
+  serverTimestamp, doc, setDoc, updateDoc, deleteDoc, orderBy 
+} from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { 
+  Brain, Sparkles, Zap, Shield, Target, 
+  History, Info, ChevronRight, Lock, Trophy, 
+  Plus, X, Flame, Eye, Compass, Share2, Award, TrendingUp
+} from 'lucide-react';
+
+// --- CONFIGURACIÓN E INFRAESTRUCTURA ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'sistemicar-v2-5';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('radar'); 
+  const [userData, setUserData] = useState({ rango: 'Iniciado', esperanza: 50, soberania: 0 });
+  const [ideas, setIdeas] = useState([]);
+  const [misiones, setMisiones] = useState([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [patrones, setPatrones] = useState([]);
+  
+  // Estados de Alquimia
+  const [plomo, setPlomo] = useState('');
+  const [oro, setOro] = useState('');
+  const [sabiduria, setSabiduria] = useState(0);
+  const [isTransmuting, setIsTransmuting] = useState(false);
+
+  // 1. AUTENTICACIÓN Y PERSISTENCIA (SIN BUCLES)
+  useEffect(() => {
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const userRef = doc(db, 'artifacts', appId, 'users', user.uid);
+    const unsub = onSnapshot(userRef, (d) => {
+      if (d.exists()) setUserData(d.data());
+      else setDoc(userRef, { rango: 'Iniciado', esperanza: 50, soberania: 0, createdAt: serverTimestamp() });
+    });
+    
+    const qI = query(collection(db, 'artifacts', appId, 'users', user.uid, 'chispazos'), orderBy('createdAt', 'desc'));
+    const unsubI = onSnapshot(qI, (s) => setIdeas(s.docs.map(d => ({id: d.id, ...d.data()}))));
+    
+    const qM = query(collection(db, 'artifacts', appId, 'users', user.uid, 'misiones'), orderBy('createdAt', 'desc'));
+    const unsubM = onSnapshot(qM, (s) => setMisiones(s.docs.map(d => ({id: d.id, ...d.data()}))));
+
+    return () => { unsub(); unsubI(); unsubM(); };
+  }, [user]);
+
+  // 2. LÓGICA DE ALQUIMIA (EL ALGORITMO DE SABIDURÍA)
+  const destilarSabiduria = () => {
+    if (!plomo || !oro) return;
+    setIsTransmuting(true);
+    // Algoritmo: Relación entre extensión de Plomo y concisión de Oro + Soberanía actual
+    const ratio = Math.min(100, (plomo.length / (oro.length * 2)) * 10);
+    const final = Math.round((ratio + (userData.soberania || 0)) / 1.5);
+    setSabiduria(final > 100 ? 100 : final);
+    setTimeout(() => setIsTransmuting(false), 1500);
+  };
+
+  const compartirActivo = () => {
+    const idCert = Math.random().toString(36).toUpperCase().substring(2, 10);
+    const texto = `🏛️ ACTIVO INTELECTUAL - SISTEMICAR\n\n" ${oro} "\n\nLegitimidad: ${sabiduria}%\nID: ${idCert}\nSoberanía Operativa: ${userData.soberania}%\n\nÚnete a la Red de Soberanía.`;
+    
+    if (navigator.share) {
+      navigator.share({ title: 'Activo Intelectual', text: texto });
+    } else {
+      const el = document.createElement('textarea');
+      el.value = texto;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      alert("🏛️ Activo Copiado. Listo para Magnetizar.");
+    }
+  };
+
+  // 3. RADAR IA (MANUAL - SIN GASTOS AUTOMÁTICOS)
+  const ejecutarAnalisis = async () => {
+    if (isAnalyzing || ideas.length < 3) return;
+    setIsAnalyzing(true);
+    const apiKey = ""; // Inyectada por Replit
+    const prompt = `Analiza estos chispazos: ${ideas.map(i => i.texto).join('|')}. Identifica 3 patrones subconscientes. Devuelve SOLO JSON: {"patrones":[{"titulo":"string","explicacion":"string"}]}`;
+    
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
+      });
+      const data = await res.json();
+      const content = JSON.parse(data.candidates[0].content.parts[0].text);
+      setPatrones(content.patrones);
+    } catch (e) { console.error("IA Bloqueada"); }
+    finally { setIsAnalyzing(false); }
+  };
+
+  // --- VISTAS ---
+  const VistaAlquimia = () => (
+    <div className="space-y-8 animate-in fade-in pb-20">
+      <header className="text-center">
+        <h2 className="text-3xl font-serif italic text-white">Alquimia</h2>
+        <p className="text-[7px] uppercase tracking-[0.4em] text-zinc-500 font-black">Transmutación de Energía</p>
+      </header>
+
+      <div className="space-y-4">
+        <div className="glass p-6 rounded-[2rem] border-blue-500/10">
+          <label className="text-[7px] font-black uppercase text-zinc-600 block mb-2">Materia en Plomo (Conflicto/Caos)</label>
+          <textarea value={plomo} onChange={(e) => setPlomo(e.target.value)} className="w-full bg-transparent border-none outline-none text-zinc-400 italic text-xs h-24" placeholder="Describe el caos..." />
+        </div>
+
+        <div className="flex justify-center">
+          <button onClick={destilarSabiduria} className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-full animate-pulse">
+            <Flame className="text-yellow-500" />
+          </button>
+        </div>
+
+        <div className="glass p-6 rounded-[2rem] border-yellow-500/10">
+          <label className="text-[7px] font-black uppercase text-yellow-500/50 block mb-2">Activo en Oro (Sabiduría Concisa)</label>
+          <textarea value={oro} onChange={(e) => setOro(e.target.value)} className="w-full bg-transparent border-none outline-none text-yellow-100 italic text-sm font-serif" placeholder="Destila la esencia..." />
+        </div>
+      </div>
+
+      {sabiduria > 0 && (
+        <div className="text-center space-y-4 animate-in zoom-in">
+          <div className="relative inline-block">
+             <div className="w-32 h-32 rounded-full border-4 border-yellow-500/20 flex items-center justify-center">
+                <span className="text-2xl font-serif italic text-yellow-500">{sabiduria}%</span>
+             </div>
+             <svg className="absolute inset-0 w-32 h-32 rotate-[-90deg]">
+                <circle cx="64" cy="64" r="60" fill="transparent" stroke="#EAB308" strokeWidth="4" strokeDasharray="376" strokeDashoffset={376 - (376 * sabiduria) / 100} />
+             </svg>
+          </div>
+          <button onClick={compartirActivo} className="w-full py-4 glass border border-yellow-500/30 rounded-full text-[9px] font-black uppercase tracking-widest text-yellow-500 flex items-center justify-center gap-2">
+            <Share2 size={14} /> Exportar Activo Intelectual
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#020202] text-zinc-400 p-6 font-sans">
+      <main className="max-w-md mx-auto">
+        {activeTab === 'radar' && (
+          <div className="space-y-6 animate-in fade-in">
+             <header className="text-center py-6">
+                <h2 className="text-3xl font-serif italic text-white">Radar</h2>
+                <p className="text-[7px] font-black uppercase tracking-[0.4em] text-blue-500">Detección de Patrones</p>
+             </header>
+             <button onClick={ejecutarAnalisis} disabled={isAnalyzing} className="w-full p-8 glass border border-blue-500/20 rounded-[2.5rem] flex flex-col items-center gap-4">
+               {isAnalyzing ? <div className="animate-spin h-6 w-6 border-2 border-blue-400 border-t-transparent rounded-full"/> : <Brain size={32} className="text-blue-400" />}
+               <span className="text-[9px] font-black uppercase tracking-widest">Sincronizar Subconsciente</span>
+             </button>
+             {patrones.map((p, i) => (
+               <div key={i} className="p-6 glass rounded-2xl border-white/5 bg-blue-900/5">
+                 <h4 className="text-[10px] font-black uppercase text-blue-400 mb-2">{p.titulo}</h4>
+                 <p className="text-xs italic text-zinc-500">"{p.explicacion}"</p>
+               </div>
+             ))}
+          </div>
+        )}
+        {activeTab === 'alquimia' && <VistaAlquimia />}
+        {activeTab === 'manifiesto' && (
+          <div className="space-y-8 animate-in fade-in text-center py-10">
+            <Shield size={40} className="mx-auto text-zinc-700" />
+            <h2 className="text-2xl font-serif italic text-white">Manifiesto de Soberanía</h2>
+            <p className="text-xs leading-relaxed italic text-zinc-500">"Sistemicar no es una app, es tu infraestructura de poder mental."</p>
+            <div className="pt-10 space-y-4">
+               <div className="p-6 glass rounded-3xl border-yellow-500/20">
+                  <p className="text-[10px] font-black uppercase text-yellow-500 mb-2">Eje de Esperanza</p>
+                  <p className="text-3xl font-serif text-white">{userData.esperanza}%</p>
+                  {userData.esperanza >= 85 && <p className="text-[7px] font-black text-emerald-500 mt-2 uppercase tracking-widest">Alianza de Red Activada</p>}
+               </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      <nav className="fixed bottom-6 left-6 right-6 flex justify-center">
+        <div className="glass px-8 py-4 rounded-full border border-white/10 flex gap-10 shadow-2xl">
+          <button onClick={() => setActiveTab('radar')} className={activeTab === 'radar' ? 'text-blue-400' : 'text-zinc-600'}><Target size={22}/></button>
+          <button onClick={() => setActiveTab('alquimia')} className={activeTab === 'alquimia' ? 'text-yellow-500' : 'text-zinc-600'}><Flame size={22}/></button>
+          <button onClick={() => setActiveTab('manifiesto')} className={activeTab === 'manifiesto' ? 'text-white' : 'text-zinc-600'}><Shield size={22}/></button>
+        </div>
+      </nav>
+
+      <style>{`
+        .glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(20px); }
+        body { background: #020202; }
+      `}</style>
+    </div>
+  );
+}

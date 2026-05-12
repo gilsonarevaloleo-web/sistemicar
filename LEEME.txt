@@ -1,0 +1,44 @@
+================================================================================
+  UBICACIÓN: Escritorio → carpeta NETLIFY-REPLIT
+================================================================================
+
+Esta carpeta está en tu Escritorio para que la encuentres fácil.
+
+  C:\Users\Gilson\Desktop\NETLIFY-REPLIT
+
+================================================================================
+  Replit → Netlify (proyecto grande) — archivos listos para copiar
+================================================================================
+
+VÍA ELEGIDA (recomendación del plan)
+------------------------------------
+1) PRINCIPAL: GitHub + Netlify (build en la nube, sin arrastrar carpetas gigantes).
+2) ALTERNATIVA: Netlify CLI en tu PC (mismo build, sin depender del navegador).
+3) SOLO SI YA TIENES BUILD LOCAL: arrastrar la carpeta dist/build al panel de Netlify.
+
+Qué copiar a la RAÍZ de tu proyecto (el que bajaste de Replit)
+---------------------------------------------------------------
+- .gitignore          → ignora node_modules y secretos
+- netlify.toml        → comando de build y carpeta de publicación (ajústalos)
+- scripts\verify-build.ps1 → comprueba build local antes de subir
+
+Pasos GitHub + Netlify
+----------------------
+1. Copia los archivos de esta carpeta a la raíz de tu proyecto.
+2. Ajusta netlify.toml si no usas Vite (ver comentarios dentro del archivo).
+3. En la raíz del proyecto: ejecuta scripts\verify-build.ps1 (PowerShell).
+4. git init (si no hay repo), commit, sube a GitHub SIN node_modules (.gitignore).
+5. Netlify: Add new site → Import from Git → elige repo.
+6. Netlify: Site settings → Environment variables → copia las de Replit (VITE_*, etc.).
+
+Netlify CLI (resumen)
+---------------------
+  npm i -g netlify-cli
+  netlify login
+  netlify init
+  netlify deploy --prod --build
+
+Variables de entorno en Netlify
+--------------------------------
+Todo lo que en Replit estaba en "Secrets" / .env debe existir en Netlify con el mismo
+nombre (especialmente variables VITE_* / REACT_APP_* si afectan al build).
