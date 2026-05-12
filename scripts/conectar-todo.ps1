@@ -46,7 +46,11 @@ if ($status) {
     Write-Host "No hay cambios nuevos para commitear." -ForegroundColor DarkYellow
 }
 
-$remote = (& $git remote get-url origin 2>$null)
+$remotes = @(& $git remote)
+$remote = $null
+if ($remotes -contains "origin") {
+    $remote = & $git remote get-url origin
+}
 if (-not $remote) {
     Write-Host "`nFalta enlazar GitHub." -ForegroundColor Yellow
     Write-Host "1) Crea un repositorio vacio en GitHub (sin README ni .gitignore)."
