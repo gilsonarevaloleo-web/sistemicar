@@ -51,6 +51,7 @@ import {
   logOut,
   signInWithGoogle,
   signInAnonymousUser,
+  signInWithGoogleCredentialFromLinkError,
 } from "@/lib/firebase";
 import { sendWelcomeEmail } from "@/lib/emailApi";
 import { useAuthContext } from "@/App";
@@ -341,12 +342,15 @@ export default function MenuPrincipal() {
       const currentDomain = window.location.hostname;
       if (error.code === "auth/credential-already-in-use") {
         saveMigrationPending(user.uid);
-        toast.info("Esa cuenta ya existe. Inicia sesión con Google para migrar tus datos.", { duration: 6000 });
+        toast.info("Tu cuenta de Google ya está registrada. Conectando sin ventana extra…", {
+          duration: 6000,
+        });
         try {
-          await logOut();
-          const cred = await signInWithGoogle();
+          const cred = await signInWithGoogleCredentialFromLinkError(error);
           if (!cred?.user) {
             toast.info("Continúa en Google; al volver se completará el acceso.", { duration: 6000 });
+          } else {
+            toast.success("Sesión iniciada con Google. Si tenías datos en otra sesión, se migrarán al cargar.");
           }
         } catch (signInError) {
           console.error("Google sign-in after link conflict failed:", signInError);

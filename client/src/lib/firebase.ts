@@ -1,5 +1,6 @@
 import { initializeApp, FirebaseApp } from "firebase/app";
-import { getAuth, Auth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User, signInAnonymously, linkWithPopup, linkWithRedirect, type UserCredential } from "firebase/auth";
+import { getAuth, Auth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User, signInAnonymously, linkWithPopup, linkWithRedirect, signInWithCredential, type UserCredential } from "firebase/auth";
+import type { FirebaseError } from "firebase/app";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, Firestore, collection, collectionGroup, doc, getDocs, getDoc, setDoc, addDoc, updateDoc, deleteDoc, query, where, orderBy, limit, Timestamp, serverTimestamp, onSnapshot } from "firebase/firestore";
 
 const DEFAULT_FIREBASE_CONFIG = {
@@ -79,6 +80,28 @@ export const signInWithGoogle = async (): Promise<UserCredential | void> => {
     }
     throw e;
   }
+};
+
+/**
+ * Tras `linkWithPopup` → `auth/credential-already-in-use`, Firebase incluye la
+ * credencial OAuth en el error. Entrar con ella evita un **segundo** popup
+ * (que suele disparar `auth/popup-blocked` y los dos mensajes seguidos).
+ */
+export const signInWithGoogleCredentialFromLinkError = async (
+  linkError: unknown
+): Promise<UserCredential | void> => {
+  if (!auth) throw new Error("Firebase not configured");
+  const credential = GoogleAuthProvider.credentialFromError(linkError as FirebaseError);
+  await signOut(auth);
+  if (credential) {
+    try {
+      return await signInWithCredential(auth, credential);
+    } catch (e) {
+      console.error("signInWithCredential after credential-already-in-use:", e);
+      return signInWithGoogle();
+    }
+  }
+  return signInWithGoogle();
 };
 
 export const signInAnonymousUser = async () => {
