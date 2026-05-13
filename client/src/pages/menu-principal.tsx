@@ -42,7 +42,16 @@ import { TooltipOrientacion } from "@/components/tooltip-orientacion";
 import { Onboarding } from "@/components/onboarding";
 import { clearAllLocalData, subscribeToProgression, UserProgression, updateProgression, subscribeToCodices, SavedCodice, migrateDataToNewUid, saveMigrationPending, getMigrationPending, clearMigrationPending, subscribeToManualProgress, UserCertification, CERTIFICATION_LEVELS } from "@/lib/persistence";
 import { toast } from "sonner";
-import { linkAnonymousWithGoogle, isUserAnonymous, getUserEmail, isFirebaseConfigured, logOut, signInWithGoogle } from "@/lib/firebase";
+import {
+  auth,
+  linkAnonymousWithGoogle,
+  isUserAnonymous,
+  getUserEmail,
+  isFirebaseConfigured,
+  logOut,
+  signInWithGoogle,
+  signInAnonymousUser,
+} from "@/lib/firebase";
 import { sendWelcomeEmail } from "@/lib/emailApi";
 import { useAuthContext } from "@/App";
 import logoSistemicar from "@/assets/logo-sistemicar.png";
@@ -299,7 +308,26 @@ export default function MenuPrincipal() {
     setLinking(true);
     
     try {
+      // Si el contexto tiene usuario simulado (p. ej. user_arquitecto) porque falló el anónimo,
+      // auth.currentUser sigue null y linkWithPopup lanza "No user to link".
+      if (isFirebaseConfigured() && auth && !auth.currentUser) {
+        try {
+          await signInAnonymousUser();
+        } catch (anonErr) {
+          console.error("Anonymous sign-in before Google link failed:", anonErr);
+          toast.error(
+            "No hay sesión de Firebase activa. En Firebase Console → Authentication → Sign-in method, activa «Anónimo» y recarga la página.",
+            { duration: 12000 }
+          );
+          return;
+        }
+      }
+
       const result = await linkAnonymousWithGoogle();
+      if (!result?.user) {
+        toast.info("Continúa en la página de Google; volverás aquí al terminar.", { duration: 5000 });
+        return;
+      }
       clearMigrationPending();
       setIsAnonymous(false);
       setUserEmail(result.user.email);
@@ -316,11 +344,19 @@ export default function MenuPrincipal() {
         toast.info("Esa cuenta ya existe. Inicia sesión con Google para migrar tus datos.", { duration: 6000 });
         try {
           await logOut();
-          await signInWithGoogle();
+          const cred = await signInWithGoogle();
+          if (!cred?.user) {
+            toast.info("Continúa en Google; al volver se completará el acceso.", { duration: 6000 });
+          }
         } catch (signInError) {
           console.error("Google sign-in after link conflict failed:", signInError);
           clearMigrationPending();
           toast.error("No se pudo iniciar sesión con esa cuenta de Google.");
+          try {
+            await signInAnonymousUser();
+          } catch (anonRestoreErr) {
+            console.error("No se pudo restaurar sesión anónima tras fallo de Google:", anonRestoreErr);
+          }
         }
       } else if (error.code === "auth/unauthorized-domain") {
         toast.error(`Dominio no autorizado: "${currentDomain}". Agrégalo en Firebase Console.`, {

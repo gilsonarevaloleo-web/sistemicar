@@ -40,7 +40,11 @@ export default function Acceso() {
       localStorage.setItem("sistemicar_google_redirect_pending", "true");
       const result = await signInWithGoogle();
       localStorage.removeItem("sistemicar_google_redirect_pending");
-      
+      if (!result?.user) {
+        toast.info("Redirigiendo a Google…", { duration: 4000 });
+        return;
+      }
+
       const isNewUser = result?.user?.metadata?.creationTime === result?.user?.metadata?.lastSignInTime;
       if (isNewUser && result?.user?.email) {
         sendWelcomeEmail(result.user.email, result.user.displayName || undefined);

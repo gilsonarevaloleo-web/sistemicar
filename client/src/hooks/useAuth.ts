@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { onAuthChange, signInWithGoogle, logOut, User, isFirebaseConfigured, signInAnonymousUser } from "@/lib/firebase";
+import { onAuthChange, signInWithGoogle, logOut, User, isFirebaseConfigured, signInAnonymousUser, checkRedirectResult } from "@/lib/firebase";
 import { getMigrationPending, clearMigrationPending } from "@/lib/persistence";
 
 // Flag legacy (ya no usamos redirect, pero limpiamos por compatibilidad)
@@ -34,24 +34,38 @@ export function useAuth() {
     }
 
     // Limpiar cualquier flag de redirect antiguo (ya no usamos redirect)
-    localStorage.removeItem(GOOGLE_REDIRECT_KEY);
-    
-    const unsubscribe = onAuthChange(async (firebaseUser) => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    (async () => {
+      try {
+        await checkRedirectResult();
+      } catch (e) {
+        console.error("checkRedirectResult:", e);
+      }
+      if (cancelled) return;
+
+      localStorage.removeItem(GOOGLE_REDIRECT_KEY);
+
+      unsubscribe = onAuthChange(async (firebaseUser) => {
       if (!firebaseUser) {
         const pendingMigration = getMigrationPending();
-        
+
         if (pendingMigration) {
-          // Si la migración tiene más de 30 minutos, limpiarla
           const migrationAge = Date.now() - pendingMigration.timestamp;
           if (migrationAge > 30 * 60 * 1000) {
             console.log("Migration expired, clearing...");
             clearMigrationPending();
           } else {
-            console.log("Migration pending...");
+            // Hay migración anónimo → Google en curso: NO crear otra sesión anónima aquí.
+            // Si lo hacemos, compite con signInWithPopup y suele fallar con
+            // "No se pudo iniciar sesión con esa cuenta de Google" tras auth/credential-already-in-use.
+            console.log("Migration pending: omitiendo sign-in anónimo hasta Google.");
+            return;
           }
         }
-        
-        // Crear sesión anónima de todas formas
+
+        // Crear sesión anónima cuando no estamos esperando Google tras conflicto de enlace
         try {
           await signInAnonymousUser();
         } catch (error) {
@@ -73,8 +87,12 @@ export function useAuth() {
         }
       }
     });
-    
-    return () => unsubscribe();
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, []);
 
   const login = async () => {

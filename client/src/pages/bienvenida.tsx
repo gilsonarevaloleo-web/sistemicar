@@ -156,10 +156,12 @@ export default function Bienvenida() {
       // Marcar que estamos en proceso de redirect de Google
       localStorage.setItem("sistemicar_google_redirect_pending", "true");
       const result = await signInWithGoogle();
-      // En móvil, signInWithGoogle usa redirect y no llega aquí
-      // En desktop, usa popup y sí llega aquí
       localStorage.removeItem("sistemicar_google_redirect_pending");
-      
+      if (!result?.user) {
+        toast.info("Redirigiendo a Google…", { duration: 4000 });
+        return;
+      }
+
       // Verificar si es nuevo usuario y enviar correo de bienvenida
       const isNewUser = result?.user?.metadata?.creationTime === result?.user?.metadata?.lastSignInTime;
       if (isNewUser && result?.user?.email) {

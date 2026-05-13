@@ -1,5 +1,5 @@
 import { initializeApp, FirebaseApp } from "firebase/app";
-import { getAuth, Auth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User, signInAnonymously, linkWithPopup, linkWithRedirect } from "firebase/auth";
+import { getAuth, Auth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User, signInAnonymously, linkWithPopup, linkWithRedirect, type UserCredential } from "firebase/auth";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, Firestore, collection, collectionGroup, doc, getDocs, getDoc, setDoc, addDoc, updateDoc, deleteDoc, query, where, orderBy, limit, Timestamp, serverTimestamp, onSnapshot } from "firebase/firestore";
 
 const DEFAULT_FIREBASE_CONFIG = {
@@ -62,15 +62,23 @@ export const getPublicPath = (collectionName: string) =>
 
 export const googleProvider = new GoogleAuthProvider();
 
-const isMobile = (): boolean => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+/** Popup bloqueado o COOP del navegador rompe window.closed → fallback redirect. */
+const shouldUseRedirectAfterPopupError = (e: unknown): boolean => {
+  const code = (e as { code?: string })?.code;
+  return code === "auth/popup-blocked" || code === "auth/cancelled-popup-request";
 };
 
-export const signInWithGoogle = async () => {
+export const signInWithGoogle = async (): Promise<UserCredential | void> => {
   if (!auth) throw new Error("Firebase not configured");
-  // Siempre usar popup - los navegadores modernos bloquean cookies de terceros
-  // lo que rompe signInWithRedirect en móviles
-  return signInWithPopup(auth, googleProvider);
+  try {
+    return await signInWithPopup(auth, googleProvider);
+  } catch (e) {
+    if (shouldUseRedirectAfterPopupError(e)) {
+      await signInWithRedirect(auth, googleProvider);
+      return;
+    }
+    throw e;
+  }
 };
 
 export const signInAnonymousUser = async () => {
@@ -78,14 +86,21 @@ export const signInAnonymousUser = async () => {
   return signInAnonymously(auth);
 };
 
-export const linkAnonymousWithGoogle = async () => {
+export const linkAnonymousWithGoogle = async (): Promise<UserCredential | void> => {
   if (!auth || !auth.currentUser) throw new Error("No user to link");
   if (!auth.currentUser.isAnonymous) throw new Error("User is not anonymous");
-  // Siempre usar popup para vincular también
-  return linkWithPopup(auth.currentUser, googleProvider);
+  try {
+    return await linkWithPopup(auth.currentUser, googleProvider);
+  } catch (e) {
+    if (shouldUseRedirectAfterPopupError(e)) {
+      await linkWithRedirect(auth.currentUser, googleProvider);
+      return;
+    }
+    throw e;
+  }
 };
 
-export const checkRedirectResult = async () => {
+export const checkRedirectResult = async (): Promise<UserCredential | null> => {
   if (!auth) return null;
   try {
     return await getRedirectResult(auth);
