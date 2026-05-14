@@ -57,10 +57,13 @@ export function useAuth() {
             console.log("Migration expired, clearing...");
             clearMigrationPending();
           } else {
-            // Hay migración anónimo → Google en curso: NO crear otra sesión anónima aquí.
-            // Si lo hacemos, compite con signInWithPopup y suele fallar con
-            // "No se pudo iniciar sesión con esa cuenta de Google" tras auth/credential-already-in-use.
+            // Migración anónimo → Google: no crear otra sesión anónima aquí.
+            // Si quedó un pending viejo (OAuth cancelado, etc.), hay que bajar loading
+            // o la app queda en "Cargando SISTEMICAR..." para siempre.
+            // No pongas setUser(null) aquí: durante logOut→redirect el menú aún necesita
+            // el usuario en contexto hasta que se ejecute startGoogleSignInRedirect().
             console.log("Migration pending: omitiendo sign-in anónimo hasta Google.");
+            setLoading(false);
             return;
           }
         }
