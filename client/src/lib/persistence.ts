@@ -449,6 +449,8 @@ export interface SubTarea {
   completada: boolean;
   creadaAt: number;
   detalles?: DetalleSubTarea[];
+  /** Cupo de tiempo (min) para foco situacional; opcional. */
+  minutosCupo?: number;
 }
 
 export interface SubVehiculo {
@@ -539,6 +541,8 @@ export interface Vehicle {
   tiempoElegido?: number;
   datoConfiable?: boolean;
   intensidadEnergetica?: "fluido" | "concentrado" | "limite";
+  /** Energía percibida al cerrar el vehículo (espejo de cierre vs. intensidadEnergetica al inicio). */
+  intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite";
   clientRequestId?: string;
   tipoDescanso?: "intercepcion" | "microcarga" | "reset_profundo" | "punto_cero";
   microPasos?: { hidratacion: boolean; respiracion: boolean; pantallaZero: boolean };
@@ -909,7 +913,7 @@ export async function deleteVehicle(userId: string, vehicleId: string): Promise<
 export async function updateVehicle(
   userId: string,
   vehicleId: string,
-  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida">>
+  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida">>
 ): Promise<void> {
   const updateLocally = () => {
     const vehicles = getLocalVehicles().map(v =>
