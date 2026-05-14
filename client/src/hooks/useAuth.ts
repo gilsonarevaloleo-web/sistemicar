@@ -76,9 +76,13 @@ export function useAuth() {
       } else {
         // Usuario autenticado
         if (!firebaseUser.isAnonymous) {
-          clearMigrationPending();
+          const pending = getMigrationPending();
+          // No borrar migración aquí si el uid actual es el de Google y aún debemos copiar datos del uid anónimo guardado.
+          if (!pending || pending.oldUid === firebaseUser.uid) {
+            clearMigrationPending();
+          }
         }
-        
+
         setUser(firebaseUser);
         setLoading(false);
         

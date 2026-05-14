@@ -44,16 +44,13 @@ import { clearAllLocalData, subscribeToProgression, UserProgression, updateProgr
 import { toast } from "sonner";
 import {
   auth,
-  linkAnonymousWithGoogle,
   isUserAnonymous,
   getUserEmail,
   isFirebaseConfigured,
   logOut,
-  signInWithGoogle,
   signInAnonymousUser,
-  signInWithGoogleCredentialFromLinkError,
+  startGoogleSignInRedirect,
 } from "@/lib/firebase";
-import { sendWelcomeEmail } from "@/lib/emailApi";
 import { useAuthContext } from "@/App";
 import logoSistemicar from "@/assets/logo-sistemicar.png";
 
@@ -305,12 +302,10 @@ export default function MenuPrincipal() {
 
   const handleLinkGoogle = async () => {
     if (!user?.uid) return;
-    
+
     setLinking(true);
-    
+
     try {
-      // Si el contexto tiene usuario simulado (p. ej. user_arquitecto) porque falló el anónimo,
-      // auth.currentUser sigue null y linkWithPopup lanza "No user to link".
       if (isFirebaseConfigured() && auth && !auth.currentUser) {
         try {
           await signInAnonymousUser();
@@ -324,55 +319,41 @@ export default function MenuPrincipal() {
         }
       }
 
-      const result = await linkAnonymousWithGoogle();
-      if (!result?.user) {
-        toast.info("Continúa en la página de Google; volverás aquí al terminar.", { duration: 5000 });
+      if (!auth?.currentUser?.isAnonymous) {
+        if (auth?.currentUser?.email) {
+          toast.info("Ya iniciaste sesión con Google.");
+        } else {
+          toast.error("Estado de sesión inesperado. Recarga la página.");
+        }
         return;
       }
-      clearMigrationPending();
-      setIsAnonymous(false);
-      setUserEmail(result.user.email);
 
-      if (result.user.email) {
-        sendWelcomeEmail(result.user.email, result.user.displayName || undefined);
-      }
-
-      toast.success("Cuenta de Google conectada. Tu progreso quedó sincronizado.");
+      const anonUid = auth.currentUser.uid;
+      saveMigrationPending(anonUid);
+      toast.info(
+        "Te llevamos a Google en esta misma ventana (sin popup bloqueado). Al volver, tu cuenta quedará conectada y tus datos se sincronizarán.",
+        { duration: 9000 }
+      );
+      await logOut();
+      await startGoogleSignInRedirect();
     } catch (error: any) {
       const currentDomain = window.location.hostname;
-      if (error.code === "auth/credential-already-in-use") {
-        saveMigrationPending(user.uid);
-        toast.info("Tu cuenta de Google ya está registrada. Conectando sin ventana extra…", {
-          duration: 6000,
-        });
-        try {
-          const cred = await signInWithGoogleCredentialFromLinkError(error);
-          if (!cred?.user) {
-            toast.info("Continúa en Google; al volver se completará el acceso.", { duration: 6000 });
-          } else {
-            toast.success("Sesión iniciada con Google. Si tenías datos en otra sesión, se migrarán al cargar.");
-          }
-        } catch (signInError) {
-          console.error("Google sign-in after link conflict failed:", signInError);
-          clearMigrationPending();
-          toast.error("No se pudo iniciar sesión con esa cuenta de Google.");
-          try {
-            await signInAnonymousUser();
-          } catch (anonRestoreErr) {
-            console.error("No se pudo restaurar sesión anónima tras fallo de Google:", anonRestoreErr);
-          }
-        }
-      } else if (error.code === "auth/unauthorized-domain") {
+      clearMigrationPending();
+      if (error.code === "auth/unauthorized-domain") {
         toast.error(`Dominio no autorizado: "${currentDomain}". Agrégalo en Firebase Console.`, {
-          duration: 15000
+          duration: 15000,
         });
-        clearMigrationPending();
       } else if (error.code === "auth/popup-closed-by-user") {
         toast.info("Conexión cancelada");
       } else {
-        toast.error("Error al conectar Google. Intenta de nuevo.");
+        toast.error("Error al conectar con Google. Intenta de nuevo.");
       }
-      console.error("Link error:", error);
+      console.error("Google redirect from menu error:", error);
+      try {
+        await signInAnonymousUser();
+      } catch (anonRestoreErr) {
+        console.error("Restaurar sesión anónima tras error:", anonRestoreErr);
+      }
     } finally {
       setLinking(false);
     }
@@ -408,7 +389,7 @@ export default function MenuPrincipal() {
       saveMigrationPending(user.uid);
       toast.info("Cerrando sesión... Inicia sesión con Google para completar la migración.", { duration: 5000 });
       await logOut();
-      await signInWithGoogle();
+      await startGoogleSignInRedirect();
     } catch (error) {
       console.error("Migration start error:", error);
       toast.error("Error al iniciar migración. Intenta de nuevo.");
