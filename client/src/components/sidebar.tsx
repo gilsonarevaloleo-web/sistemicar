@@ -18,9 +18,13 @@ export function Sidebar() {
 
   useEffect(() => {
     if (!user?.uid) return;
-    const unsub = subscribeToProgression(user.uid, (prog) => {
-      setProgression(prog);
-    });
+    const unsub = subscribeToProgression(
+      user.uid,
+      (prog) => {
+        setProgression(prog);
+      },
+      (e) => console.error("[Sidebar] progression:", e)
+    );
     return () => unsub();
   }, [user?.uid]);
 

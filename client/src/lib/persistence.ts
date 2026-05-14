@@ -1822,7 +1822,7 @@ export function subscribeToProgression(
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "progression");
     const q = query(collection(db, path));
-    return onSnapshot(q, async (snapshot) => {
+    const applySnapshot = async (snapshot: { empty: boolean; docs: Array<{ id: string; data: () => Record<string, unknown> }> }) => {
       if (snapshot.empty) {
         const defaultProg = getDefaultProgression(userId);
         const localProg = getLocalProgression(userId);
@@ -1836,9 +1836,14 @@ export function subscribeToProgression(
       } else {
         const d = snapshot.docs[0];
         const data = d.data();
+        const remote = (data.sovereigntyPoints ?? 0) as number;
+        const localProg = getLocalProgression(userId);
+        const localSp = localProg.sovereigntyPoints ?? 0;
+        const sovereigntyPoints = Math.max(remote, localSp);
         const prog = {
           id: d.id,
           ...data,
+          sovereigntyPoints,
           lastActivityDate: data.lastActivityDate?.toDate() || null,
           cooldownUntil: data.cooldownUntil?.toDate() || null,
           createdAt: data.createdAt?.toDate() || new Date(),
@@ -1849,6 +1854,9 @@ export function subscribeToProgression(
         saveLocalProgression(prog);
         onData(prog);
       }
+    };
+    const unsubFs = onSnapshot(q, (snapshot) => {
+      void applySnapshot(snapshot);
     }, (error) => {
       console.error("Firebase Progression Error:", error);
       activateSovereignModeGlobal("Error de conexión. Usando datos locales.");
@@ -1856,6 +1864,14 @@ export function subscribeToProgression(
       onData(localProg);
       onError(error);
     });
+    const onLocalProgressionRefresh = () => {
+      onData(getLocalProgression(userId));
+    };
+    window.addEventListener("progression-updated", onLocalProgressionRefresh);
+    return () => {
+      unsubFs();
+      window.removeEventListener("progression-updated", onLocalProgressionRefresh);
+    };
   } else {
     onData(getLocalProgression(userId));
     const handler = () => onData(getLocalProgression(userId));
@@ -2138,12 +2154,12 @@ export async function awardSovereigntyPoints(
   source?: string
 ): Promise<{ newTotal: number }> {
   const roundedAmount = Math.round(amount);
-  if (roundedAmount <= 0) return { newTotal: 0 };
-  
-  const prog = getLocalProgression(userId);
-  const currentPoints = prog.sovereigntyPoints || 0;
+  const progBefore = getLocalProgression(userId);
+  if (roundedAmount <= 0) return { newTotal: progBefore.sovereigntyPoints || 0 };
+
+  const currentPoints = progBefore.sovereigntyPoints || 0;
   const newTotal = currentPoints + roundedAmount;
-  
+
   // Guardar log de puntos con timestamp para consultas diarias
   const logEntry: SovereigntyPointsLog = {
     id: `sp_${Date.now()}`,
@@ -2151,7 +2167,7 @@ export async function awardSovereigntyPoints(
     source: source || "Sistema",
     timestamp: new Date()
   };
-  
+
   if (isFirebaseConfigured() && db) {
     try {
       const path = getPrivatePath(userId, "sovereigntyPointsLog");
@@ -2170,16 +2186,38 @@ export async function awardSovereigntyPoints(
     logs.unshift(logEntry);
     saveLocalSPLog(logs);
   }
-  
-  await updateProgression(userId, {
-    sovereigntyPoints: newTotal
-  });
-  
+
+  if (isFirebaseConfigured() && db) {
+    try {
+      const { updateDoc, getDocs, increment } = await import("firebase/firestore");
+      const pathProg = getPrivatePath(userId, "progression");
+      const snap = await getDocs(query(collection(db, pathProg)));
+      if (snap.empty) {
+        await updateProgression(userId, { sovereigntyPoints: newTotal });
+      } else {
+        await updateDoc(doc(db, pathProg, snap.docs[0].id), {
+          sovereigntyPoints: increment(roundedAmount),
+          updatedAt: serverTimestamp()
+        });
+        const latest = getLocalProgression(userId);
+        const mergedSp = (latest.sovereigntyPoints || 0) + roundedAmount;
+        const merged = { ...latest, sovereigntyPoints: mergedSp, updatedAt: new Date() };
+        saveLocalProgression(merged);
+        backupToLocal("progression", merged);
+      }
+    } catch (error) {
+      console.error("[awardSovereigntyPoints] Error actualizando progresión:", error);
+      await updateProgression(userId, { sovereigntyPoints: newTotal });
+    }
+  } else {
+    await updateProgression(userId, { sovereigntyPoints: newTotal });
+  }
+
   window.dispatchEvent(new CustomEvent("sovereignty-points-awarded", {
-    detail: { amount: roundedAmount, source, newTotal }
+    detail: { amount: roundedAmount, source, newTotal: getLocalProgression(userId).sovereigntyPoints || 0 }
   }));
-  
-  return { newTotal };
+
+  return { newTotal: getLocalProgression(userId).sovereigntyPoints || 0 };
 }
 
 // Calcular inicio del día en Lima (UTC-5) - Función helper
