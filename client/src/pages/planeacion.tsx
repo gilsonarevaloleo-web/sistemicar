@@ -303,13 +303,21 @@ const ENERGIA_ESPEJO_OPTIONS = [
   { id: "limite" as const, label: "Al Límite", icon: "▲", desc: "Alta presión" },
 ];
 
+/** Payload del modal único «¿Con qué energía terminas?» (todos los tipos de vehículo). */
+type CierreEnergiaModalPayload =
+  | { kind: "flota"; vehicleId: string; status: "cumplido" | "archivado" }
+  | { kind: "investigador"; vehicleId: string; cumplido: boolean; cantidadRealizada: number }
+  | { kind: "desglosador"; vehicleId: string; subs: SubVehiculo[] }
+  | { kind: "descanso"; vehicleId: string; status: "cumplido" | "archivado"; etiqueta: "recuperado" | "parcial" | "fragmentado"; nota: string };
+
 const cleanSubTitulo = (t: string): string =>
   t.replace(/^Día\s+\d+\s*\[[^\]]+\]:\s*/i, "").trim();
 
-/** PS por resistencia de profundidad: 5 por hora de referencia (tiempoSugeridoSeg), proporcional. */
+/** PS por resistencia de profundidad: +5 por cada hora completa de referencia (1 h → 5, 2 h → 10, …). */
 const computeDesglosadorDepthPS = (tiempoSugeridoSeg: number | undefined): number => {
   if (tiempoSugeridoSeg == null || !Number.isFinite(tiempoSugeridoSeg) || tiempoSugeridoSeg <= 0) return 0;
-  return Math.max(0, Math.round(5 * (tiempoSugeridoSeg / 3600)));
+  const fullHours = Math.floor(tiempoSugeridoSeg / 3600);
+  return Math.max(0, 5 * fullHours);
 };
 
 /** Timbres decrecientes por orden de lista (1.ª → N, 2.ª → N−1…). Wake Lock breve para no dormir al oír. */
@@ -751,6 +759,8 @@ export default function Planeacion() {
 
   const [planilla, setPlanilla] = useState<Planilla | null>(null);
   const [showCrearSegmento, setShowCrearSegmento] = useState(false);
+  const segmentosListEndRef = useRef<HTMLDivElement | null>(null);
+  const labIntroTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [nuevoSegNombre, setNuevoSegNombre] = useState("");
   const [nuevoSegHoraInicio, setNuevoSegHoraInicio] = useState("");
   const [nuevoSegHoraFin, setNuevoSegHoraFin] = useState("");
@@ -773,7 +783,7 @@ export default function Planeacion() {
   const [, setSegmentTick] = useState(0);
   const [showLabConciencia, setShowLabConciencia] = useState(false);
   const [showCierreJornada, setShowCierreJornada] = useState(false);
-  const [cierreEnergiaPending, setCierreEnergiaPending] = useState<null | { vehicleId: string; status: "cumplido" | "archivado" }>(null);
+  const [cierreEnergiaPending, setCierreEnergiaPending] = useState<CierreEnergiaModalPayload | null>(null);
   const [cierreEnergiaSeleccion, setCierreEnergiaSeleccion] = useState<"fluido" | "concentrado" | "limite" | null>(null);
   const [showDeposito, setShowDeposito] = useState(false);
 
@@ -796,6 +806,13 @@ export default function Planeacion() {
   useEffect(() => {
     const interval = setInterval(() => setAnilloTick(t => t + 1), 60000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => () => {
+    if (labIntroTimeoutRef.current) {
+      clearTimeout(labIntroTimeoutRef.current);
+      labIntroTimeoutRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -1483,10 +1500,16 @@ export default function Planeacion() {
           const psDepth = computeDesglosadorDepthPS(tiempoSugeridoSeg);
           if (psDepth > 0) {
             awardSovereigntyPoints(user.uid, psDepth, `Resistencia de profundidad (desglosador): ${first.titulo.trim()}`).catch(() => {});
-            toast.success(`+${psDepth} PS · profundidad`, {
-              description: "Premio por activar el primer desglose con referencia temporal",
+            toast.success(`+${psDepth} PS · resistencia de profundidad`, {
+              description: "Cada hora completa de referencia (cantidad × récord min/unidad) suma +5 PS al activar este desglose.",
               style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
               duration: 3500,
+            });
+          } else if (first.titulo.trim()) {
+            toast.info("Profundidad sin premio aún", {
+              description: "Indica cantidad objetivo y récord min/unidad en la 1.ª sub-tarea (o elige sugerencia con récord) para ≥1 h de referencia y +5 PS por hora completa.",
+              style: { backgroundColor: PIZARRA, border: `1px solid rgba(212,175,55,0.35)`, color: GOLD },
+              duration: 5000,
             });
           }
         }
@@ -1581,16 +1604,9 @@ export default function Planeacion() {
       psGanados: 0,
       centinelaEnabled: nuevoSegCentinelaEnabled
     };
+    let updated: Planilla;
     try {
-      const updated = await addSegmentoToPlanilla(user.uid, seg);
-      setPlanilla(updated);
-      setNuevoSegCentinelaEnabled(true);
-      await awardSovereigntyPoints(user.uid, 1, "Segmento creado: " + seg.nombre);
-      toast.success("+1 PS Segmento programado", {
-        description: `${seg.nombre} · ${seg.horaInicio} - ${seg.horaFin}`,
-        style: { backgroundColor: PIZARRA, border: `1px solid ${VIOLET}`, color: VIOLET }
-      });
-      registrarEvento(COMPONENTES.PLANIFICACION);
+      updated = await addSegmentoToPlanilla(user.uid, seg);
     } catch {
       toast.error("No se pudo programar el segmento", {
         description: "Revisa la conexión e intenta de nuevo.",
@@ -1598,12 +1614,40 @@ export default function Planeacion() {
       });
       return;
     }
+    setPlanilla(updated);
+    setNuevoSegCentinelaEnabled(true);
     setNuevoSegNombre("");
     setNuevoSegHoraInicio("");
     setNuevoSegHoraFin("");
     setNuevoSegColor(SEGMENT_COLORS[0]);
     setNuevoSegIcono(SEGMENT_ICONS[0]);
-    setShowCrearSegmento(true);
+    setShowCrearSegmento(false);
+    setExpandedSegId("segmentos");
+    window.setTimeout(() => {
+      segmentosListEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 120);
+    registrarEvento(COMPONENTES.PLANIFICACION);
+    awardSovereigntyPoints(user.uid, 1, "Segmento creado: " + seg.nombre)
+      .then(() => {
+        toast.success("Segmento programado · +1 PS", {
+          description: `${seg.nombre} · ${seg.horaInicio} – ${seg.horaFin}`,
+          style: { backgroundColor: PIZARRA, border: `1px solid ${VIOLET}`, color: VIOLET },
+          action: {
+            label: "Añadir otro",
+            onClick: () => setShowCrearSegmento(true),
+          },
+        });
+      })
+      .catch(() => {
+        toast.success("Segmento guardado", {
+          description: `${seg.nombre} · ${seg.horaInicio} – ${seg.horaFin} · Los PS se sincronizarán al reconectar.`,
+          style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+          action: {
+            label: "Añadir otro",
+            onClick: () => setShowCrearSegmento(true),
+          },
+        });
+      });
   };
 
   const guardarComoRutina = async () => {
@@ -1666,23 +1710,34 @@ export default function Planeacion() {
     registrarEvento(COMPONENTES.PLANIFICACION);
   };
 
-  const cerrarSegmentoManual = async (segId: string) => {
+  const cerrarSegmentoManual = async (segId: string, opts?: { forceOutsideWindow?: boolean }) => {
     if (!user || !planilla) return;
     const seg = planilla.segmentos.find(s => s.id === segId);
     if (!seg || seg.estado !== "activo") return;
 
-    // Guard: only allow closing within ±5 min of horaFin
-    if (seg.horaFin) {
+    let psCierre = 2;
+    if (seg.horaFin && !opts?.forceOutsideWindow) {
       const nowMin = getCurrentTimeMinutes();
       const finMin = timeStringToMinutes(seg.horaFin);
       const dentroVentana = nowMin >= finMin - 5 && nowMin <= finMin + 5;
       if (!dentroVentana) {
         toast.warning("La puerta está sellada", {
-          description: `La llave estará disponible a las ${seg.horaFin}`,
-          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}40`, color: BLOOD }
+          description: `El cierre con intención (+2 PS) está disponible entre 5 min antes y 5 min después de ${seg.horaFin}. Puedes usar «Forzar cierre» si necesitas registrar ya.`,
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}40`, color: BLOOD },
+          duration: 6000,
         });
         return;
       }
+    }
+    if (opts?.forceOutsideWindow) {
+      if (
+        !window.confirm(
+          "Cerrar fuera de la ventana de la llave: +1 PS (registro honesto), no +2 PS de cierre con intención en horario. ¿Continuar?"
+        )
+      ) {
+        return;
+      }
+      psCierre = 1;
     }
 
     const duration = seg.activadoAt ? Math.round((Date.now() - seg.activadoAt) / 60000) : 0;
@@ -1692,16 +1747,23 @@ export default function Planeacion() {
     const updated = await updateSegmentoInPlanilla(user.uid, segId, {
       estado: "cerrado_manual",
       cerradoAt: Date.now(),
-      psGanados: (seg.psGanados || 0) + 2
+      psGanados: (seg.psGanados || 0) + psCierre
     });
     setPlanilla(updated);
-    toast.success("+2 PS Cierre Consciente", {
-      description: seg.nombre + " · Puerta cerrada con intención",
+    toast.success(psCierre === 2 ? "+2 PS Cierre Consciente" : "+1 PS Cierre registrado", {
+      description: seg.nombre + (psCierre === 2 ? " · Puerta cerrada con intención" : " · Fuera de ventana de llave"),
       style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD }
     });
-    awardSovereigntyPoints(user.uid, 2, "Cierre consciente: " + seg.nombre).catch(() => {});
+    awardSovereigntyPoints(user.uid, psCierre, (psCierre === 2 ? "Cierre consciente: " : "Cierre fuera de ventana: ") + seg.nombre).catch(() => {});
     incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
-    setShowLabIntrospeccion(true);
+    if (labIntroTimeoutRef.current) {
+      clearTimeout(labIntroTimeoutRef.current);
+      labIntroTimeoutRef.current = null;
+    }
+    labIntroTimeoutRef.current = window.setTimeout(() => {
+      labIntroTimeoutRef.current = null;
+      setShowLabIntrospeccion(true);
+    }, 1800);
     registrarEvento(COMPONENTES.PLANIFICACION);
   };
 
@@ -2316,7 +2378,7 @@ export default function Planeacion() {
         console.warn("[handleDesglosadorUpdate] depth PS falló:", e)
       );
       toast.success(`+${psDepth} PS · resistencia de profundidad`, {
-        description: cleanSubTitulo(sv.titulo),
+        description: `${cleanSubTitulo(sv.titulo)} · +5 PS por cada hora completa de referencia`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
         duration: 3200,
       });
@@ -3487,16 +3549,21 @@ export default function Planeacion() {
                   {planilla && planilla.segmentos.length > 0 ? (
                     <div className="space-y-1.5">
                       {planilla.segmentos.map((seg) => {
-                        const SegIcon = getSegIcon(seg.icono);
                         const isActive = seg.estado === "activo";
                         const isClosed = seg.estado === "cerrado_manual";
                         const isEntropia = seg.estado === "entropia";
+                        const nowMinSeg = getCurrentTimeMinutes();
+                        const inicioMinSeg = timeStringToMinutes(seg.horaInicio);
+                        const activarVentanaAbierta = nowMinSeg >= inicioMinSeg - 5 && nowMinSeg <= inicioMinSeg + 5;
+                        const finMinSeg = seg.horaFin ? timeStringToMinutes(seg.horaFin) : null;
+                        const cierreVentanaAbierta =
+                          finMinSeg == null ? true : nowMinSeg >= finMinSeg - 5 && nowMinSeg <= finMinSeg + 5;
                         return (
                           <div key={seg.id} className="p-3 rounded-xl border transition-all" style={{
                             backgroundColor: isActive ? `${EMERALD}08` : isEntropia ? `${BLOOD}08` : isClosed ? "rgba(100,116,139,0.05)" : "rgba(107,114,128,0.03)",
                             borderColor: isActive ? `${EMERALD}40` : isEntropia ? `${BLOOD}40` : isClosed ? "rgba(100,116,139,0.2)" : "rgba(107,114,128,0.15)"
                           }}>
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex items-center gap-2">
                                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: isActive ? EMERALD : isEntropia ? BLOOD : isClosed ? SLATE : seg.color }} />
                                 <div>
@@ -3504,29 +3571,43 @@ export default function Planeacion() {
                                   <p className="text-[9px] text-slate-600">{seg.horaInicio} - {seg.horaFin}</p>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                {isEntropia && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }}>ENTROPÍA</span>}
-                                {isClosed && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: "rgba(100,116,139,0.2)", color: SLATE }}>CERRADO</span>}
-                                {isActive && (
-                                  <button onClick={() => cerrarSegmentoManual(seg.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }} data-testid={`button-close-segment-${seg.id}`}>
-                                    <Square size={10} /> Cerrar
-                                  </button>
-                                )}
-                                {seg.estado === "pendiente" && (() => {
-                                  const nowMin = getCurrentTimeMinutes();
-                                  const inicioMin = timeStringToMinutes(seg.horaInicio);
-                                  const ventanaAbierta = nowMin >= inicioMin - 5 && nowMin <= inicioMin + 5;
-                                  return ventanaAbierta ? (
-                                    <button onClick={() => activarSegmento(seg.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: `${EMERALD}20`, color: EMERALD }} data-testid={`button-start-segment-${seg.id}`}>
-                                      <Play size={10} /> Activar +2 PS
+                              <div className="flex flex-col items-end gap-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap justify-end">
+                                  {isEntropia && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }}>ENTROPÍA</span>}
+                                  {isClosed && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: "rgba(100,116,139,0.2)", color: SLATE }}>CERRADO</span>}
+                                  {isActive && cierreVentanaAbierta && (
+                                    <button onClick={() => cerrarSegmentoManual(seg.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }} data-testid={`button-close-segment-${seg.id}`}>
+                                      <Square size={10} /> Cerrar (+2 PS)
                                     </button>
-                                  ) : (
-                                    <span className="text-[8px] px-2 py-0.5 rounded-lg" style={{ color: "rgba(255,255,255,0.2)", backgroundColor: "rgba(255,255,255,0.04)" }} title={`Disponible: ${seg.horaInicio} ± 5 min`}>
-                                      🔒 {seg.horaInicio}
+                                  )}
+                                  {isActive && !cierreVentanaAbierta && seg.horaFin && (
+                                    <button type="button" onClick={() => cerrarSegmentoManual(seg.id, { forceOutsideWindow: true })} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: "rgba(100,116,139,0.15)", color: SLATE }} data-testid={`button-force-close-segment-${seg.id}`}>
+                                      <Square size={10} /> Forzar cierre (+1 PS)
+                                    </button>
+                                  )}
+                                  {isActive && !cierreVentanaAbierta && seg.horaFin && (
+                                    <span className="text-[7px] text-slate-500 text-right max-w-[11rem] leading-tight">
+                                      Llave +2 PS: ±5 min de {seg.horaFin}
                                     </span>
-                                  );
-                                })()}
-                                {seg.psGanados > 0 && <span className="text-[9px] font-black" style={{ color: GOLD }}>+{seg.psGanados} PS</span>}
+                                  )}
+                                  {seg.estado === "pendiente" && (
+                                    activarVentanaAbierta ? (
+                                      <button onClick={() => activarSegmento(seg.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: `${EMERALD}20`, color: EMERALD }} data-testid={`button-start-segment-${seg.id}`}>
+                                        <Play size={10} /> Activar +2 PS
+                                      </button>
+                                    ) : (
+                                      <div className="flex flex-col items-end gap-0.5 max-w-[10.5rem]">
+                                        <span className="text-[7px] text-slate-500 text-right leading-tight">
+                                          Activar disponible ±5 min de {seg.horaInicio}
+                                        </span>
+                                        <span className="text-[8px] px-2 py-0.5 rounded-lg" style={{ color: "rgba(255,255,255,0.35)", backgroundColor: "rgba(255,255,255,0.04)" }} title={`Ventana: ${seg.horaInicio} ± 5 min`}>
+                                          🔒 Esperando horario
+                                        </span>
+                                      </div>
+                                    )
+                                  )}
+                                  {seg.psGanados > 0 && <span className="text-[9px] font-black" style={{ color: GOLD }}>+{seg.psGanados} PS</span>}
+                                </div>
                               </div>
                             </div>
                             {isActive && seg.eventos.length > 0 && (
@@ -3583,6 +3664,7 @@ export default function Planeacion() {
                           </div>
                         );
                       })}
+                      <div ref={segmentosListEndRef} className="h-0 w-full scroll-mt-4" aria-hidden />
                     </div>
                   ) : (
                     <p className="text-[10px] text-slate-600 text-center py-2">Sin segmentos programados</p>
@@ -3693,7 +3775,7 @@ export default function Planeacion() {
             {activeVehicles.length > 0 && (
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length}>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
                 ))}
               </AccordionSection>
             )}
@@ -4007,6 +4089,9 @@ export default function Planeacion() {
                                 </div>
                                 <span className="text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider" style={{ backgroundColor: `${cfg.color}15`, color: cfg.color, opacity: 0.7 }}>Planificación</span>
                               </div>
+                              <p className="text-[8px] text-slate-500 leading-snug">
+                                Resistencia de profundidad: <span className="font-bold" style={{ color: cfg.color }}>+5 PS por cada hora completa</span> de referencia (cantidad × récord min/unidad en cada sub-tarea al activarla). Menos de 1 h de referencia → 0 PS.
+                              </p>
 
                               {/* Secuencia histórica */}
                               {historialSubs.length > 0 && sugerenciasIA.length === 0 && (
@@ -4495,7 +4580,7 @@ export default function Planeacion() {
             <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm rounded-2xl border p-5 space-y-4" style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}>
               <div className="text-center space-y-1">
                 <p id="cierre-energia-titulo" className="text-sm font-bold text-white">Cierre consciente</p>
-                <p className="text-[9px] text-slate-500">¿Con qué energía terminas? (opcional, como al iniciar)</p>
+                <p className="text-[9px] text-slate-500">¿Con qué energía terminas? (tiempo, situación, verdad, descanso, investigador, desglosador). Opcional · alimenta el Espejo.</p>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {ENERGIA_ESPEJO_OPTIONS.map(opt => (
@@ -4528,7 +4613,11 @@ export default function Planeacion() {
                   onClick={() => {
                     const p = cierreEnergiaPending;
                     if (!p || !user) return;
-                    void handleFlotaStatusChange(p.vehicleId, p.status, cierreEnergiaSeleccion ?? undefined);
+                    const sel = cierreEnergiaSeleccion ?? undefined;
+                    if (p.kind === "flota") void handleFlotaStatusChange(p.vehicleId, p.status, sel);
+                    else if (p.kind === "investigador") void handleInvestigadorClose(p.vehicleId, p.cumplido, p.cantidadRealizada, sel);
+                    else if (p.kind === "desglosador") void handleDesglosadorGlobalClose(p.vehicleId, p.subs, sel);
+                    else void handleDescansoClose(p.vehicleId, p.status, p.etiqueta, p.nota, sel);
                     setCierreEnergiaPending(null);
                     setCierreEnergiaSeleccion(null);
                   }}
@@ -4665,7 +4754,7 @@ function VehicleCard({
   planilla, monitorState,
   onJustificar, onAddSubTarea, onToggleSubTarea, onSetSubTareaMinutosCupo, onExtendSituacionCupo, onAddDetalle, onEntregarDetalle, arquitectoUnlocked,
   onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose,
-  onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle
+  onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle, onOpenCierreEnergia
 }: {
   vehicle: Vehicle; expanded: boolean; onToggle: () => void; onComplete?: () => void; onArchive?: () => void;
   onArchiveWithReflection?: (reflections: Record<string, string>) => void; onQuickEditEje?: (ejeKey: string, newText: string, newTrifecta: TrifectaState) => void;
@@ -4686,6 +4775,7 @@ function VehicleCard({
   onDescansoClose?: (vehicleId: string, status: "cumplido" | "archivado", etiqueta: "recuperado" | "parcial" | "fragmentado", nota: string, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => void;
   onMicroPasoToggle?: (vehicleId: string, paso: "hidratacion" | "respiracion" | "pantallaZero") => void;
   onEtapaPuntoCeroToggle?: (vehicleId: string, etapa: "etapa1" | "etapa2" | "etapa3" | "etapa4") => void;
+  onOpenCierreEnergia?: (payload: CierreEnergiaModalPayload) => void;
 }) {
   const [showReflectionMode, setShowReflectionMode] = useState(false);
   const [reflections, setReflections] = useState<Record<string, string>>({});
@@ -4717,9 +4807,6 @@ function VehicleCard({
   const [etiquetaSalidaLocal, setEtiquetaSalidaLocal] = useState<"recuperado" | "parcial" | "fragmentado" | null>(null);
   const [notaSalidaLocal, setNotaSalidaLocal] = useState("");
   const [pendingDescansoStatus, setPendingDescansoStatus] = useState<"cumplido" | "archivado" | null>(null);
-  const [intensidadFinDescanso, setIntensidadFinDescanso] = useState<"fluido" | "concentrado" | "limite" | null>(null);
-  const [intensidadFinInvestigador, setIntensidadFinInvestigador] = useState<"fluido" | "concentrado" | "limite" | null>(null);
-  const [intensidadFinDesglosador, setIntensidadFinDesglosador] = useState<"fluido" | "concentrado" | "limite" | null>(null);
   const [showMicroPasos, setShowMicroPasos] = useState(false);
   const [horaFinProyectada, setHoraFinProyectada] = useState<string | null>(null);
   const [horaFinRemainSec, setHoraFinRemainSec] = useState<number | null>(null);
@@ -5337,27 +5424,6 @@ function VehicleCard({
                           })}
                         </div>
 
-                        <div className="p-2 rounded-lg border space-y-2" style={{ backgroundColor: "rgba(139,92,246,0.06)", borderColor: "rgba(139,92,246,0.22)" }}>
-                          <p className="text-[8px] font-black uppercase tracking-widest text-center" style={{ color: "#a78bfa" }}>¿Con qué energía terminas? (opcional)</p>
-                          <div className="grid grid-cols-3 gap-1">
-                            {ENERGIA_ESPEJO_OPTIONS.map(opt => (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={e => { e.stopPropagation(); setIntensidadFinDesglosador(prev => prev === opt.id ? null : opt.id); }}
-                                className="py-1.5 rounded-lg text-[7px] font-black uppercase transition-all"
-                                style={{
-                                  backgroundColor: intensidadFinDesglosador === opt.id ? "rgba(139,92,246,0.25)" : "rgba(0,0,0,0.25)",
-                                  border: `1px solid ${intensidadFinDesglosador === opt.id ? "rgba(139,92,246,0.5)" : "rgba(255,255,255,0.08)"}`,
-                                  color: intensidadFinDesglosador === opt.id ? "#c4b5fd" : "#64748b",
-                                }}
-                              >
-                                {opt.icon} {opt.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
                         {/* Action buttons */}
                         <div className="grid grid-cols-2 gap-2">
                           <button
@@ -5373,7 +5439,6 @@ function VehicleCard({
                               }));
                               if (onDesglosadorUpdate) onDesglosadorUpdate(vehicle.id, resetSubs);
                               setDesglosadorSummary(false);
-                              setIntensidadFinDesglosador(null);
                             }}
                             className="py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5"
                             style={{ backgroundColor: "rgba(139,92,246,0.15)", color: "#8B5CF6", border: "1px solid rgba(139,92,246,0.3)" }}
@@ -5382,7 +5447,10 @@ function VehicleCard({
                             <RotateCcw size={11} /> Nuevo Ciclo
                           </button>
                           <button
-                            onClick={() => { if (onDesglosadorGlobalClose) onDesglosadorGlobalClose(vehicle.id, subs, intensidadFinDesglosador ?? undefined); setIntensidadFinDesglosador(null); }}
+                            onClick={() => {
+                              if (onOpenCierreEnergia) onOpenCierreEnergia({ kind: "desglosador", vehicleId: vehicle.id, subs });
+                              else onDesglosadorGlobalClose?.(vehicle.id, subs);
+                            }}
                             className="py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all"
                             style={{ backgroundColor: "#D4AF37", color: "#000", boxShadow: "0 0 16px rgba(212,175,55,0.25)" }}
                             data-testid={`button-desglosador-global-close-${vehicle.id}`}
@@ -6332,30 +6400,13 @@ function VehicleCard({
                               )}
                             </div>
 
-                            <div className="p-2 rounded-lg border space-y-2" style={{ backgroundColor: "rgba(139,92,246,0.06)", borderColor: "rgba(139,92,246,0.2)" }}>
-                              <p className="text-[8px] font-black uppercase tracking-widest text-center" style={{ color: "#a78bfa" }}>¿Con qué energía terminas? (opcional)</p>
-                              <div className="grid grid-cols-3 gap-1">
-                                {ENERGIA_ESPEJO_OPTIONS.map(opt => (
-                                  <button
-                                    key={opt.id}
-                                    type="button"
-                                    onClick={e => { e.stopPropagation(); setIntensidadFinInvestigador(prev => prev === opt.id ? null : opt.id); }}
-                                    className="py-1.5 rounded-lg text-[7px] font-black uppercase transition-all"
-                                    style={{
-                                      backgroundColor: intensidadFinInvestigador === opt.id ? "rgba(139,92,246,0.25)" : "rgba(0,0,0,0.25)",
-                                      border: `1px solid ${intensidadFinInvestigador === opt.id ? "rgba(139,92,246,0.5)" : "rgba(255,255,255,0.08)"}`,
-                                      color: intensidadFinInvestigador === opt.id ? "#c4b5fd" : "#64748b",
-                                    }}
-                                  >
-                                    {opt.icon} {opt.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
                             <div className="grid grid-cols-2 gap-2">
                               <button
-                                onClick={() => cantValida && onInvestigadorClose(vehicle.id, true, cantNum, intensidadFinInvestigador ?? undefined)}
+                                onClick={() => {
+                                  if (!cantValida) return;
+                                  if (onOpenCierreEnergia) onOpenCierreEnergia({ kind: "investigador", vehicleId: vehicle.id, cumplido: true, cantidadRealizada: cantNum });
+                                  else onInvestigadorClose?.(vehicle.id, true, cantNum);
+                                }}
                                 disabled={!cantValida}
                                 className="py-3 rounded-xl flex flex-col items-center gap-1 text-xs font-bold transition-all hover:scale-[1.02] disabled:opacity-40 disabled:cursor-not-allowed"
                                 style={{ backgroundColor: `${EMERALD}15`, color: EMERALD, border: `1px solid ${EMERALD}40`, boxShadow: cantValida ? `0 0 12px ${EMERALD}15` : "none" }}
@@ -6366,7 +6417,11 @@ function VehicleCard({
                                 <span className="text-[8px] opacity-70">+10 PS · Dato válido</span>
                               </button>
                               <button
-                                onClick={() => cantValida && onInvestigadorClose(vehicle.id, false, cantNum, intensidadFinInvestigador ?? undefined)}
+                                onClick={() => {
+                                  if (!cantValida) return;
+                                  if (onOpenCierreEnergia) onOpenCierreEnergia({ kind: "investigador", vehicleId: vehicle.id, cumplido: false, cantidadRealizada: cantNum });
+                                  else onInvestigadorClose?.(vehicle.id, false, cantNum);
+                                }}
                                 disabled={!cantValida}
                                 className="py-3 rounded-xl flex flex-col items-center gap-1 text-xs font-bold transition-all hover:scale-[1.02] disabled:opacity-40 disabled:cursor-not-allowed"
                                 style={{ backgroundColor: `${NARANJA}15`, color: NARANJA, border: `1px solid ${NARANJA}40`, boxShadow: cantValida ? `0 0 12px ${NARANJA}15` : "none" }}
@@ -6380,6 +6435,7 @@ function VehicleCard({
                             {!cantValida && (
                               <p className="text-[9px] text-center" style={{ color: NARANJA }}>Ingresa las unidades para continuar</p>
                             )}
+                            <p className="text-[8px] text-slate-500 text-center">Después se abre el mismo paso de energía al cerrar que en el resto de vehículos.</p>
                           </div>
                         );
                       })()}
@@ -6414,37 +6470,35 @@ function VehicleCard({
                           className="w-full bg-black/30 text-white text-[9px] p-2 rounded-lg border border-white/10 focus:outline-none"
                           data-testid={`nota-salida-${vehicle.id}`}
                         />
-                        <div className="p-2 rounded-lg border space-y-2" style={{ backgroundColor: "rgba(139,92,246,0.06)", borderColor: "rgba(139,92,246,0.2)" }}>
-                          <p className="text-[8px] font-black uppercase tracking-widest text-center" style={{ color: "#a78bfa" }}>¿Con qué energía terminas? (opcional)</p>
-                          <div className="grid grid-cols-3 gap-1">
-                            {ENERGIA_ESPEJO_OPTIONS.map(opt => (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() => setIntensidadFinDescanso(prev => prev === opt.id ? null : opt.id)}
-                                className="py-1.5 rounded-lg text-[7px] font-black uppercase transition-all"
-                                style={{
-                                  backgroundColor: intensidadFinDescanso === opt.id ? "rgba(139,92,246,0.25)" : "rgba(0,0,0,0.25)",
-                                  border: `1px solid ${intensidadFinDescanso === opt.id ? "rgba(139,92,246,0.5)" : "rgba(255,255,255,0.08)"}`,
-                                  color: intensidadFinDescanso === opt.id ? "#c4b5fd" : "#64748b",
-                                }}
-                              >
-                                {opt.icon} {opt.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
+                        <p className="text-[8px] text-slate-500 text-center leading-snug">El siguiente paso pregunta con qué energía terminaste (mismo modal que en el resto de vehículos).</p>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => { if (etiquetaSalidaLocal && pendingDescansoStatus) { onDescansoClose?.(vehicle.id, pendingDescansoStatus, etiquetaSalidaLocal, notaSalidaLocal, intensidadFinDescanso ?? undefined); } }}
+                            onClick={() => {
+                              if (!etiquetaSalidaLocal || !pendingDescansoStatus) return;
+                              if (onOpenCierreEnergia) {
+                                onOpenCierreEnergia({
+                                  kind: "descanso",
+                                  vehicleId: vehicle.id,
+                                  status: pendingDescansoStatus,
+                                  etiqueta: etiquetaSalidaLocal,
+                                  nota: notaSalidaLocal,
+                                });
+                                setShowEtiquetaSalida(false);
+                                setEtiquetaSalidaLocal(null);
+                                setNotaSalidaLocal("");
+                                setPendingDescansoStatus(null);
+                              } else {
+                                onDescansoClose?.(vehicle.id, pendingDescansoStatus, etiquetaSalidaLocal, notaSalidaLocal);
+                              }
+                            }}
                             disabled={!etiquetaSalidaLocal}
                             className="flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-40"
                             style={{ backgroundColor: etiquetaSalidaLocal ? flotaColor : "rgba(255,255,255,0.1)", color: etiquetaSalidaLocal ? "#000" : "#64748b" }}
                             data-testid={`button-confirmar-cierre-${vehicle.id}`}
                           >
-                            Confirmar Cierre
+                            Continuar · energía al cerrar
                           </button>
-                          <button onClick={() => { setShowEtiquetaSalida(false); setEtiquetaSalidaLocal(null); setNotaSalidaLocal(""); setPendingDescansoStatus(null); setIntensidadFinDescanso(null); }} className="px-3 py-2 rounded-lg text-slate-500 bg-white/5 text-[9px]"><X size={12} /></button>
+                          <button onClick={() => { setShowEtiquetaSalida(false); setEtiquetaSalidaLocal(null); setNotaSalidaLocal(""); setPendingDescansoStatus(null); }} className="px-3 py-2 rounded-lg text-slate-500 bg-white/5 text-[9px]"><X size={12} /></button>
                         </div>
                       </div>
                     ) : timerExpired && vehicle.tipoDescanso !== "reset_profundo" && vehicle.tipoDescanso !== "punto_cero" ? (
