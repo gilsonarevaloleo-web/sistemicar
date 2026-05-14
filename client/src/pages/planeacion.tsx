@@ -299,6 +299,12 @@ const getRecordSuggestions = (query: string, limit = 5): Array<{ titulo: string;
 const cleanSubTitulo = (t: string): string =>
   t.replace(/^Día\s+\d+\s*\[[^\]]+\]:\s*/i, "").trim();
 
+/** PS por resistencia de profundidad: 5 por hora de referencia (tiempoSugeridoSeg), proporcional. */
+const computeDesglosadorDepthPS = (tiempoSugeridoSeg: number | undefined): number => {
+  if (tiempoSugeridoSeg == null || !Number.isFinite(tiempoSugeridoSeg) || tiempoSugeridoSeg <= 0) return 0;
+  return Math.max(0, Math.round(5 * (tiempoSugeridoSeg / 3600)));
+};
+
 const getSubVehicleRecordSuggestions = (query: string, limit = 5): Array<{ titulo: string; minPerUnit: number }> => {
   if (!query.trim() || query.trim().length < 2) return [];
   try {
@@ -1420,6 +1426,28 @@ export default function Planeacion() {
       });
       console.log(`[handleFlotaSave] addVehicle retornó id: ${newVehicleId}`);
 
+      if (relojTiempo === "desglosador" && user) {
+        const filteredSubs = desglosadorSubs.filter(s => s.titulo.trim());
+        const first = filteredSubs[0];
+        if (first) {
+          const cant = first.cantidadObjetivo ? Number(first.cantidadObjetivo) : 0;
+          const rec = first.tiempoRecordMinPerUnit;
+          const tiempoSugeridoSeg =
+            cant > 0 && rec != null && Number.isFinite(rec) && rec > 0
+              ? Math.round(cant * rec * 60)
+              : undefined;
+          const psDepth = computeDesglosadorDepthPS(tiempoSugeridoSeg);
+          if (psDepth > 0) {
+            awardSovereigntyPoints(user.uid, psDepth, `Resistencia de profundidad (desglosador): ${first.titulo.trim()}`).catch(() => {});
+            toast.success(`+${psDepth} PS · profundidad`, {
+              description: "Premio por activar el primer desglose con referencia temporal",
+              style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+              duration: 3500,
+            });
+          }
+        }
+      }
+
       if (bonoTemple) {
         awardSovereigntyPoints(user.uid, 10, "VOLUNTAD SOBRE EL HORARIO: " + titulo.trim()).catch(() => {});
         toast.success("VOLUNTAD SOBRE EL HORARIO +10 PS", {
@@ -1509,19 +1537,29 @@ export default function Planeacion() {
       psGanados: 0,
       centinelaEnabled: nuevoSegCentinelaEnabled
     };
-    const updated = await addSegmentoToPlanilla(user.uid, seg);
-    setPlanilla(updated);
-    setNuevoSegCentinelaEnabled(true);
-    await awardSovereigntyPoints(user.uid, 1, "Segmento creado: " + seg.nombre);
-    toast.success("+1 PS Segmento programado", {
-      description: `${seg.nombre} · ${seg.horaInicio} - ${seg.horaFin}`,
-      style: { backgroundColor: PIZARRA, border: `1px solid ${VIOLET}`, color: VIOLET }
-    });
+    try {
+      const updated = await addSegmentoToPlanilla(user.uid, seg);
+      setPlanilla(updated);
+      setNuevoSegCentinelaEnabled(true);
+      await awardSovereigntyPoints(user.uid, 1, "Segmento creado: " + seg.nombre);
+      toast.success("+1 PS Segmento programado", {
+        description: `${seg.nombre} · ${seg.horaInicio} - ${seg.horaFin}`,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${VIOLET}`, color: VIOLET }
+      });
+      registrarEvento(COMPONENTES.PLANIFICACION);
+    } catch {
+      toast.error("No se pudo programar el segmento", {
+        description: "Revisa la conexión e intenta de nuevo.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
+      return;
+    }
     setNuevoSegNombre("");
     setNuevoSegHoraInicio("");
     setNuevoSegHoraFin("");
-    setShowCrearSegmento(false);
-    registrarEvento(COMPONENTES.PLANIFICACION);
+    setNuevoSegColor(SEGMENT_COLORS[0]);
+    setNuevoSegIcono(SEGMENT_ICONS[0]);
+    setShowCrearSegmento(true);
   };
 
   const guardarComoRutina = async () => {
@@ -2210,6 +2248,24 @@ export default function Planeacion() {
 
   const handleDesglosadorUpdate = (vehicleId: string, updatedSubs: SubVehiculo[]) => {
     if (!user) return;
+    const prevVehicle = vehiclesRef.current.find(v => v.id === vehicleId);
+    const oldSubs = prevVehicle?.subVehiculos || [];
+    for (const sv of updatedSubs) {
+      if (sv.status !== "activo" || !sv.aperturaAt) continue;
+      const old = oldSubs.find(s => s.id === sv.id);
+      const isNewActivation = !old || old.status !== "activo" || old.aperturaAt !== sv.aperturaAt;
+      if (!isNewActivation) continue;
+      const psDepth = computeDesglosadorDepthPS(sv.tiempoSugeridoSeg);
+      if (psDepth <= 0) continue;
+      awardSovereigntyPoints(user.uid, psDepth, `Profundidad desglosador: ${cleanSubTitulo(sv.titulo)}`).catch(e =>
+        console.warn("[handleDesglosadorUpdate] depth PS falló:", e)
+      );
+      toast.success(`+${psDepth} PS · resistencia de profundidad`, {
+        description: cleanSubTitulo(sv.titulo),
+        style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+        duration: 3200,
+      });
+    }
     // Compute new vehicles array directly (no side effects inside setter)
     const newVehicles = vehicles.map(v => v.id === vehicleId ? { ...v, subVehiculos: updatedSubs } : v);
     // Update React state — pure, no side effects inside
