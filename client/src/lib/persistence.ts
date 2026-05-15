@@ -451,6 +451,10 @@ export interface SubTarea {
   detalles?: DetalleSubTarea[];
   /** Cupo de tiempo (min) para foco situacional; opcional. */
   minutosCupo?: number;
+  /** Si true, la fila está en el desglose con tiempo madre (4 PS al cumplir, cupo/+5′). */
+  enDesgloseCronometro?: boolean;
+  /** Resultado en lista cronometrada; en lista libre suele omitirse (solo `completada`). */
+  resultadoSituacion?: "pendiente" | "cumplido" | "fallado";
 }
 
 export interface SubVehiculo {
@@ -552,6 +556,16 @@ export interface Vehicle {
   notaSalida?: string;
   /** Primera subtarea pendiente con cupo: inicio del intervalo para alarma auditiva (desglosador situacional). */
   situacionCupoAnchor?: { subTareaId: string; startedAt: number } | null;
+  /** Desglose situacional con tiempo madre: hora fin, inicio de bloque (PS profundidad por h real), PS profundidad ya otorgados en el bloque. */
+  situacionCronometro?: {
+    activo: boolean;
+    horaFinMs?: number;
+    bloqueInicioAt?: number;
+    /** Suma de PS de profundidad (+5/h de bloque) ya entregados en este vehículo activo. */
+    depthBlockPsGranted?: number;
+  } | null;
+  /** PS de profundidad por duración real del desglosador de tiempo (sesión); evita doble premio al activar subs. */
+  desglosadorBloqueDepthPsGranted?: number;
 }
 
 const VEHICLES_KEY = "sistemicar_vehicles";
@@ -591,9 +605,8 @@ export function saveLocalVehicles(vehicles: Vehicle[]): void {
     if (v.status !== "activo" || v.autoVerdad) return false;
     if (newIds.has(v.id)) return false;
     if (v.clientRequestId && newClientRequestIds.has(v.clientRequestId)) return false;
-    // Skip preservation if THIS specific vehicle was recently closed (8s window per ID)
-    const closeTime = _recentlyClosedIds.get(v.id);
-    if (closeTime && Date.now() - closeTime < 8000) return false;
+    // Skip preservation if THIS specific vehicle was recently closed
+    if (wasVehicleRecentlyClosed(v.id)) return false;
     return true; // locally-active vehicle absent from new data — preserve it
   });
   if (preserved.length > 0) {
@@ -607,12 +620,50 @@ export function saveLocalVehicles(vehicles: Vehicle[]): void {
 // Allows saveLocalVehicles to bypass protection only for the specific vehicle that was
 // just closed — NOT for all vehicles globally (which would wipe a new vehicle created
 // immediately after a close, since its provisional ID isn't in Firebase yet).
+const RECENTLY_CLOSED_MS = 60_000;
+const RECENTLY_CLOSED_SESSION_KEY = "sistemicar_recently_closed_vehicles";
+const RECENTLY_CLOSED_SESSION_TTL_MS = 5 * 60_000;
+
 const _recentlyClosedIds = new Map<string, number>();
+
+function readClosedIdsFromSession(): Record<string, number> {
+  try {
+    const raw = sessionStorage.getItem(RECENTLY_CLOSED_SESSION_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeClosedIdToSession(vehicleId: string): void {
+  try {
+    const now = Date.now();
+    const data = readClosedIdsFromSession();
+    data[vehicleId] = now;
+    const cutoff = now - RECENTLY_CLOSED_SESSION_TTL_MS;
+    for (const [id, t] of Object.entries(data)) {
+      if (t < cutoff) delete data[id];
+    }
+    sessionStorage.setItem(RECENTLY_CLOSED_SESSION_KEY, JSON.stringify(data));
+  } catch { /* sessionStorage unavailable */ }
+}
+
+/** True if this vehicle was closed recently (memory or sessionStorage, survives F5). */
+export function wasVehicleRecentlyClosed(vehicleId: string): boolean {
+  const mem = _recentlyClosedIds.get(vehicleId);
+  if (mem != null && Date.now() - mem < RECENTLY_CLOSED_MS) return true;
+  const session = readClosedIdsFromSession()[vehicleId];
+  return session != null && Date.now() - session < RECENTLY_CLOSED_SESSION_TTL_MS;
+}
+
 export function notifyVehicleClosed(vehicleId?: string): void {
   if (vehicleId) {
-    _recentlyClosedIds.set(vehicleId, Date.now());
-    // Prune entries older than 10 seconds to prevent unbounded growth
-    const cutoff = Date.now() - 10000;
+    const now = Date.now();
+    _recentlyClosedIds.set(vehicleId, now);
+    writeClosedIdToSession(vehicleId);
+    const cutoff = now - RECENTLY_CLOSED_MS;
     for (const [id, t] of _recentlyClosedIds) {
       if (t < cutoff) _recentlyClosedIds.delete(id);
     }
@@ -719,8 +770,20 @@ export function subscribeToVehicles(
       // never destroy in-progress sub-vehicle state (subVehiculos are session-local only)
       const existingLocal = getLocalVehicles();
       const sortedWithSubs = sorted.map(v => {
+        const localV = existingLocal.find(lv => lv.id === v.id);
+        if (localV && localV.status !== "activo" && v.status === "activo") {
+          return {
+            ...v,
+            status: localV.status,
+            ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
+            ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
+            ...(localV.cierreManual != null ? { cierreManual: localV.cierreManual } : {}),
+            ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
+            situacionCronometro: null,
+            situacionCupoAnchor: null,
+          };
+        }
         if (v.tipoReloj === "desglosador" && v.status === "activo") {
-          const localV = existingLocal.find(lv => lv.id === v.id);
           if (localV?.subVehiculos && localV.subVehiculos.length > 0) {
             return { ...v, subVehiculos: localV.subVehiculos };
           }
@@ -770,9 +833,7 @@ export function subscribeToVehicles(
           // Present by clientRequestId — provisional was written to Firebase successfully;
           // the post-write ID replacement in localStorage may not have run yet
           if (v.clientRequestId && firebaseClientRequestIds.has(v.clientRequestId)) return false;
-          // Skip preservation if this specific vehicle was recently closed (8s window per ID)
-          const closeTime = _recentlyClosedIds.get(v.id);
-          if (closeTime && Date.now() - closeTime < 8000) return false;
+          if (wasVehicleRecentlyClosed(v.id)) return false;
           // Genuinely not in Firebase — must be preserved
           return true;
         });
@@ -930,7 +991,7 @@ export async function deleteVehicle(userId: string, vehicleId: string): Promise<
 export async function updateVehicle(
   userId: string,
   vehicleId: string,
-  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor">>
+  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted">>
 ): Promise<void> {
   const updateLocally = () => {
     const vehicles = getLocalVehicles().map(v =>
@@ -944,11 +1005,10 @@ export async function updateVehicle(
       const path = getPrivatePath(userId, "vehicles");
       const { updateDoc } = await import("firebase/firestore");
       await updateDoc(doc(db, path, vehicleId), updates);
-      // Muchos cierres usan solo updateVehicle({ status }) sin updateVehicleStatus; sin esto,
-      // saveLocalVehicles puede reinyectar el activo en la ventana entre snapshot y cierre real.
       if (updates.status === "cumplido" || updates.status === "archivado") {
         notifyVehicleClosed(vehicleId);
       }
+      updateLocally();
     } catch (error) {
       console.warn("[updateVehicle] Firebase falló, guardando localmente:", error);
       updateLocally();
@@ -2295,9 +2355,9 @@ export async function awardSovereigntyPoints(
           sovereigntyPoints: increment(roundedAmount),
           updatedAt: serverTimestamp()
         });
-        const latest = getLocalProgression(userId);
-        const mergedSp = (latest.sovereigntyPoints || 0) + roundedAmount;
-        const merged = { ...latest, sovereigntyPoints: mergedSp, updatedAt: new Date() };
+        const localProg = getLocalProgression(userId);
+        const mergedSp = (localProg.sovereigntyPoints || 0) + roundedAmount;
+        const merged = { ...localProg, sovereigntyPoints: mergedSp, updatedAt: new Date() };
         saveLocalProgression(merged);
         backupToLocal("progression", merged);
       }
