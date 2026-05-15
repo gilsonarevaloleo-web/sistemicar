@@ -2531,6 +2531,37 @@ export default function Planeacion() {
     return { cumplidos: cumplidos.length, incumplidos: incumplidos.length, total, ratioPct, tipoDom: tipoDom ? (tipoLabel[tipoDom] || tipoDom) : null, suficiente: total >= 5 };
   }, [gordaHistory]);
 
+  /** Ancla el temporizador auditivo del cupo a la primera subtarea pendiente con minutosCupo > 0. */
+  const handleSyncSituacionCupoAnchor = useCallback(async (vehicleId: string, opts?: { forceResetSameRow?: boolean }) => {
+    if (!user) return;
+    const v = vehiclesRef.current.find(x => x.id === vehicleId);
+    if (!v || v.tipoFlota !== "situacion" || v.status !== "activo") return;
+    const list = v.subTareas || [];
+    const first = list.find(st => !st.completada && (st.minutosCupo ?? 0) > 0);
+    const cur = v.situacionCupoAnchor;
+    if (!first) {
+      if (cur != null) {
+        setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x)));
+        vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x));
+        try {
+          await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: null });
+        } catch (err) {
+          console.error("[handleSyncSituacionCupoAnchor] clear", err);
+        }
+      }
+      return;
+    }
+    if (cur?.subTareaId === first.id && !opts?.forceResetSameRow) return;
+    const next = { subTareaId: first.id, startedAt: Date.now() };
+    setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x)));
+    vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x));
+    try {
+      await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: next });
+    } catch (err) {
+      console.error("[handleSyncSituacionCupoAnchor] set", err);
+    }
+  }, [user]);
+
   const handleAddSubTarea = async (vehicleId: string, texto: string) => {
     if (!user) return;
     const vehicle = vehicles.find(v => v.id === vehicleId);
@@ -2538,7 +2569,13 @@ export default function Planeacion() {
     const newSubTarea = { id: `st_${Date.now()}`, texto, completada: false, creadaAt: Date.now() };
     const subTareas = [...(vehicle.subTareas || []), newSubTarea];
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
-    try { await updateVehicle(user.uid, vehicleId, { subTareas }); } catch (e) { console.error("[handleAddSubTarea]", e); }
+    vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
+    try {
+      await updateVehicle(user.uid, vehicleId, { subTareas });
+      void handleSyncSituacionCupoAnchor(vehicleId);
+    } catch (e) {
+      console.error("[handleAddSubTarea]", e);
+    }
   };
 
   const handleToggleSubTarea = async (vehicleId: string, subTareaId: string) => {
@@ -2552,8 +2589,10 @@ export default function Planeacion() {
     const chimesOnComplete = isChecking && vehicle.tipoFlota === "situacion" && idx >= 0 ? Math.max(1, list.length - idx) : 0;
     const subTareas = list.map(st => st.id === subTareaId ? { ...st, completada: !st.completada } : st);
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
+    vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas });
+      void handleSyncSituacionCupoAnchor(vehicleId);
       if (chimesOnComplete > 0) void playSituacionChimes(chimesOnComplete);
       if (isChecking && vehicle.tipoFlota === "situacion" && targetSub) {
         try {
@@ -2594,7 +2633,14 @@ export default function Planeacion() {
     });
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
-    try { await updateVehicle(user.uid, vehicleId, { subTareas }); } catch (err) { console.error("[handleSetSubTareaMinutosCupo]", err); }
+    try {
+      await updateVehicle(user.uid, vehicleId, { subTareas });
+      const vAfter = vehiclesRef.current.find(x => x.id === vehicleId);
+      const first = (vAfter?.subTareas || []).find(st => !st.completada && (st.minutosCupo ?? 0) > 0);
+      void handleSyncSituacionCupoAnchor(vehicleId, first?.id === subTareaId ? { forceResetSameRow: true } : undefined);
+    } catch (err) {
+      console.error("[handleSetSubTareaMinutosCupo]", err);
+    }
   };
 
   const handleExtendSituacionCupo = async (vehicleId: string, subTareaId: string, delta: number) => {
@@ -2628,7 +2674,10 @@ export default function Planeacion() {
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 2500,
       });
-    } catch (e) { console.error("[handleExtendSituacionCupo]", e); }
+      void handleSyncSituacionCupoAnchor(vehicleId);
+    } catch (e) {
+      console.error("[handleExtendSituacionCupo]", e);
+    }
   };
 
   const handleAddDetalle = async (vehicleId: string, subTareaId: string, texto: string) => {
@@ -3775,7 +3824,7 @@ export default function Planeacion() {
             {activeVehicles.length > 0 && (
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length}>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
                 ))}
               </AccordionSection>
             )}
@@ -4752,7 +4801,7 @@ function VehicleCard({
   vehicle, expanded, onToggle, onComplete, onArchive, onArchiveWithReflection, onQuickEditEje, onDetail, minimal = false,
   fatigueLayer, transmutationText, onTransmutationChange, showTransmutation, recentSituacionCount, segmentoActivoMinutes, segmentoNumero,
   planilla, monitorState,
-  onJustificar, onAddSubTarea, onToggleSubTarea, onSetSubTareaMinutosCupo, onExtendSituacionCupo, onAddDetalle, onEntregarDetalle, arquitectoUnlocked,
+  onJustificar, onAddSubTarea, onToggleSubTarea, onSetSubTareaMinutosCupo, onExtendSituacionCupo, onSyncSituacionCupoAnchor, onAddDetalle, onEntregarDetalle, arquitectoUnlocked,
   onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose,
   onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle, onOpenCierreEnergia
 }: {
@@ -4766,6 +4815,7 @@ function VehicleCard({
   onToggleSubTarea?: (vehicleId: string, subTareaId: string) => void;
   onSetSubTareaMinutosCupo?: (vehicleId: string, subTareaId: string, minutos: number | undefined) => void;
   onExtendSituacionCupo?: (vehicleId: string, subTareaId: string, delta: number) => void;
+  onSyncSituacionCupoAnchor?: (vehicleId: string) => void;
   onAddDetalle?: (vehicleId: string, subTareaId: string, texto: string) => void;
   onEntregarDetalle?: (vehicleId: string, subTareaId: string, detalleId: string) => void;
   arquitectoUnlocked?: boolean;
@@ -4824,6 +4874,8 @@ function VehicleCard({
   const chimeCtxRef = useRef<AudioContext | null>(null);
   const alarmCtxRef = useRef<AudioContext | null>(null);
   const prevTimerExpiredRef = useRef<boolean>(false);
+  const situacionCupoFireKeyRef = useRef<string | null>(null);
+  const [situacionCupoUiTick, setSituacionCupoUiTick] = useState(0);
 
   const playChime = useCallback(() => {
     if (localStorage.getItem("sistemicar_tik_sound") === "off") return;
@@ -4899,6 +4951,52 @@ function VehicleCard({
       console.debug("[alarm] audio error:", err);
     }
   }, []);
+
+  const situacionSubWatchKey = useMemo(() => {
+    if (vehicle.tipoFlota !== "situacion") return "";
+    return (vehicle.subTareas || []).map(s => `${s.id}:${s.completada ? 1 : 0}:${s.minutosCupo ?? 0}`).join("|");
+  }, [vehicle.tipoFlota, vehicle.subTareas]);
+
+  useEffect(() => {
+    if (!onSyncSituacionCupoAnchor || vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    onSyncSituacionCupoAnchor(vehicle.id);
+  }, [vehicle.id, vehicle.status, vehicle.tipoFlota, situacionSubWatchKey, onSyncSituacionCupoAnchor]);
+
+  useEffect(() => {
+    if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    const id = window.setInterval(() => setSituacionCupoUiTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [vehicle.tipoFlota, vehicle.status]);
+
+  useEffect(() => {
+    if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    const anchor = vehicle.situacionCupoAnchor;
+    if (!anchor?.subTareaId) return;
+    const sub = (vehicle.subTareas || []).find(s => s.id === anchor.subTareaId);
+    if (!sub || sub.completada || !(sub.minutosCupo && sub.minutosCupo > 0)) return;
+    const limitMs = sub.minutosCupo * 60 * 1000;
+    const fireKey = `${anchor.subTareaId}-${anchor.startedAt}-${sub.minutosCupo}`;
+    const run = () => {
+      const elapsed = Date.now() - anchor.startedAt;
+      if (elapsed < limitMs) return;
+      if (situacionCupoFireKeyRef.current === fireKey) return;
+      situacionCupoFireKeyRef.current = fireKey;
+      playAlarm();
+      if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+      if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+        try {
+          new Notification(`⏱ Cupo · ${vehicle.titulo}`, {
+            body: `La fila «${sub.texto.slice(0, 48)}${sub.texto.length > 48 ? "…" : ""}» alcanzó su cupo.`,
+            icon: "/favicon.ico",
+            tag: `situacion-cupo-${vehicle.id}-${fireKey}`,
+          });
+        } catch { /* empty */ }
+      }
+    };
+    run();
+    const intervalId = window.setInterval(run, 2000);
+    return () => clearInterval(intervalId);
+  }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.titulo, vehicle.id, playAlarm]);
 
   useEffect(() => {
     const wasExpired = prevTimerExpiredRef.current;
@@ -5939,8 +6037,27 @@ function VehicleCard({
                     )}
                   </div>
                   <p className="text-[7px] text-slate-600 leading-snug mb-2 px-0.5 border-l-2 pl-2" style={{ borderColor: "rgba(148,163,184,0.35)" }}>
-                    Cupo por fila, +5′ desde la siguiente pendiente, timbres al oír al marcar hecha (orden de lista), Wake Lock breve al sonar.
+                    Cupo por fila, +5′ desde la siguiente pendiente, timbres al oír al marcar hecha (orden de lista), Wake Lock breve al sonar. Al cumplir el cupo suena la alarma (pantalla apagada o no).
                   </p>
+                  {(() => {
+                    void situacionCupoUiTick;
+                    const anchor = vehicle.situacionCupoAnchor;
+                    const subs = vehicle.subTareas || [];
+                    if (!anchor?.subTareaId || subs.length === 0) return null;
+                    const st = subs.find(s => s.id === anchor.subTareaId);
+                    if (!st || st.completada || !(st.minutosCupo && st.minutosCupo > 0)) return null;
+                    const limitSec = st.minutosCupo * 60;
+                    const elapsedSec = Math.max(0, Math.floor((Date.now() - anchor.startedAt) / 1000));
+                    const remainSec = Math.max(0, limitSec - elapsedSec);
+                    const rm = Math.floor(remainSec / 60);
+                    const rs = remainSec % 60;
+                    const idx = subs.findIndex(s => s.id === st.id) + 1;
+                    return (
+                      <p className="text-[8px] font-mono mb-1.5" style={{ color: "rgba(212,175,55,0.9)" }} data-testid={`situacion-cupo-countdown-${vehicle.id}`}>
+                        Fila foco #{idx} · {String(rm).padStart(2, "0")}:{String(rs).padStart(2, "0")} / {st.minutosCupo} min
+                      </p>
+                    );
+                  })()}
                   {(() => {
                     const subs = vehicle.subTareas || [];
                     const totalCupo = subs.reduce((a, st) => a + (st.minutosCupo ?? 0), 0);
