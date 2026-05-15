@@ -129,6 +129,7 @@ import {
   RadiografiaTokenData,
   getExpedientesRecientes,
   ExpedienteClinico,
+  hasActiveCentinelaInFirestore,
 } from "@/lib/persistence";
 import { scheduleSegmentNotifications, cancelAllNotifications, requestNotificationPermission, getNotificationPermission } from "@/lib/notifications";
 import { auth } from "@/lib/firebase";
@@ -1126,6 +1127,13 @@ export default function Planeacion() {
       }
 
       if (hasAutoVerdadActive) return;
+
+      const remoteCentinela = await hasActiveCentinelaInFirestore(user.uid);
+      if (remoteCentinela) {
+        noVehicleSince.current = 0;
+        localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
+        return;
+      }
 
       const persistedSince = parseInt(localStorage.getItem(NO_VEHICLE_SINCE_KEY) || "0");
       const MAX_SINCE_AGE = 4 * 3600 * 1000; // 4 horas — timestamps más antiguos se ignoran

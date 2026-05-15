@@ -619,6 +619,21 @@ export function notifyVehicleClosed(vehicleId?: string): void {
   }
 }
 
+/** Evita crear un segundo centinela si otra pestaña/dispositivo ya escribió uno en Firestore. */
+export async function hasActiveCentinelaInFirestore(userId: string): Promise<boolean> {
+  if (!isFirebaseConfigured() || !db) return false;
+  try {
+    const path = getPrivatePath(userId, "vehicles");
+    const snap = await getDocs(collection(db, path));
+    return snap.docs.some(d => {
+      const r = d.data() as { status?: string; autoVerdad?: boolean };
+      return r.status === "activo" && r.autoVerdad === true;
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function subscribeToVehicles(
   userId: string,
   onData: (vehicles: Vehicle[]) => void,
@@ -929,6 +944,11 @@ export async function updateVehicle(
       const path = getPrivatePath(userId, "vehicles");
       const { updateDoc } = await import("firebase/firestore");
       await updateDoc(doc(db, path, vehicleId), updates);
+      // Muchos cierres usan solo updateVehicle({ status }) sin updateVehicleStatus; sin esto,
+      // saveLocalVehicles puede reinyectar el activo en la ventana entre snapshot y cierre real.
+      if (updates.status === "cumplido" || updates.status === "archivado") {
+        notifyVehicleClosed(vehicleId);
+      }
     } catch (error) {
       console.warn("[updateVehicle] Firebase falló, guardando localmente:", error);
       updateLocally();
@@ -1764,6 +1784,44 @@ export interface UserProgression {
 
 const PROGRESSION_KEY = "sistemicar_progression";
 
+/** Con varios docs en `progression` (p. ej. migraciones), evitar tomar uno arbitrario. */
+function pickLatestProgressionDoc(
+  docs: Array<{ id: string; data: () => Record<string, unknown> }>
+): { id: string; data: () => Record<string, unknown> } | null {
+  if (!docs.length) return null;
+  const toMs = (u: unknown): number => {
+    if (u && typeof (u as { toMillis?: () => number }).toMillis === "function") return (u as { toMillis: () => number }).toMillis();
+    if (u instanceof Date) return u.getTime();
+    return 0;
+  };
+  return [...docs].sort((a, b) => {
+    const da = a.data();
+    const db = b.data();
+    const ta = toMs(da.updatedAt) || toMs(da.createdAt) || 0;
+    const tb = toMs(db.updatedAt) || toMs(db.createdAt) || 0;
+    return tb - ta;
+  })[0];
+}
+
+function maxSovereigntyAcrossRemoteDocs(
+  docs: Array<{ data: () => Record<string, unknown> }>
+): { sovereignty: number; ptsE: number; ptsP: number; ptsD: number; totalCP: number } {
+  let sovereignty = 0;
+  let ptsE = 0;
+  let ptsP = 0;
+  let ptsD = 0;
+  let totalCP = 0;
+  for (const d of docs) {
+    const r = d.data();
+    sovereignty = Math.max(sovereignty, (r.sovereigntyPoints ?? 0) as number);
+    ptsE = Math.max(ptsE, (r.ptsEspejo ?? 0) as number);
+    ptsP = Math.max(ptsP, (r.ptsPlanificacion ?? 0) as number);
+    ptsD = Math.max(ptsD, (r.ptsDeposito ?? 0) as number);
+    totalCP = Math.max(totalCP, (r.totalCP ?? 0) as number);
+  }
+  return { sovereignty, ptsE, ptsP, ptsD, totalCP };
+}
+
 function getDefaultProgression(userId: string): UserProgression {
   return {
     id: `prog_${Date.now()}`,
@@ -1828,7 +1886,14 @@ export function subscribeToProgression(
       if (snapshot.empty) {
         const defaultProg = getDefaultProgression(userId);
         const localProg = getLocalProgression(userId);
-        if (localProg.totalCP > 0) {
+        const localBelongsToUser = !localProg.userId || localProg.userId === userId;
+        const localHasMeaningfulProgress =
+          localBelongsToUser &&
+          ((localProg.totalCP ?? 0) > 0 ||
+            (localProg.sovereigntyPoints ?? 0) > 0 ||
+            (localProg.ptsEspejo ?? 0) + (localProg.ptsPlanificacion ?? 0) + (localProg.ptsDeposito ?? 0) > 0 ||
+            (localProg.totalMissionsCompleted ?? 0) > 0);
+        if (localHasMeaningfulProgress) {
           deactivateSovereignModeGlobal();
           backupToLocal("progression", localProg);
           onData(localProg);
@@ -1836,16 +1901,31 @@ export function subscribeToProgression(
           onData(defaultProg);
         }
       } else {
-        const d = snapshot.docs[0];
+        if (snapshot.docs.length > 1) {
+          console.warn(`[subscribeToProgression] ${snapshot.docs.length} documentos en progression — usando el más reciente y fusionando máximos de PS/módulos.`);
+        }
+        const d = pickLatestProgressionDoc(snapshot.docs);
+        if (!d) {
+          onData(getDefaultProgression(userId));
+          return;
+        }
         const data = d.data();
-        const remote = (data.sovereigntyPoints ?? 0) as number;
+        const remoteMax = maxSovereigntyAcrossRemoteDocs(snapshot.docs);
         const localProg = getLocalProgression(userId);
         const localSp = localProg.sovereigntyPoints ?? 0;
-        const sovereigntyPoints = Math.max(remote, localSp);
+        const sovereigntyPoints = Math.max(remoteMax.sovereignty, localSp);
+        const ptsEspejo = Math.max(remoteMax.ptsE, localProg.ptsEspejo ?? 0);
+        const ptsPlanificacion = Math.max(remoteMax.ptsP, localProg.ptsPlanificacion ?? 0);
+        const ptsDeposito = Math.max(remoteMax.ptsD, localProg.ptsDeposito ?? 0);
+        const totalCP = Math.max(remoteMax.totalCP, localProg.totalCP ?? 0);
         const prog = {
           id: d.id,
           ...data,
           sovereigntyPoints,
+          ptsEspejo,
+          ptsPlanificacion,
+          ptsDeposito,
+          totalCP,
           lastActivityDate: data.lastActivityDate?.toDate() || null,
           cooldownUntil: data.cooldownUntil?.toDate() || null,
           createdAt: data.createdAt?.toDate() || new Date(),
@@ -1908,10 +1988,20 @@ export async function updateProgression(
           updatedAt: serverTimestamp()
         });
       } else {
-        await updateDoc(doc(db, path, snapshot.docs[0].id), {
-          ...updates,
-          updatedAt: serverTimestamp()
-        });
+        const latest = pickLatestProgressionDoc(snapshot.docs);
+        if (!latest) {
+          const newProg = { ...getDefaultProgression(userId), ...updates, updatedAt: serverTimestamp() };
+          await setDoc(doc(db, path, `prog_${Date.now()}`), {
+            ...newProg,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          await updateDoc(doc(db, path, latest.id), {
+            ...updates,
+            updatedAt: serverTimestamp()
+          });
+        }
       }
       saveLocally();
     } catch (error) {
@@ -1957,8 +2047,10 @@ export async function incrementModulePoints(userId: string, module: ModuleKey, a
           updatedAt: serverTimestamp()
         });
       } else {
+        const latest = pickLatestProgressionDoc(snapshot.docs);
+        const targetId = latest?.id ?? snapshot.docs[0].id;
         // Atomic field-level increment — no read-modify-write race condition
-        await updateDoc(doc(db, path, snapshot.docs[0].id), {
+        await updateDoc(doc(db, path, targetId), {
           [field]: fbIncrement(rounded),
           updatedAt: serverTimestamp()
         });
@@ -2197,7 +2289,9 @@ export async function awardSovereigntyPoints(
       if (snap.empty) {
         await updateProgression(userId, { sovereigntyPoints: newTotal });
       } else {
-        await updateDoc(doc(db, pathProg, snap.docs[0].id), {
+        const latest = pickLatestProgressionDoc(snap.docs);
+        const targetId = latest?.id ?? snap.docs[0].id;
+        await updateDoc(doc(db, pathProg, targetId), {
           sovereigntyPoints: increment(roundedAmount),
           updatedAt: serverTimestamp()
         });
