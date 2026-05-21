@@ -19,6 +19,8 @@ import {
   isFirebaseConfigured
 } from "./firebase";
 import { activateSovereignModeGlobal, deactivateSovereignModeGlobal, backupToLocal, restoreFromLocal } from "./sovereign-mode";
+import type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
+export type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
 
 export interface AcervoEntry {
   id: string;
@@ -468,6 +470,10 @@ export interface SubVehiculo {
   duracionFinal?: number;
   tiempoRecordMinPerUnit?: number;
   tiempoSugeridoSeg?: number;
+  /** Ruta de enfoque (3 bandas por unidades restantes); solo con récord y opt-in. */
+  rutaEnfoque?: RutaEnfoqueState;
+  /** Bandas declaradas al cierre de esta sub (opcional). */
+  rutaDeclarada?: RutaBandaId[];
 }
 
 export interface EnergiaOscuraEntry {
@@ -566,6 +572,10 @@ export interface Vehicle {
   } | null;
   /** PS de profundidad por duración real del desglosador de tiempo (sesión); evita doble premio al activar subs. */
   desglosadorBloqueDepthPsGranted?: number;
+  /** Bandas de ruta de enfoque declaradas al cierre (desglosador u otros con ruta activa). */
+  rutaDeclarada?: RutaBandaId[];
+  /** Copia automática de bandas cruzadas al cierre (agregado de subs). */
+  rutaCruzada?: RutaCruzadaSnapshot;
 }
 
 const VEHICLES_KEY = "sistemicar_vehicles";
@@ -6131,6 +6141,18 @@ export interface FichaAuditResult {
   retried: boolean;
 }
 
+export type ContaminationAuditResult = {
+  passed: boolean;
+  violations: string[];
+  retried?: boolean;
+};
+
+export interface RouterMeta {
+  cerebro_router?: boolean;
+  promptTokens?: { c1: number; c2: number; c3: number };
+  contaminationAudit?: Record<string, ContaminationAuditResult>;
+}
+
 export interface CapituloCarriles {
   interfazId: string;
   subInterfazId: string;
@@ -6142,6 +6164,7 @@ export interface CapituloCarriles {
   generadoAt?: any;
   fichaAudit?: Record<string, FichaAuditResult>;
   cerebro_v2?: boolean;
+  routerMeta?: RouterMeta;
 }
 
 const TALLER_ESPEJO_BASE = (userId: string) =>
@@ -6268,7 +6291,8 @@ export async function saveCapituloCarrilesLibro(
   subInterfazId: string,
   carriles: Pick<CapituloCarriles, "subInterfazTitulo" | "carril1" | "carril2" | "carril3">,
   fichaAudit?: Record<string, FichaAuditResult>,
-  cerebro_v2?: boolean
+  cerebro_v2?: boolean,
+  routerMeta?: RouterMeta
 ): Promise<void> {
   if (isFirebaseConfigured() && db) {
     const capitulosPath = `${TALLER_ESPEJO_BASE(userId)}/${interfazId}/data/capitulos`;
@@ -6279,7 +6303,8 @@ export async function saveCapituloCarrilesLibro(
       status: "listo",
       generadoAt: serverTimestamp(),
       ...(fichaAudit ? { fichaAudit } : {}),
-      ...(cerebro_v2 ? { cerebro_v2: true } : {})
+      ...(cerebro_v2 ? { cerebro_v2: true } : {}),
+      ...(routerMeta ? { routerMeta } : {}),
     }, { merge: true });
   } else {
     const key = `sistemicar_taller_cap_${interfazId}_${subInterfazId}`;
@@ -6289,7 +6314,8 @@ export async function saveCapituloCarrilesLibro(
       interfazId, subInterfazId, ...carriles, status: "listo",
       generadoAt: new Date().toISOString(),
       ...(fichaAudit ? { fichaAudit } : {}),
-      ...(cerebro_v2 ? { cerebro_v2: true } : {})
+      ...(cerebro_v2 ? { cerebro_v2: true } : {}),
+      ...(routerMeta ? { routerMeta } : {}),
     }));
     window.dispatchEvent(new CustomEvent(`taller-cap-updated`));
   }
@@ -6318,6 +6344,7 @@ export function subscribeToCapitulosLibro(
           generadoAt: data.generadoAt,
           ...(data.fichaAudit ? { fichaAudit: data.fichaAudit } : {}),
           ...(data.cerebro_v2 ? { cerebro_v2: true } : {}),
+          ...(data.routerMeta ? { routerMeta: data.routerMeta } : {}),
         };
       });
       onData(result);
@@ -6366,6 +6393,7 @@ export function subscribeToAllCapitulosLibro(
           generadoAt: data.generadoAt,
           ...(data.fichaAudit ? { fichaAudit: data.fichaAudit } : {}),
           ...(data.cerebro_v2 ? { cerebro_v2: true } : {}),
+          ...(data.routerMeta ? { routerMeta: data.routerMeta } : {}),
         };
       });
       onData(result);

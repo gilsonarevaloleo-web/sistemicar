@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { auth } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
 import { CreditCard, ArrowLeft, Shield, Check, Sparkles, Crown, Zap, Star, Lock, Smartphone, ExternalLink, MessageCircle, Heart, Eye, Brain, ListTodo } from "lucide-react";
 import { Link, useLocation } from "wouter";
@@ -126,6 +127,25 @@ export default function Pagos() {
   const [isEspejoProduct, setIsEspejoProduct] = useState(false);
   const paymentSectionRef = useRef<HTMLDivElement>(null);
   
+  const claimEspejoCredits = useCallback(async () => {
+    const user = auth?.currentUser;
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/espejo/claim-purchase-credits", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.grantedCredits > 0) {
+        toast.success(data.message || `Se activaron ${data.grantedCredits} créditos en Espejo.`);
+        window.dispatchEvent(new CustomEvent("espejo-credits-updated"));
+      }
+    } catch {
+      // Webhook puede haber acreditado ya; claim es respaldo silencioso
+    }
+  }, []);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const producto = params.get("producto");
@@ -147,13 +167,21 @@ export default function Pagos() {
     }
 
     if (status === "success") {
-      toast.success(`¡Pago exitoso! Bienvenido al Plan ${planParam || "Premium"}`);
+      if (planParam === "corazon-sabio") {
+        toast.success("¡Pago confirmado! Activando tus 10 créditos de Espejo…");
+        void claimEspejoCredits();
+        if (!auth?.currentUser) {
+          toast.info("Inicia sesión con el mismo correo del pago para ver tus créditos en /espejo.");
+        }
+      } else {
+        toast.success(`¡Pago exitoso! Bienvenido al Plan ${planParam || "Premium"}`);
+      }
     } else if (status === "failure") {
       toast.error("El pago no se pudo completar. Intenta de nuevo.");
     } else if (status === "pending") {
       toast.info("Tu pago está pendiente de confirmación.");
     }
-  }, [location]);
+  }, [location, claimEspejoCredits]);
 
   const handleMercadoPago = async () => {
     setLoading(true);

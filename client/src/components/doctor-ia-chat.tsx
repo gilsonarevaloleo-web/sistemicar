@@ -301,6 +301,10 @@ export function DoctorIAChat() {
 
       const data = await res.json();
 
+      if (!res.ok && !data.response) {
+        throw new Error(data.error || data.detail || `HTTP ${res.status}`);
+      }
+
       if (data.sessionId && data.sessionId !== sessionId) {
         setSessionId(data.sessionId);
       }
@@ -310,7 +314,7 @@ export function DoctorIAChat() {
       const aiMsg: ChatMessage = {
         id: `msg_${Date.now()}_ai`,
         role: "assistant",
-        text: data.response || "Error de conexión con Doctor IA.",
+        text: data.response || data.error || "Error de conexión con Doctor IA.",
         timestamp: Date.now(),
         canSeal: hasLeyPropuesta,
       };

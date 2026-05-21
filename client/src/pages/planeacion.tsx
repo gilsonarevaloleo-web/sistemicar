@@ -133,6 +133,16 @@ import {
   notifyVehicleClosed,
   wasVehicleRecentlyClosed,
 } from "@/lib/persistence";
+import {
+  createRutaEnfoqueState,
+  applyRutaThresholdCrossing,
+  computeRutaEnfoquePS,
+  formatRutaPreview,
+  getRutaBandaActual,
+  mergeRutaCruzadaFromSubs,
+  RUTA_BANDA_META,
+  type RutaBandaId,
+} from "@/lib/rutaEnfoque";
 import { scheduleSegmentNotifications, cancelAllNotifications, requestNotificationPermission, getNotificationPermission } from "@/lib/notifications";
 import { auth } from "@/lib/firebase";
 import { setActiveSegmento, registrarEvento, COMPONENTES } from "@/lib/evento-universal";
@@ -315,6 +325,64 @@ type CierreEnergiaModalPayload =
 
 const cleanSubTitulo = (t: string): string =>
   t.replace(/^Día\s+\d+\s*\[[^\]]+\]:\s*/i, "").trim();
+
+function buildDesglosadorSubFromForm(
+  s: { titulo: string; cantidadObjetivo: string; tiempoRecordMinPerUnit?: number; rutaEnfoqueActiva?: boolean },
+  idx: number,
+  idSuffix: number
+): SubVehiculo {
+  const cant = s.cantidadObjetivo ? Number(s.cantidadObjetivo) : undefined;
+  const record = s.tiempoRecordMinPerUnit;
+  const rutaEnfoque =
+    s.rutaEnfoqueActiva && cant && cant > 0 && record && record > 0
+      ? createRutaEnfoqueState(cant)
+      : undefined;
+  return {
+    id: `sv_${idSuffix}_${idx}`,
+    titulo: s.titulo.trim(),
+    status: (idx === 0 ? "activo" : "pendiente") as SubVehiculo["status"],
+    aperturaAt: idx === 0 ? Date.now() : undefined,
+    cantidadObjetivo: cant,
+    tiempoRecordMinPerUnit: record,
+    tiempoSugeridoSeg:
+      cant && record && cant > 0 ? Math.round(cant * record * 60) : undefined,
+    rutaEnfoque,
+  };
+}
+
+function cierrePayloadHasRutaEnfoque(p: CierreEnergiaModalPayload): boolean {
+  if (p.kind === "desglosador") return p.subs.some(sv => sv.rutaEnfoque?.activa);
+  return false;
+}
+
+function RutaEnfoqueBar({ restantes, ruta }: { restantes: number; ruta: { N: number; umbrales: { fluido: number; concentrado: number } } }) {
+  const { umbrales, N } = ruta;
+  const banda = getRutaBandaActual(restantes, umbrales);
+  const meta = RUTA_BANDA_META[banda];
+  const n = Math.max(1, N);
+  const wFluido = ((n - umbrales.fluido) / n) * 100;
+  const wConc = ((umbrales.fluido - umbrales.concentrado) / n) * 100;
+  const wLim = (umbrales.concentrado / n) * 100;
+  const markerLeft = Math.min(98, Math.max(2, ((n - Math.max(0, restantes)) / n) * 100));
+  return (
+    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-1.5">
+      <motion.div
+        className="relative h-2.5 rounded-full overflow-hidden flex"
+        style={{ backgroundColor: "rgba(255,255,255,0.06)" }}
+        animate={banda === "limite" ? { boxShadow: ["0 0 0 rgba(248,113,113,0)", "0 0 10px rgba(248,113,113,0.35)", "0 0 0 rgba(248,113,113,0)"] } : {}}
+        transition={banda === "limite" ? { duration: 1.2, repeat: Infinity } : {}}
+      >
+        <motion.div className="h-full" style={{ width: `${wFluido}%`, backgroundColor: "rgba(148,163,184,0.45)" }} animate={banda === "fluido" ? { opacity: [0.7, 1, 0.7] } : { opacity: 0.55 }} transition={{ duration: 2, repeat: banda === "fluido" ? Infinity : 0 }} />
+        <motion.div className="h-full" style={{ width: `${wConc}%`, backgroundColor: "rgba(167,139,250,0.5)" }} animate={banda === "concentrado" ? { opacity: [0.65, 1, 0.65] } : { opacity: 0.5 }} transition={{ duration: 1.6, repeat: banda === "concentrado" ? Infinity : 0 }} />
+        <motion.div className="h-full flex-1" style={{ backgroundColor: "rgba(248,113,113,0.4)" }} animate={banda === "limite" ? { opacity: [0.6, 1, 0.6] } : { opacity: 0.45 }} transition={{ duration: 1.2, repeat: banda === "limite" ? Infinity : 0 }} />
+        <div className="absolute top-0 bottom-0 w-0.5 rounded-full" style={{ left: `${markerLeft}%`, backgroundColor: "#fff", boxShadow: "0 0 6px rgba(255,255,255,0.8)" }} />
+      </motion.div>
+      <p className="text-[8px] text-center font-bold uppercase tracking-wider" style={{ color: meta.color }}>
+        Banda actual: {meta.label} {meta.icon} · Restan {Math.max(0, Math.floor(restantes))}
+      </p>
+    </motion.div>
+  );
+}
 
 /** PS por resistencia de profundidad: +5 por cada hora completa de referencia (1 h → 5, 2 h → 10, …). */
 const computeDesglosadorDepthPS = (tiempoSugeridoSeg: number | undefined): number => {
@@ -783,7 +851,7 @@ export default function Planeacion() {
   const [tiempoProduccion, setTiempoProduccion] = useState("");
   const [showTituloProdSuggestions, setShowTituloProdSuggestions] = useState(false);
   const [showDesglosadorTitleSuggestions, setShowDesglosadorTitleSuggestions] = useState(false);
-  const [desglosadorSubs, setDesglosadorSubs] = useState<Array<{ tempId: string; titulo: string; cantidadObjetivo: string; tiempoRecordMinPerUnit?: number }>>([{ tempId: "sub_0", titulo: "", cantidadObjetivo: "" }]);
+  const [desglosadorSubs, setDesglosadorSubs] = useState<Array<{ tempId: string; titulo: string; cantidadObjetivo: string; tiempoRecordMinPerUnit?: number; rutaEnfoqueActiva?: boolean }>>([{ tempId: "sub_0", titulo: "", cantidadObjetivo: "" }]);
   const [historialSubs, setHistorialSubs] = useState<string[]>([]);
   const [sugerenciasIA, setSugerenciasIA] = useState<string[]>([]);
   const [sugerenciasIALoading, setSugerenciasIALoading] = useState(false);
@@ -837,6 +905,8 @@ export default function Planeacion() {
   const [showCierreJornada, setShowCierreJornada] = useState(false);
   const [cierreEnergiaPending, setCierreEnergiaPending] = useState<CierreEnergiaModalPayload | null>(null);
   const [cierreEnergiaSeleccion, setCierreEnergiaSeleccion] = useState<"fluido" | "concentrado" | "limite" | null>(null);
+  const [cierreRutaSeleccion, setCierreRutaSeleccion] = useState<Set<RutaBandaId>>(new Set());
+  const [cierreRutaSinUso, setCierreRutaSinUso] = useState(false);
   const [showDeposito, setShowDeposito] = useState(false);
 
   useEffect(() => {
@@ -1534,17 +1604,9 @@ export default function Planeacion() {
         bonoTemple,
         tipoReloj: tipoFlotaSeleccionado === "tiempo" ? relojTiempo : undefined,
         cantidadObjetivo: relojTiempo === "investigador" ? Number(cantidadInvestigador) : (relojTiempo === "produccion" ? Number(cantidadProduccion) : undefined),
-        subVehiculos: relojTiempo === "desglosador" ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => ({
-          id: `sv_${Date.now()}_${idx}`,
-          titulo: s.titulo.trim(),
-          status: idx === 0 ? "activo" as const : "pendiente" as const,
-          aperturaAt: idx === 0 ? Date.now() : undefined,
-          cantidadObjetivo: s.cantidadObjetivo ? Number(s.cantidadObjetivo) : undefined,
-          tiempoRecordMinPerUnit: s.tiempoRecordMinPerUnit,
-          tiempoSugeridoSeg: (s.cantidadObjetivo && s.tiempoRecordMinPerUnit && Number(s.cantidadObjetivo) > 0)
-            ? Math.round(Number(s.cantidadObjetivo) * s.tiempoRecordMinPerUnit * 60)
-            : undefined,
-        })) : undefined,
+        subVehiculos: relojTiempo === "desglosador"
+          ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => buildDesglosadorSubFromForm(s, idx, Date.now()))
+          : undefined,
         estadoEnergia,
         energiaDiffPct,
         segmentoOrigen: segActualNombre,
@@ -1603,17 +1665,9 @@ export default function Planeacion() {
         bonoTemple,
         tipoReloj: tipoFlotaSeleccionado === "tiempo" ? relojTiempo : undefined,
         cantidadObjetivo: relojTiempo === "investigador" ? Number(cantidadInvestigador) : (relojTiempo === "produccion" ? Number(cantidadProduccion) : undefined),
-        subVehiculos: relojTiempo === "desglosador" ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => ({
-          id: `sv_${Date.now()}_${idx}`,
-          titulo: s.titulo.trim(),
-          status: idx === 0 ? "activo" as const : "pendiente" as const,
-          aperturaAt: idx === 0 ? Date.now() : undefined,
-          cantidadObjetivo: s.cantidadObjetivo ? Number(s.cantidadObjetivo) : undefined,
-          tiempoRecordMinPerUnit: s.tiempoRecordMinPerUnit,
-          tiempoSugeridoSeg: (s.cantidadObjetivo && s.tiempoRecordMinPerUnit && Number(s.cantidadObjetivo) > 0)
-            ? Math.round(Number(s.cantidadObjetivo) * s.tiempoRecordMinPerUnit * 60)
-            : undefined,
-        })) : undefined,
+        subVehiculos: relojTiempo === "desglosador"
+          ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => buildDesglosadorSubFromForm(s, idx, Date.now()))
+          : undefined,
         energiaDiffPct,
         segmentoOrigen: segActualNombre,
         segmentosCruzados: 0,
@@ -2480,7 +2534,12 @@ export default function Planeacion() {
     // No Firebase write — subVehiculos are session state; only written on global close
   };
 
-  const handleDesglosadorGlobalClose = async (vehicleId: string, subs: SubVehiculo[], intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => {
+  const handleDesglosadorGlobalClose = async (
+    vehicleId: string,
+    subs: SubVehiculo[],
+    intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite",
+    rutaDeclarada?: RutaBandaId[]
+  ) => {
     if (!user) return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) return;
@@ -2490,6 +2549,15 @@ export default function Planeacion() {
     const cumplidos = subs.filter(s => s.status === "cumplido").length;
     const fallados = subs.filter(s => s.status === "fallado").length;
     const closedSubs = subs.filter(s => s.status === "cumplido" || s.status === "fallado");
+    const rutaCruzada = mergeRutaCruzadaFromSubs(subs);
+    const tieneRuta = subs.some(s => s.rutaEnfoque?.activa);
+    const declarada = rutaDeclarada ?? [];
+    const psRuta = tieneRuta && rutaCruzada ? computeRutaEnfoquePS(declarada, rutaCruzada) : 0;
+    const subsConRuta = subs.map(s =>
+      s.rutaEnfoque?.activa
+        ? { ...s, rutaDeclarada: declarada.length > 0 ? declarada : undefined }
+        : s
+    );
 
     // Save individual cumplido sub-vehicles for min/unit benchmarks
     for (const sv of subs) {
@@ -2525,26 +2593,40 @@ export default function Planeacion() {
     }
 
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
-    setVehicles(prev => prev.map(v => v.id === vehicleId
-      ? { ...v, status: "cumplido", cierreAt, cierreManual: true, subVehiculos: subs, ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}) }
-      : v
-    ));
-    vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId
-      ? { ...v, status: "cumplido", cierreAt, cierreManual: true, subVehiculos: subs, ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}) }
-      : v
-    );
+    const closePatch = {
+      status: "cumplido" as const,
+      cierreAt,
+      cierreManual: true,
+      subVehiculos: subsConRuta,
+      ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
+      ...(tieneRuta && rutaCruzada ? { rutaDeclarada: declarada, rutaCruzada } : {}),
+    };
+    setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v));
+    vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
 
     try {
       const fallados = subs.filter(s => s.status === "fallado").length;
       const subPoints = (cumplidos * 2) + (fallados * 1);
-      const totalPS = 10 + subPoints;
-      await updateVehicle(user.uid, vehicleId, { cierreAt, duracionFinal, cierreManual: true, subVehiculos: subs, ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}) });
+      const totalPS = 10 + subPoints + psRuta;
+      await updateVehicle(user.uid, vehicleId, {
+        cierreAt,
+        duracionFinal,
+        cierreManual: true,
+        subVehiculos: subsConRuta,
+        ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
+        ...(tieneRuta && rutaCruzada ? { rutaDeclarada: declarada, rutaCruzada } : {}),
+      });
       await updateVehicleStatus(user.uid, vehicleId, "cumplido");
       await awardSovereigntyPoints(user.uid, totalPS, `Ciclo Desglosador completado: ${vehicle.titulo}`)
         .catch(e => console.warn("[desglosadorClose] awardPS falló:", e));
       registrarEvento(COMPONENTES.PLANIFICACION);
+      const bandasValidas = declarada.filter(b => rutaCruzada?.[b]).length;
       toast.success(`+${totalPS} PS — Ciclo cerrado`, {
-        description: `Base +10 · ${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""} (+${cumplidos * 2} PS) · ${fallados} fallado${fallados !== 1 ? "s" : ""} (+${fallados} PS).${duracionFinal > 0 ? ` ${duracionFinal} min total.` : ""}`,
+        description: [
+          `Base +10 · ${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""} (+${cumplidos * 2} PS) · ${fallados} fallado${fallados !== 1 ? "s" : ""} (+${fallados} PS).`,
+          psRuta > 0 ? `+${psRuta} PS · Ruta de enfoque (${bandasValidas}/3 bandas).` : "",
+          duracionFinal > 0 ? `${duracionFinal} min total.` : "",
+        ].filter(Boolean).join(" "),
         style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
         duration: 4000
       });
@@ -4083,7 +4165,7 @@ export default function Planeacion() {
             {activeVehicles.length > 0 && (
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length}>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSubTareaDeCronometro={handleQuitarSubTareaDeCronometro} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSubTareaDeCronometro={handleQuitarSubTareaDeCronometro} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
                 ))}
               </AccordionSection>
             )}
@@ -4489,7 +4571,8 @@ export default function Planeacion() {
 
                               <div className="space-y-2">
                                 {desglosadorSubs.map((sv, idx) => (
-                                  <div key={sv.tempId} className="flex items-center gap-1.5">
+                                  <div key={sv.tempId} className="space-y-1">
+                                  <div className="flex items-center gap-1.5">
                                     <div className="flex flex-col gap-0.5">
                                       <button
                                         onClick={() => {
@@ -4633,6 +4716,26 @@ export default function Planeacion() {
                                         <Trash2 size={12} />
                                       </button>
                                     )}
+                                  </div>
+                                  {sv.tiempoRecordMinPerUnit && sv.tiempoRecordMinPerUnit > 0 && sv.cantidadObjetivo && parseFloat(sv.cantidadObjetivo) > 0 && (
+                                    <motion.div className="w-full pl-8 pr-1 pb-1">
+                                      <label className="flex items-start gap-2 cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={!!sv.rutaEnfoqueActiva}
+                                          onChange={e => setDesglosadorSubs(prev => prev.map(s =>
+                                            s.tempId === sv.tempId ? { ...s, rutaEnfoqueActiva: e.target.checked } : s
+                                          ))}
+                                          className="mt-0.5 accent-violet-500"
+                                          data-testid={`checkbox-ruta-enfoque-${idx}`}
+                                        />
+                                        <span className="text-[8px] text-slate-400 leading-snug">
+                                          <span className="font-bold text-violet-300">Ruta de enfoque (3 bandas)</span>
+                                          <span className="block font-mono text-[7px] mt-0.5 opacity-80">{formatRutaPreview(parseFloat(sv.cantidadObjetivo))}</span>
+                                        </span>
+                                      </label>
+                                    </motion.div>
+                                  )}
                                   </div>
                                 ))}
                               </div>
@@ -4883,9 +4986,14 @@ export default function Planeacion() {
           </motion.div>
         ) : null}
 
-        {cierreEnergiaPending && (
-          <div className="fixed inset-0 z-[220] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.82)" }} role="dialog" aria-modal="true" aria-labelledby="cierre-energia-titulo">
-            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm rounded-2xl border p-5 space-y-4" style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}>
+        {cierreEnergiaPending && (() => {
+          const showRuta = cierrePayloadHasRutaEnfoque(cierreEnergiaPending);
+          const mergedCruzada = cierreEnergiaPending.kind === "desglosador"
+            ? mergeRutaCruzadaFromSubs(cierreEnergiaPending.subs)
+            : null;
+          return (
+          <motion.div className="fixed inset-0 z-[220] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.82)" }} role="dialog" aria-modal="true" aria-labelledby="cierre-energia-titulo">
+            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm rounded-2xl border p-5 space-y-4 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}>
               <div className="text-center space-y-1">
                 <p id="cierre-energia-titulo" className="text-sm font-bold text-white">Cierre consciente</p>
                 <p className="text-[9px] text-slate-500">¿Con qué energía terminas? (tiempo, situación, verdad, descanso, investigador, desglosador). Opcional · alimenta el Espejo.</p>
@@ -4908,10 +5016,33 @@ export default function Planeacion() {
                   </button>
                 ))}
               </div>
+              {showRuta && (
+                <div className="space-y-2 pt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                  <p className="text-[9px] font-bold text-violet-300 uppercase tracking-wider text-center">¿Qué tramos de la ruta recorriste?</p>
+                  {mergedCruzada && (
+                    <p className="text-[7px] text-center text-slate-600 font-mono">
+                      Detectado: {(["fluido", "concentrado", "limite"] as const).filter(b => mergedCruzada[b]).map(b => RUTA_BANDA_META[b].icon).join(" ") || "—"}
+                    </p>
+                  )}
+                  <div className="space-y-1.5">
+                    {(["fluido", "concentrado", "limite"] as const).map(banda => {
+                      const meta = RUTA_BANDA_META[banda];
+                      const checked = cierreRutaSeleccion.has(banda);
+                      return (
+                        <label key={banda} className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer" style={{ backgroundColor: checked ? "rgba(139,92,246,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${checked ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.06)"}` }}>
+                          <input type="checkbox" checked={checked} disabled={cierreRutaSinUso} onChange={() => { setCierreRutaSinUso(false); setCierreRutaSeleccion(prev => { const next = new Set(prev); if (next.has(banda)) next.delete(banda); else next.add(banda); return next; }); }} className="accent-violet-500" />
+                          <span className="text-[10px] text-white">{meta.icon} {meta.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button type="button" onClick={() => { setCierreRutaSinUso(true); setCierreRutaSeleccion(new Set()); }} className="w-full py-2 rounded-lg text-[9px] font-bold text-slate-400" style={{ backgroundColor: cierreRutaSinUso ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.04)", border: `1px solid ${cierreRutaSinUso ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.06)"}` }}>No usé ruta / solo cumplí a mi ritmo</button>
+                </div>
+              )}
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => { setCierreEnergiaPending(null); setCierreEnergiaSeleccion(null); }}
+                  onClick={() => { setCierreEnergiaPending(null); setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); }}
                   className="flex-1 py-2.5 rounded-xl text-xs font-bold text-slate-400 bg-white/5"
                 >
                   Cancelar
@@ -4922,12 +5053,15 @@ export default function Planeacion() {
                     const p = cierreEnergiaPending;
                     if (!p || !user) return;
                     const sel = cierreEnergiaSeleccion ?? undefined;
+                    const rutaDecl = showRuta && !cierreRutaSinUso ? Array.from(cierreRutaSeleccion) : [];
                     if (p.kind === "flota") void handleFlotaStatusChange(p.vehicleId, p.status, sel);
                     else if (p.kind === "investigador") void handleInvestigadorClose(p.vehicleId, p.cumplido, p.cantidadRealizada, sel);
-                    else if (p.kind === "desglosador") void handleDesglosadorGlobalClose(p.vehicleId, p.subs, sel);
+                    else if (p.kind === "desglosador") void handleDesglosadorGlobalClose(p.vehicleId, p.subs, sel, rutaDecl);
                     else void handleDescansoClose(p.vehicleId, p.status, p.etiqueta, p.nota, sel);
                     setCierreEnergiaPending(null);
                     setCierreEnergiaSeleccion(null);
+                    setCierreRutaSeleccion(new Set());
+                    setCierreRutaSinUso(false);
                   }}
                   className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider"
                   style={{ backgroundColor: VIOLET, color: "#fff" }}
@@ -4936,8 +5070,9 @@ export default function Planeacion() {
                 </button>
               </div>
             </motion.div>
-          </div>
-        )}
+          </motion.div>
+          );
+        })()}
 
         {showLabIntrospeccion && (
           <LabIntrospeccionModal
@@ -5086,7 +5221,7 @@ function VehicleCard({
   arquitectoUnlocked?: boolean;
   onInvestigadorClose?: (vehicleId: string, cumplido: boolean, cantidadRealizada: number, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => void;
   onDesglosadorUpdate?: (vehicleId: string, updatedSubs: SubVehiculo[]) => void;
-  onDesglosadorGlobalClose?: (vehicleId: string, subs: SubVehiculo[], intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => void;
+  onDesglosadorGlobalClose?: (vehicleId: string, subs: SubVehiculo[], intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite", rutaDeclarada?: RutaBandaId[]) => void;
   onDescansoClose?: (vehicleId: string, status: "cumplido" | "archivado", etiqueta: "recuperado" | "parcial" | "fragmentado", nota: string, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => void;
   onMicroPasoToggle?: (vehicleId: string, paso: "hidratacion" | "respiracion" | "pantallaZero") => void;
   onEtapaPuntoCeroToggle?: (vehicleId: string, etapa: "etapa1" | "etapa2" | "etapa3" | "etapa4") => void;
@@ -5137,6 +5272,9 @@ function VehicleCard({
 
   const prevRemainingRef = useRef<number | null>(null);
   const prevSubRestanteRef = useRef<number | null>(null);
+  const rutaUmbralAlertKeysRef = useRef<Set<string>>(new Set());
+  const activeSubIdForRutaRef = useRef<string | null>(null);
+  const prevSubRestanteRutaRef = useRef<number | null>(null);
   const chimeCtxRef = useRef<AudioContext | null>(null);
   const alarmCtxRef = useRef<AudioContext | null>(null);
   const prevTimerExpiredRef = useRef<boolean>(false);
@@ -5325,6 +5463,45 @@ function VehicleCard({
     }
     prevSubRestanteRef.current = subVehicleRestante;
   }, [subVehicleRestante, playChime, vehicle.tipoReloj]);
+
+  useEffect(() => {
+    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || subVehicleRestante === null) return;
+    const activeSub = (vehicle.subVehiculos || []).find(s => s.status === "activo");
+    if (!activeSub?.rutaEnfoque?.activa || !onDesglosadorUpdate) {
+      prevSubRestanteRutaRef.current = null;
+      return;
+    }
+    if (activeSubIdForRutaRef.current !== activeSub.id) {
+      activeSubIdForRutaRef.current = activeSub.id;
+      rutaUmbralAlertKeysRef.current = new Set();
+      prevSubRestanteRutaRef.current = null;
+    }
+    const prev = prevSubRestanteRutaRef.current;
+    prevSubRestanteRutaRef.current = subVehicleRestante;
+    const { ruta: nextRuta, alert } = applyRutaThresholdCrossing(activeSub.rutaEnfoque, subVehicleRestante, prev);
+    if (alert) {
+      const key = `${activeSub.id}-${alert}`;
+      if (!rutaUmbralAlertKeysRef.current.has(key)) {
+        rutaUmbralAlertKeysRef.current.add(key);
+        void playSituacionChimes(alert === "concentrado" ? 1 : 2);
+        try {
+          const msg = alert === "concentrado" ? "Entrando en concentrado" : "Último tramo: al límite";
+          const u = new SpeechSynthesisUtterance(msg);
+          u.lang = "es-ES";
+          window.speechSynthesis?.speak(u);
+        } catch { /* noop */ }
+      }
+    }
+    const cruzadoChanged =
+      nextRuta.cruzado.concentrado !== activeSub.rutaEnfoque.cruzado.concentrado ||
+      nextRuta.cruzado.limite !== activeSub.rutaEnfoque.cruzado.limite;
+    if (cruzadoChanged) {
+      const updated = (vehicle.subVehiculos || []).map(s =>
+        s.id === activeSub.id ? { ...s, rutaEnfoque: nextRuta } : s
+      );
+      onDesglosadorUpdate(vehicle.id, updated);
+    }
+  }, [subVehicleRestante, vehicle.tipoReloj, vehicle.status, vehicle.subVehiculos, vehicle.id, onDesglosadorUpdate]);
 
   const tipoFlota = vehicle.tipoFlota;
   const flotaConfig = tipoFlota ? FLOTA_CONFIG[tipoFlota] : null;
@@ -5840,6 +6017,9 @@ function VehicleCard({
                                 cierreAt: undefined,
                                 duracionFinal: undefined,
                                 cantidadLograda: undefined,
+                                rutaEnfoque: sv.rutaEnfoque
+                                  ? { ...sv.rutaEnfoque, cruzado: { fluido: true, concentrado: false, limite: false } }
+                                  : undefined,
                               }));
                               if (onDesglosadorUpdate) onDesglosadorUpdate(vehicle.id, resetSubs);
                               setDesglosadorSummary(false);
@@ -6003,6 +6183,11 @@ function VehicleCard({
                                         </p>
                                         {subVehicleRestante === 0 && (
                                           <p className="text-[8px] font-black uppercase tracking-widest mt-0.5" style={{ color: "#22C55E", fontFamily: "monospace" }}>OBJETIVO ALCANZADO</p>
+                                        )}
+                                        {activeSub.rutaEnfoque?.activa && (
+                                          <div className="mt-2 px-1">
+                                            <RutaEnfoqueBar restantes={subVehicleRestante} ruta={activeSub.rutaEnfoque} />
+                                          </div>
                                         )}
                                       </div>
                                     ) : (

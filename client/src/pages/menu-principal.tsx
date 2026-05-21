@@ -32,7 +32,8 @@ import {
   Rocket,
   Scale,
   FileText,
-  LogIn
+  LogIn,
+  Sprout,
 } from "lucide-react";
 import { Link } from "wouter";
 import { DataStatusPanel } from "@/components/data-status";
@@ -53,6 +54,8 @@ import {
 } from "@/lib/firebase";
 import { useAuthContext } from "@/App";
 import logoSistemicar from "@/assets/logo-sistemicar.png";
+import { PageContainer } from "@/components/page-container";
+import { isOwner } from "@/lib/owner";
 
 // ESPECTRO CROMÁTICO DE CONCIENCIA
 const SPECTRUM = {
@@ -170,6 +173,14 @@ const architectMenuItems = [
     icon: Rocket,
     route: "/proyector",
     color: "#6366F1"
+  },
+  { 
+    id: "manuales", 
+    title: "MANUALES", 
+    subtitle: "Biblioteca de guías",
+    icon: BookOpen,
+    route: "/manuales",
+    color: GOLD
   },
 ];
 
@@ -423,8 +434,8 @@ export default function MenuPrincipal() {
   };
 
   return (
-    <div className="min-h-screen p-4 md:p-6 pb-24" style={{ backgroundColor: "#050505" }}>
-      <div className="max-w-lg mx-auto">
+    <div className="min-h-screen p-4 md:p-6 pb-24 md:pb-6" style={{ backgroundColor: "#050505" }}>
+      <PageContainer>
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -487,12 +498,14 @@ export default function MenuPrincipal() {
           )}
         </AnimatePresence>
 
+        <div className="lg:grid lg:grid-cols-[minmax(260px,340px)_1fr] lg:gap-8 lg:items-start">
+          <div className="space-y-6">
         {isFirebaseConfigured() && isAnonymous && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.1 }}
-            className="mb-6 p-6 rounded-2xl border-2"
+            className="p-6 rounded-2xl border-2"
             style={{ 
               backgroundColor: "rgba(59, 130, 246, 0.15)",
               borderColor: "#3b82f6",
@@ -537,7 +550,7 @@ export default function MenuPrincipal() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="mb-6 p-4 rounded-2xl border"
+            className="p-4 rounded-2xl border"
             style={{ 
               backgroundColor: "rgba(34, 197, 94, 0.1)",
               borderColor: "rgba(34, 197, 94, 0.3)"
@@ -596,7 +609,7 @@ export default function MenuPrincipal() {
         )}
 
         {user?.uid && (
-          <div className="mb-6">
+          <div>
             <StatusAlianza 
               progression={progression} 
               userId={user.uid}
@@ -611,13 +624,49 @@ export default function MenuPrincipal() {
           </div>
         )}
 
+        {isOwner(userEmail) && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 rounded-2xl border"
+            style={{
+              backgroundColor: "rgba(212, 175, 55, 0.08)",
+              borderColor: "rgba(212, 175, 55, 0.35)",
+            }}
+          >
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: GOLD }}>
+              Panel creador
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => navigate("/admin-semillas")}
+                className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wider transition-all hover:scale-[1.02]"
+                style={{ backgroundColor: GOLD, color: "#000" }}
+                data-testid="menu-admin-semillas"
+              >
+                <Sprout size={16} />
+                Taller de libros / Semillas
+              </button>
+              <button
+                onClick={() => navigate("/admin-gilson")}
+                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wider border transition-all hover:bg-white/5"
+                style={{ borderColor: `${GOLD}40`, color: GOLD }}
+                data-testid="menu-admin-gilson"
+              >
+                <Shield size={16} />
+                Admin
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {/* Certificación de Manuales */}
         {certification && certification.manualsRead.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
-            className="mb-6 p-3 rounded-xl border"
+            className="p-3 rounded-xl border"
             style={{ 
               backgroundColor: "rgba(212, 175, 55, 0.05)",
               borderColor: "rgba(212, 175, 55, 0.2)"
@@ -657,6 +706,9 @@ export default function MenuPrincipal() {
           </motion.div>
         )}
 
+          </div>
+
+          <div>
         {/* Grid principal del espectro - filtrado por tier */}
         {(() => {
           const esArquitecto = isArquitecto(progression?.rank, userEmail);
@@ -664,7 +716,7 @@ export default function MenuPrincipal() {
           
           return (
             <>
-              <div className={`grid ${esArquitecto ? "grid-cols-3" : "grid-cols-2"} gap-3`}>
+              <div className={`grid ${esArquitecto ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-4" : "grid-cols-2"} gap-3`}>
                 {menuItems.map((item, i) => (
                   <motion.button
                     key={item.id}
@@ -924,65 +976,6 @@ export default function MenuPrincipal() {
           <RotateCcw size={12} className={resetting ? "animate-spin" : ""} />
           {resetting ? "Reiniciando..." : "Reiniciar Datos"}
         </button>
-      </div>
-
-      {/* Barra de navegación flotante - filtrada por tier */}
-      <motion.div
-        initial={{ y: 100, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.5, type: "spring", stiffness: 200 }}
-        className="fixed bottom-4 left-4 right-4 mx-auto max-w-md"
-      >
-        <div 
-          className="flex justify-around items-center py-3 px-4 rounded-2xl backdrop-blur-xl"
-          style={{ 
-            backgroundColor: "rgba(10, 10, 10, 0.85)",
-            border: "1px solid rgba(255, 255, 255, 0.08)",
-            boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)"
-          }}
-        >
-          {(() => {
-            const esArquitecto = isArquitecto(progression?.rank, userEmail);
-            const navItems = esArquitecto ? [
-              { icon: Eye, color: SPECTRUM.ROJO, route: "/console", label: "Espejo" },
-              { icon: Wand2, color: SPECTRUM.AMARILLO, route: "/alquimia", label: "Alquimia" },
-              { icon: Sunrise, color: SPECTRUM.NARANJA, route: "/esperanza", label: "Depósito" },
-              { icon: Heart, color: SPECTRUM.VERDE, route: "/planeacion", label: "Plan" },
-              { icon: Crown, color: SPECTRUM.VIOLETA, route: "/socios", label: "Alianza" },
-            ] : [
-              { icon: Eye, color: SPECTRUM.ROJO, route: "/console", label: "Espejo" },
-              { icon: CreditCard, color: GOLD, route: "/pagos", label: "Upgrade" },
-            ];
-            
-            return navItems.map((item) => (
-              <button
-                key={item.label}
-                onClick={() => navigate(item.route)}
-                className="flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-all hover:bg-white/5"
-                data-testid={`nav-${item.label.toLowerCase()}`}
-              >
-                <item.icon size={20} strokeWidth={1.2} style={{ color: item.color }} />
-                <span className="text-[9px]" style={{ color: item.color }}>{item.label}</span>
-              </button>
-            ));
-          })()}
-        </div>
-      </motion.div>
-
-      {user?.uid && (
-        <>
-          <ResumenDiario 
-            isOpen={showResumenDiario} 
-            onClose={() => setShowResumenDiario(false)} 
-            userId={user.uid} 
-          />
-          <TooltipOrientacion inactivityMs={120000} />
-          <Onboarding 
-            isOpen={showOnboarding} 
-            onComplete={handleOnboardingComplete} 
-          />
-        </>
-      )}
 
       <div className="mt-12 mb-6 border-t border-zinc-800 pt-6">
         <div className="flex items-center justify-center gap-6 text-[10px] text-zinc-600">
@@ -1004,6 +997,72 @@ export default function MenuPrincipal() {
           SISTEMICAR © 2026 • Lima, Perú
         </p>
       </div>
+
+          </div>
+        </div>
+      </PageContainer>
+
+      {/* Barra de navegación flotante — solo móvil (desktop usa sidebar) */}
+      <motion.div
+        initial={{ y: 100, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: 0.5, type: "spring", stiffness: 200 }}
+        className="md:hidden fixed bottom-4 left-4 right-4 mx-auto max-w-md z-40"
+      >
+        <div
+          className="flex justify-around items-center py-3 px-4 rounded-2xl backdrop-blur-xl"
+          style={{
+            backgroundColor: "rgba(10, 10, 10, 0.85)",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
+          }}
+        >
+          {(() => {
+            const esArquitecto = isArquitecto(progression?.rank, userEmail);
+            const navItems = esArquitecto
+              ? [
+                  { icon: Eye, color: SPECTRUM.ROJO, route: "/console", label: "Espejo" },
+                  { icon: Wand2, color: SPECTRUM.AMARILLO, route: "/alquimia", label: "Alquimia" },
+                  { icon: Sunrise, color: SPECTRUM.NARANJA, route: "/esperanza", label: "Depósito" },
+                  { icon: Heart, color: SPECTRUM.VERDE, route: "/planeacion", label: "Plan" },
+                  { icon: Crown, color: SPECTRUM.VIOLETA, route: "/socios", label: "Alianza" },
+                ]
+              : [
+                  { icon: Eye, color: SPECTRUM.ROJO, route: "/console", label: "Espejo" },
+                  { icon: CreditCard, color: GOLD, route: "/pagos", label: "Upgrade" },
+                ];
+
+            return navItems.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => navigate(item.route)}
+                className="flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-all hover:bg-white/5"
+                data-testid={`nav-${item.label.toLowerCase()}`}
+              >
+                <item.icon size={20} strokeWidth={1.2} style={{ color: item.color }} />
+                <span className="text-[9px]" style={{ color: item.color }}>
+                  {item.label}
+                </span>
+              </button>
+            ));
+          })()}
+        </div>
+      </motion.div>
+
+      {user?.uid && (
+        <>
+          <ResumenDiario 
+            isOpen={showResumenDiario} 
+            onClose={() => setShowResumenDiario(false)} 
+            userId={user.uid} 
+          />
+          <TooltipOrientacion inactivityMs={120000} />
+          <Onboarding 
+            isOpen={showOnboarding} 
+            onComplete={handleOnboardingComplete} 
+          />
+        </>
+      )}
 
       <AnimatePresence>
         {codiceExpandido && (

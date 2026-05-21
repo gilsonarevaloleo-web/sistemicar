@@ -61,6 +61,57 @@ export const getPublicPath = (collectionName: string) =>
   `artifacts/${APP_ID}/public/data/${collectionName}`;
 
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: "select_account" });
+
+/** URL que Google/Firebase usan como redirect (debe existir en Google Cloud Console). */
+export function getFirebaseAuthHandlerUrl(): string {
+  return `https://${firebaseConfig.authDomain}/__/auth/handler`;
+}
+
+/** Origen esperado en desarrollo (`npm run dev` → Express + Vite en el mismo puerto). */
+export function getExpectedDevOrigin(): string {
+  const port = import.meta.env.VITE_DEV_SERVER_PORT || "5000";
+  return `http://localhost:${port}`;
+}
+
+export function warnIfUnexpectedDevOrigin(): void {
+  if (!import.meta.env.DEV || typeof window === "undefined") return;
+  const expected = getExpectedDevOrigin();
+  const current = window.location.origin;
+  if (current === expected) return;
+  console.warn(
+    `[Firebase Auth] Estás en ${current} pero el servidor unificado es ${expected}. ` +
+      `Abre ${expected} (npm run dev). Si usas otro puerto, agrégalo en Firebase → Authorized domains ` +
+      `y en Google Cloud → OAuth → Authorized JavaScript origins.`
+  );
+}
+
+export function getGoogleAuthErrorMessage(error: unknown): string {
+  const code = (error as { code?: string })?.code;
+  const host = typeof window !== "undefined" ? window.location.host : "localhost:5000";
+  const handler = getFirebaseAuthHandlerUrl();
+  const project = firebaseConfig.projectId;
+
+  if (code === "auth/unauthorized-domain") {
+    return `Dominio no autorizado: "${host}". Firebase Console → Authentication → Settings → Authorized domains → agrega "${window.location.hostname}".`;
+  }
+  if (code === "auth/operation-not-allowed") {
+    return "Google no está habilitado en Firebase Console → Authentication → Sign-in method → Google.";
+  }
+  if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+    return "Inicio de sesión cancelado.";
+  }
+  if (code === "auth/popup-blocked") {
+    return "Popup bloqueado. Usa el botón de inicio que redirige en la misma pestaña o permite ventanas emergentes.";
+  }
+
+  return (
+    `Error al conectar con Google (${code || "sin código"}). ` +
+    `En local usa ${getExpectedDevOrigin()}. ` +
+    `Proyecto Firebase: ${project}. ` +
+    `En Google Cloud (mismo proyecto) verifica Authorized JavaScript origins y redirect URI: ${handler}`
+  );
+}
 
 /** Popup bloqueado o COOP del navegador rompe window.closed → fallback redirect. */
 const shouldUseRedirectAfterPopupError = (e: unknown): boolean => {
@@ -70,6 +121,10 @@ const shouldUseRedirectAfterPopupError = (e: unknown): boolean => {
 
 export const signInWithGoogle = async (): Promise<UserCredential | void> => {
   if (!auth) throw new Error("Firebase not configured");
+  warnIfUnexpectedDevOrigin();
+  if (import.meta.env.DEV) {
+    console.info("[Firebase Auth] handler OAuth:", getFirebaseAuthHandlerUrl(), "| proyecto:", firebaseConfig.projectId);
+  }
   try {
     return await signInWithPopup(auth, googleProvider);
   } catch (e) {

@@ -1,3 +1,5 @@
+import { GEMINI_MODEL_CLIENT, geminiGenerateContentUrl } from "@shared/geminiConfig";
+
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 export type ClientMode = "gratuito" | "pago" | "reto";
@@ -110,7 +112,7 @@ MENSAJE:`;
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
+      `${geminiGenerateContentUrl(GEMINI_MODEL_CLIENT)}?key=${GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -139,8 +141,7 @@ MENSAJE:`;
   }
 }
 
-// Modelo más estable de Gemini
-const GEMINI_MODEL = "gemini-2.0-flash-lite";
+const GEMINI_MODEL = GEMINI_MODEL_CLIENT;
 
 export interface UnifiedAnalysisInput {
   chispazos: ChispazoInput[];

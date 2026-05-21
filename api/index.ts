@@ -4,6 +4,7 @@ import OpenAI from "openai";
 import { MercadoPagoConfig, Preference, Payment } from "mercadopago";
 import { getPublicAppBaseUrl } from "../shared/publicBaseUrl";
 import { SUBSCRIPTION_PLANS } from "../shared/mercadopagoPlans";
+import { deliverCorazonSabioIfNeeded, parseMpExternalRef } from "../server/mercadopagoEspejo";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -537,12 +538,17 @@ app.post("/api/mercadopago/create-preference", async (req: Request, res: Respons
     const preference = new Preference(mpClient);
     const baseUrl = getPublicAppBaseUrl();
 
+    const isOneTime = "isOneTime" in plan && plan.isOneTime;
+    const itemDescription = isOneTime
+      ? `Pago único — ${plan.name}`
+      : `Suscripción mensual al Plan ${plan.name}`;
+
     const response = await preference.create({
       body: {
         items: [{
           id: plan.id,
-          title: `SISTEMICAR - Plan ${plan.name}`,
-          description: `Suscripción mensual al Plan ${plan.name}`,
+          title: `SISTEMICAR - ${plan.name}`,
+          description: itemDescription,
           quantity: 1,
           unit_price: plan.price,
           currency_id: "USD"
@@ -588,6 +594,13 @@ app.post("/api/mercadopago/webhook", async (req: Request, res: Response) => {
       const payment = new Payment(mpClient);
       const paymentInfo = await payment.get({ id: data.id });
       console.log(`[MP Webhook] Pago ${paymentInfo.id} - Estado: ${paymentInfo.status}`);
+
+      if (paymentInfo.status === "approved") {
+        const externalRef = parseMpExternalRef(paymentInfo);
+        if (externalRef.planId === "corazon-sabio") {
+          await deliverCorazonSabioIfNeeded(paymentInfo, externalRef);
+        }
+      }
     }
     
     res.status(200).send("OK");

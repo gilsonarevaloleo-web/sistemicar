@@ -5,7 +5,7 @@ import { Sparkles, Shield, ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { useAuthContext } from "@/App";
-import { signInWithGoogle, isFirebaseConfigured } from "@/lib/firebase";
+import { signInWithGoogle, isFirebaseConfigured, getGoogleAuthErrorMessage } from "@/lib/firebase";
 import { sendWelcomeEmail } from "@/lib/emailApi";
 import { clearMigrationPending } from "@/lib/persistence";
 import logoSistemicar from "@/assets/logo-sistemicar.png";
@@ -53,13 +53,14 @@ export default function Acceso() {
         toast.success("¡Bienvenido de vuelta!");
       }
       navigate("/menu");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error en login con Google:", error);
       localStorage.removeItem("sistemicar_google_redirect_pending");
-      if (error.code === 'auth/popup-closed-by-user') {
-        toast.info("Inicio de sesión cancelado");
+      const msg = getGoogleAuthErrorMessage(error);
+      if ((error as { code?: string })?.code === "auth/popup-closed-by-user") {
+        toast.info(msg);
       } else {
-        toast.error("Error al iniciar sesión con Google");
+        toast.error(msg, { duration: 16000 });
       }
     } finally {
       setGoogleLoading(false);

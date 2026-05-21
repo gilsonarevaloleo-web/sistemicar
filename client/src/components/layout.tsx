@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { useLocation } from "wouter";
 import { Sidebar } from "./sidebar";
 import { PageHeader } from "./page-header";
+import { PageContainer } from "./page-container";
 import { Link } from "wouter";
 
 const pagesWithHeader = ["/espejo", "/planeacion", "/esperanza", "/analytics", "/rewards", "/tutorial", "/historial"];
@@ -29,7 +30,7 @@ export function Layout({ children }: { children: ReactNode }) {
         
         {/* Footer with Creator Credit */}
         <footer className="w-full py-6 px-4 border-t border-white/5 bg-card/50 backdrop-blur-sm">
-          <div className="max-w-lg mx-auto text-center space-y-2">
+          <PageContainer className="text-center space-y-2">
             <p className="text-[10px] text-slate-500 uppercase tracking-widest">
               Filosofía DDN creada por
             </p>
@@ -42,7 +43,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <p className="text-[9px] text-slate-600 mt-2">
               © {new Date().getFullYear()} SISTEMICAR - Todos los derechos reservados
             </p>
-          </div>
+          </PageContainer>
         </footer>
       </main>
     </div>

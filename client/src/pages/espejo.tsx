@@ -477,6 +477,28 @@ export default function Espejo() {
   }, [user]);
 
   useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/espejo/claim-purchase-credits", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (!cancelled && data.grantedCredits > 0) {
+          toast.success(data.message || `+${data.grantedCredits} créditos activados`);
+          window.dispatchEvent(new CustomEvent("espejo-credits-updated"));
+        }
+      } catch {
+        /* respaldo si el webhook aún no acreditó */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.uid]);
+
+  useEffect(() => {
     if (!user || user.email?.toLowerCase() !== "gilsonarevalo.leo@gmail.com") return;
     const unsub = subscribeToPacientes(user.uid, setPacientesLista, () => {});
     return unsub;

@@ -39,7 +39,7 @@ import { toast } from "sonner";
 import { useAuthContext } from "@/App";
 import { auth } from "@/lib/firebase";
 import { getIdToken } from "firebase/auth";
-import { addSemilla, subscribeToSemillas, subscribeToEspejoSessions, subscribeToAllProspectos, addLoteFabrica, subscribeToLotesFabrica, addLoteMasterclass, subscribeToLotesMasterclass, addSingleMasterclass, subscribeToSingleMasterclasses, updateMasterclassVideoUrl, addSinglePieza, subscribeToSinglePiezas, saveSubInterfacesLibro, subscribeToSubInterfacesLibro, saveCapituloCarrilesLibro, saveCapituloStatusLibro, subscribeToCapitulosLibro, subscribeToAllSubInterfacesLibro, subscribeToAllCapitulosLibro, saveNotasEvolucionLibro, subscribeToNotasEvolucionLibro, type NotaEvolucion, type Semilla, type Prospecto, type LoteFabrica, type PiezaSensorial, type LoteMasterclass, type MasterclassYT, type SubInterfazLibro, type CapituloCarriles, type FichaAuditResult } from "@/lib/persistence";
+import { addSemilla, subscribeToSemillas, subscribeToEspejoSessions, subscribeToAllProspectos, addLoteFabrica, subscribeToLotesFabrica, addLoteMasterclass, subscribeToLotesMasterclass, addSingleMasterclass, subscribeToSingleMasterclasses, updateMasterclassVideoUrl, addSinglePieza, subscribeToSinglePiezas, saveSubInterfacesLibro, subscribeToSubInterfacesLibro, saveCapituloCarrilesLibro, saveCapituloStatusLibro, subscribeToCapitulosLibro, subscribeToAllSubInterfacesLibro, subscribeToAllCapitulosLibro, saveNotasEvolucionLibro, subscribeToNotasEvolucionLibro, type NotaEvolucion, type Semilla, type Prospecto, type LoteFabrica, type PiezaSensorial, type LoteMasterclass, type MasterclassYT, type SubInterfazLibro, type CapituloCarriles, type FichaAuditResult, type RouterMeta } from "@/lib/persistence";
 import PreviewSensorial from "@/components/fabrica/PreviewSensorial";
 import PreviewMasterclass from "@/components/fabrica/PreviewMasterclass";
 
@@ -416,12 +416,19 @@ function AdminSemillasInner() {
         throw new Error(err.error || "Error generando capítulo");
       }
       const data = await res.json();
+      const routerMeta: RouterMeta | undefined = data.cerebro_router
+        ? {
+            cerebro_router: true,
+            promptTokens: data.promptTokens,
+            contaminationAudit: data.contaminationAudit,
+          }
+        : undefined;
       await saveCapituloCarrilesLibro(user.uid, tallerInterfaz, sub.id, {
         subInterfazTitulo: sub.titulo,
         carril1: data.carril1,
         carril2: data.carril2,
         carril3: data.carril3,
-      }, data.fichaAudit || undefined, data.cerebro_v2 || false);
+      }, data.fichaAudit || undefined, data.cerebro_v2 || data.cerebro_router || false, routerMeta);
       if (data.notasEvolucion && data.notasEvolucion.length > 0) {
         saveNotasEvolucionLibro(user.uid, tallerInterfaz, sub.id, data.coordenada, data.notasEvolucion).catch(() => {});
       }
@@ -444,7 +451,11 @@ function AdminSemillasInner() {
         setMostrandoCriterio(prev => ({ ...prev, [sub.id]: false }));
         toast.success(`Capítulo "${sub.titulo}" regenerado con criterio`, { style: { backgroundColor: CARD_BG, border: `1px solid #FF3131`, color: "#FF3131" } });
       } else {
-        toast.success(`Capítulo "${sub.titulo}" generado`, { style: { backgroundColor: CARD_BG, border: `1px solid ${GOLD}`, color: GOLD } });
+        const pt = routerMeta?.promptTokens;
+        const routerMsg = pt
+          ? ` · Router C1 ~${pt.c1 >= 1000 ? `${(pt.c1 / 1000).toFixed(1)}k` : pt.c1} / C3 ~${pt.c3 >= 1000 ? `${(pt.c3 / 1000).toFixed(1)}k` : pt.c3} tok`
+          : "";
+        toast.success(`Capítulo "${sub.titulo}" generado${routerMsg}`, { style: { backgroundColor: CARD_BG, border: `1px solid ${GOLD}`, color: GOLD } });
       }
       setExpandedCapitulo(sub.id);
     } catch (e: any) {
@@ -3330,7 +3341,17 @@ function AdminSemillasInner() {
                                         </span>
                                       );
                                     })()}
-                                    {isListo && cap && !cap.cerebro_v2 && (
+                                    {isListo && cap?.routerMeta?.cerebro_router && (
+                                      <span
+                                        className="flex-shrink-0 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest"
+                                        style={{ backgroundColor: "#00B4D818", border: "1px solid #00B4D850", color: "#48CAE4" }}
+                                        data-testid={`badge-router-${sub.id}`}
+                                        title="Generado con Cerebro Router — abre el capítulo para ver métricas"
+                                      >
+                                        ROUTER
+                                      </span>
+                                    )}
+                                    {isListo && cap && !cap.cerebro_v2 && !cap.routerMeta?.cerebro_router && (
                                       <span
                                         className="flex-shrink-0 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest"
                                         style={{ backgroundColor: "#8B450018", border: "1px solid #8B450040", color: "#CD853F" }}
@@ -3404,6 +3425,130 @@ function AdminSemillasInner() {
                                   exit={{ opacity: 0, height: 0 }}
                                   className="mt-3 space-y-3"
                                 >
+                                  {/* Panel Cerebro Router — métricas de la última generación */}
+                                  {(() => {
+                                    const rm = cap.routerMeta;
+                                    if (!rm?.cerebro_router) {
+                                      return (
+                                        <motion.div
+                                          initial={{ opacity: 0 }}
+                                          animate={{ opacity: 1 }}
+                                          className="rounded-xl px-3 py-2.5 text-[9px] leading-relaxed text-slate-500"
+                                          style={{ border: `1px dashed ${BORDER_GOLD}`, backgroundColor: `${GOLD}06` }}
+                                          data-testid={`router-panel-missing-${sub.id}`}
+                                        >
+                                          <span className="font-bold uppercase tracking-wider" style={{ color: `${GOLD}99` }}>Cerebro Router</span>
+                                          {" — "}Este capítulo se guardó antes del router o sin métricas. Pulsa <strong className="text-slate-400">Regen.</strong> para ver tokens del prompt y auditoría de contaminación.
+                                        </motion.div>
+                                      );
+                                    }
+                                    const pt = rm.promptTokens;
+                                    const maxTok = pt ? Math.max(pt.c1, pt.c2, pt.c3, 1) : 1;
+                                    const fmtTok = (n: number) => (n >= 1000 ? `~${(n / 1000).toFixed(1)}k` : `~${n}`);
+                                    const bar = (label: string, val: number, color: string) => (
+                                      <motion.div key={label} className="flex items-center gap-2" initial={{ width: 0 }} animate={{ width: "100%" }}>
+                                        <span className="w-6 text-[8px] font-mono font-bold" style={{ color }}>{label}</span>
+                                        <motion.div
+                                          className="h-2 rounded-full flex-1 overflow-hidden"
+                                          style={{ backgroundColor: `${color}15` }}
+                                          initial={{ opacity: 0 }}
+                                          animate={{ opacity: 1 }}
+                                          transition={{ delay: 0.1 }}
+                                        >
+                                          <motion.div
+                                            className="h-full rounded-full"
+                                            style={{ backgroundColor: color }}
+                                            initial={{ width: 0 }}
+                                            animate={{ width: `${Math.round((val / maxTok) * 100)}%` }}
+                                            transition={{ duration: 0.5, ease: "easeOut" }}
+                                          />
+                                        </motion.div>
+                                        <span className="w-12 text-right text-[8px] font-mono text-slate-400">{fmtTok(val)}</span>
+                                      </motion.div>
+                                    );
+                                    const contam = rm.contaminationAudit || {};
+                                    const c1c = contam.carril1;
+                                    const c2c = contam.carril2;
+                                    const routerOk = (!c1c || c1c.passed) && (!c2c || c2c.passed);
+                                    const fichaEntry = fichaAuditMap[sub.id];
+                                    return (
+                                      <motion.div
+                                        initial={{ opacity: 0, y: -4 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="rounded-xl p-3 space-y-2.5"
+                                        style={{ border: `1px solid #48CAE440`, backgroundColor: "#00B4D808" }}
+                                        data-testid={`router-panel-${sub.id}`}
+                                      >
+                                        <motion.div
+                                          className="flex items-center justify-between gap-2"
+                                          initial={{ opacity: 0 }}
+                                          animate={{ opacity: 1 }}
+                                        >
+                                          <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#48CAE4" }}>
+                                            Cerebro Router — resultado
+                                          </span>
+                                          <span
+                                            className="text-[7px] font-bold px-1.5 py-0.5 rounded"
+                                            style={{
+                                              backgroundColor: routerOk ? "#00C85120" : "#FF313120",
+                                              color: routerOk ? "#00C851" : "#FF3131",
+                                              border: `1px solid ${routerOk ? "#00C85140" : "#FF313140"}`,
+                                            }}
+                                          >
+                                            {routerOk ? "SIN CONTAMINACIÓN" : "REVISAR CARRILES"}
+                                          </span>
+                                        </motion.div>
+                                        {pt && (
+                                          <motion.div className="space-y-1" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 }}>
+                                            <p className="text-[8px] text-slate-500 uppercase tracking-wider mb-1">Tokens estimados del prompt (input)</p>
+                                            {bar("C1", pt.c1, GOLD)}
+                                            {bar("C2", pt.c2, "#48CAE4")}
+                                            {bar("C3", pt.c3, "#9B5DE5")}
+                                            {pt.c3 > 0 && pt.c1 < pt.c3 && (
+                                              <p className="text-[8px] text-slate-600 mt-1">
+                                                C1 usa ~{Math.round((1 - pt.c1 / pt.c3) * 100)}% menos contexto que C3 (conocimiento segregado).
+                                              </p>
+                                            )}
+                                          </motion.div>
+                                        )}
+                                        <motion.div
+                                          className="grid grid-cols-3 gap-1.5 text-[8px]"
+                                          initial={{ opacity: 0 }}
+                                          animate={{ opacity: 1 }}
+                                          transition={{ delay: 0.15 }}
+                                        >
+                                          {(["carril1", "carril2", "carril3"] as const).map((key, i) => {
+                                            const labels = ["Mensaje", "Lector", "Maestro"];
+                                            const ficha = fichaEntry?.[key];
+                                            const cont = key === "carril3" ? undefined : contam[key];
+                                            return (
+                                              <div
+                                                key={key}
+                                                className="rounded-lg p-1.5 text-center"
+                                                style={{ backgroundColor: "#00000030", border: `1px solid ${BORDER_GOLD}` }}
+                                              >
+                                                <motion.div className="font-bold text-slate-400 mb-0.5">C{i + 1} {labels[i]}</motion.div>
+                                                {ficha && (
+                                                  <motion.div style={{ color: ficha.passed ? "#00C851" : "#FF3131" }} animate={{ scale: [1, 1.05, 1] }} transition={{ duration: 0.3 }}>
+                                                    Ficha {ficha.passed ? "✓" : "✗"}
+                                                  </motion.div>
+                                                )}
+                                                {cont !== undefined && (
+                                                  <motion.div
+                                                    style={{ color: cont.passed ? "#48CAE4" : "#FF3131" }}
+                                                    title={cont.violations?.length ? cont.violations.join(", ") : "OK"}
+                                                  >
+                                                    Router {cont.passed ? "✓" : `✗ ${cont.violations?.join(", ") || ""}`}
+                                                  </motion.div>
+                                                )}
+                                                {key === "carril3" && <motion.div className="text-slate-600">Doctor + fianza</motion.div>}
+                                              </div>
+                                            );
+                                          })}
+                                        </motion.div>
+                                      </motion.div>
+                                    );
+                                  })()}
                                   {/* Carril 1 */}
                                   <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${GOLD}30` }}>
                                     <div className="flex items-center justify-between px-3 py-2" style={{ backgroundColor: `${GOLD}10` }}>

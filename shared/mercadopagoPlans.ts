@@ -1,5 +1,12 @@
 /** Planes de suscripción y API usados por Mercado Pago (servidor Node y función Vercel). */
 export const SUBSCRIPTION_PLANS = {
+  "corazon-sabio": {
+    id: "corazon-sabio",
+    name: "El Corazón Sabio™",
+    price: 17,
+    isOneTime: true,
+    espejoCredits: 10,
+  },
   "soberania-mental": { id: "soberania-mental", name: "Soberanía Mental", price: 9.99 },
   arquitecto: { id: "arquitecto", name: "Arquitecto", price: 24.99 },
   soberano_operativo: { id: "soberano_operativo", name: "Soberano Operativo", price: 34.99 },

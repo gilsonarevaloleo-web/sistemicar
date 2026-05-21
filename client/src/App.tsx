@@ -47,6 +47,7 @@ import UmbralLeads from "@/pages/umbral-leads";
 import VentasEspejo from "@/pages/ventas-espejo";
 import MetricasDocumento from "@/pages/metricas-documento";
 import MapaSistemicar from "@/pages/mapa-sistemicar";
+import Manuales from "@/pages/manuales";
 import AdminSemillas from "@/pages/admin-semillas";
 import Registros from "@/pages/registros";
 import ApiCheckout from "@/pages/api-checkout";
@@ -243,6 +244,9 @@ function Router() {
         </Route>
         <Route path="/como-funciona">
           <ProtectedRoute component={ComoFunciona} />
+        </Route>
+        <Route path="/manuales">
+          <ProtectedRoute component={Manuales} />
         </Route>
         <Route path="/umbral">
           <ArquitectoRoute component={Umbral} />

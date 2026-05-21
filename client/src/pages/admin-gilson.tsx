@@ -3,10 +3,11 @@ import { motion } from "framer-motion";
 import { Shield, Users, CheckCircle, Crown, Zap, Eye, EyeOff, RefreshCw, DollarSign, AlertTriangle, Database, ArrowRight, FlaskConical, Star, Trash2, Brain, Dna, X, Sprout } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
-import { findAccountsWithData, migrateDataToNewUid, subscribeToPrincipiosMaestros, addPrincipioMaestro, deletePrincipioMaestro, PrincipioMaestro, subscribeToEnergyLogs, EnergyLog, subscribeToVehicles, Vehicle, subscribeToGenomeLaws, saveGenomeLaw, updateGenomeLawStatus, deleteGenomeLaw, GenomeLaw, adminSetEspejoCredits, adminSetEspejoCreditsByEmail, findUserByEmail, getAllProspectos } from "@/lib/persistence";
+import { findAccountsWithData, migrateDataToNewUid, subscribeToPrincipiosMaestros, addPrincipioMaestro, deletePrincipioMaestro, PrincipioMaestro, subscribeToEnergyLogs, EnergyLog, subscribeToVehicles, Vehicle, subscribeToGenomeLaws, saveGenomeLaw, updateGenomeLawStatus, deleteGenomeLaw, GenomeLaw, findUserByEmail, getAllProspectos } from "@/lib/persistence";
 import { useAuthContext } from "@/App";
 import { isOwner } from "@/lib/owner";
-import { getUserEmail } from "@/lib/firebase";
+import { auth, getUserEmail } from "@/lib/firebase";
+import { getIdToken } from "firebase/auth";
 
 const ADMIN_PASSWORD = "sistemicar2025";
 
@@ -81,6 +82,20 @@ export default function AdminGilson() {
   const [adnLoading, setAdnLoading] = useState(false);
   const [adnResult, setAdnResult] = useState<any>(null);
   const [showCreditFallback, setShowCreditFallback] = useState(false);
+  const [creditSource, setCreditSource] = useState<"yape" | "paypal" | "manual">("yape");
+  const [creditReference, setCreditReference] = useState("");
+  const [creditNote, setCreditNote] = useState("");
+  const [creditMode, setCreditMode] = useState<"add" | "set">("add");
+  const [creditDeliveries, setCreditDeliveries] = useState<Array<{
+    id: number;
+    buyerEmail: string;
+    credits: number;
+    status: string;
+    source: string;
+    createdAt: string;
+    adminNote: string | null;
+  }>>([]);
+  const [creditDeliveriesLoading, setCreditDeliveriesLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,6 +169,85 @@ export default function AdminGilson() {
       setMigratingUid(null);
     }
   };
+
+  const getAdminHeaders = async (): Promise<Record<string, string>> => {
+    const idToken = auth?.currentUser ? await getIdToken(auth.currentUser, false).catch(() => "") : "";
+    return idToken ? { Authorization: `Bearer ${idToken}` } : {};
+  };
+
+  const loadCreditDeliveries = async () => {
+    setCreditDeliveriesLoading(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch("/api/admin/espejo/deliveries?limit=30", { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error cargando entregas");
+      setCreditDeliveries(data.deliveries || []);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Error cargando historial";
+      toast.error(msg);
+    } finally {
+      setCreditDeliveriesLoading(false);
+    }
+  };
+
+  const grantEspejoCreditsAdmin = async (targetEmail: string) => {
+    const amount = parseInt(creditAmount, 10);
+    if (!amount || amount <= 0) {
+      toast.error("Ingresa una cantidad valida de creditos");
+      return;
+    }
+    if (!targetEmail.trim()) {
+      toast.error("Ingresa el email del comprador");
+      return;
+    }
+    setCreditSaving(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch("/api/admin/espejo/grant-credits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({
+          email: targetEmail.trim(),
+          credits: amount,
+          mode: creditMode,
+          source: creditSource,
+          reference: creditReference.trim() || undefined,
+          note: creditNote.trim() || undefined,
+          sendEmail: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 409) {
+        toast.warning(data.error || "Esta referencia ya fue acreditada");
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || "Error acreditando creditos");
+      if (data.pending) {
+        toast.success(
+          `${amount} creditos registrados para ${targetEmail}. Se activaran al iniciar sesion con ese correo.`
+        );
+      } else {
+        toast.success(data.message || `+${amount} creditos activados`);
+      }
+      setCreditAmount("");
+      setCreditReference("");
+      setCreditNote("");
+      setCreditSearchResult(null);
+      setShowCreditFallback(false);
+      void loadCreditDeliveries();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error asignando creditos");
+    } finally {
+      setCreditSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "creditos" && isAuthenticated) {
+      void loadCreditDeliveries();
+    }
+  }, [activeTab, isAuthenticated]);
 
   useEffect(() => {
     const saved = sessionStorage.getItem("adminAuth");
@@ -878,7 +972,27 @@ export default function AdminGilson() {
           <div className="space-y-4">
             <div className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20">
               <h3 className="text-cyan-400 font-bold mb-3">Asignar Créditos de Claridad</h3>
-              <p className="text-xs text-slate-400 mb-4">Busca un usuario por email y asígnale créditos después de verificar el pago en MercadoPago.</p>
+              <p className="text-xs text-slate-400 mb-4">Yape, PayPal o manual: acredita por servidor con auditoria. Usa referencia para no duplicar el mismo pago.</p>
+              <motion.div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                {(["yape", "paypal", "manual"] as const).map((src) => (
+                  <button key={src} type="button" onClick={() => setCreditSource(src)}
+                    className={`px-2 py-2 rounded-lg text-xs font-bold uppercase ${creditSource === src ? "bg-cyan-500/30 text-cyan-300 border border-cyan-500/50" : "bg-white/5 text-slate-400 border border-white/10"}`}>
+                    {src}
+                  </button>
+                ))}
+                <button type="button" onClick={() => { setCreditAmount("10"); setCreditMode("add"); }}
+                  className="px-2 py-2 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">Pack +10</button>
+              </motion.div>
+              <motion.div className="flex flex-wrap gap-4 mb-3 text-xs text-slate-400">
+                <label className="flex items-center gap-2"><input type="radio" checked={creditMode === "add"} onChange={() => setCreditMode("add")} /> Sumar</label>
+                <label className="flex items-center gap-2"><input type="radio" checked={creditMode === "set"} onChange={() => setCreditMode("set")} /> Establecer saldo</label>
+              </motion.div>
+              <motion.div className="grid sm:grid-cols-2 gap-2 mb-3">
+                <input type="text" value={creditReference} onChange={(e) => setCreditReference(e.target.value)}
+                  placeholder="Ref. pago (opcional)" className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm" data-testid="input-credit-reference" />
+                <input type="text" value={creditNote} onChange={(e) => setCreditNote(e.target.value)}
+                  placeholder="Nota interna" className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm" />
+              </motion.div>
               <div className="flex gap-2 mb-3">
                 <input
                   type="email"
@@ -939,34 +1053,12 @@ export default function AdminGilson() {
                       data-testid="input-credit-amount"
                     />
                     <button
-                      onClick={async () => {
-                        const amount = parseInt(creditAmount);
-                        if (!amount || amount <= 0) { toast.error("Ingresa una cantidad válida"); return; }
-                        setCreditSaving(true);
-                        try {
-                          await adminSetEspejoCredits(creditSearchResult!.uid, amount);
-                          toast.success(`${amount} créditos asignados a ${creditSearchResult!.email}`);
-                          try {
-                            await fetch("/api/send-welcome-email", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ email: creditSearchResult!.email, userName: creditSearchResult!.email.split("@")[0] })
-                            });
-                            toast.success("Correo de bienvenida enviado automáticamente");
-                          } catch { toast.error("Créditos asignados pero error enviando correo"); }
-                          setCreditAmount("");
-                          setCreditSearchResult(null);
-                          setCreditEmail("");
-                        } catch (e) {
-                          toast.error("Error asignando créditos");
-                        }
-                        setCreditSaving(false);
-                      }}
+                      onClick={() => grantEspejoCreditsAdmin(creditSearchResult!.email)}
                       disabled={creditSaving}
                       className="px-4 py-2 rounded-lg bg-green-500/20 text-green-400 font-bold text-sm hover:bg-green-500/30 disabled:opacity-50"
                       data-testid="button-assign-credits"
                     >
-                      {creditSaving ? "Guardando..." : "Asignar"}
+                      {creditSaving ? "Guardando..." : "Acreditar"}
                     </button>
                   </div>
                 </motion.div>
@@ -995,37 +1087,34 @@ export default function AdminGilson() {
                       data-testid="input-credit-amount-fallback"
                     />
                     <button
-                      onClick={async () => {
-                        const amount = parseInt(creditAmount);
-                        if (!amount || amount <= 0) { toast.error("Ingresa una cantidad válida"); return; }
-                        setCreditSaving(true);
-                        try {
-                          const assignedUid = await adminSetEspejoCreditsByEmail(creditEmail.trim(), amount);
-                          toast.success(`${amount} créditos asignados a ${creditEmail.trim()} (UID: ${assignedUid.slice(0, 8)}...)`);
-                          try {
-                            await fetch("/api/send-welcome-email", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ email: creditEmail.trim(), userName: creditEmail.trim().split("@")[0] })
-                            });
-                            toast.success("Correo de bienvenida enviado automáticamente");
-                          } catch { toast.error("Créditos asignados pero error enviando correo"); }
-                          setCreditAmount("");
-                          setShowCreditFallback(false);
-                          setCreditEmail("");
-                        } catch (e) {
-                          toast.error("Error asignando créditos por email");
-                        }
-                        setCreditSaving(false);
-                      }}
+                      onClick={() => grantEspejoCreditsAdmin(creditEmail.trim())}
                       disabled={creditSaving}
                       className="px-4 py-2 rounded-lg bg-amber-500/20 text-amber-400 font-bold text-sm hover:bg-amber-500/30 disabled:opacity-50"
                       data-testid="button-assign-credits-fallback"
                     >
-                      {creditSaving ? "Guardando..." : "Asignar por Email"}
+                      {creditSaving ? "Guardando..." : "Acreditar por Email"}
                     </button>
                   </div>
                 </motion.div>
+              )}
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-500/10 border border-slate-500/20 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-slate-300 font-bold text-sm">Historial entregas</h3>
+                <button type="button" onClick={() => void loadCreditDeliveries()} className="text-xs text-cyan-400" disabled={creditDeliveriesLoading}>Actualizar</button>
+              </div>
+              {creditDeliveries.length === 0 ? (
+                <p className="text-xs text-slate-500">Sin entregas.</p>
+              ) : (
+                <div className="space-y-1 max-h-40 overflow-y-auto text-[10px]">
+                  {creditDeliveries.map((row) => (
+                    <div key={row.id} className="p-2 rounded bg-black/30">
+                      <span className="text-white">{row.buyerEmail}</span>
+                      <span className="text-slate-500"> +{row.credits} {row.source} {row.status}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
 

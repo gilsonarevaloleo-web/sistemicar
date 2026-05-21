@@ -12,6 +12,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageContainer } from "./page-container";
 
 const pageInfo: Record<string, { title: string; subtitle: string; icon: any }> = {
   "/espejo": { title: "Espejo", subtitle: "Alquimia Clínica del Corazón", icon: Terminal },
@@ -45,7 +46,7 @@ export function PageHeader() {
       animate={{ opacity: 1, y: 0 }}
       className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl border-b border-white/5 px-4 py-3"
     >
-      <div className="max-w-lg mx-auto flex items-center justify-between">
+      <PageContainer className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center">
             <Icon size={20} className="text-primary" />
@@ -81,7 +82,7 @@ export function PageHeader() {
             </button>
           )}
         </div>
-      </div>
+      </PageContainer>
     </motion.header>
   );
 }

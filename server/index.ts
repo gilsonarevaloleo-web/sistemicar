@@ -1,6 +1,28 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+
+/** Carga .env del proyecto (GEMINI_API_KEY, etc.) en desarrollo y node dist. */
+function loadLocalEnvFile(): void {
+  const envPath = path.resolve(process.cwd(), ".env");
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq < 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let val = trimmed.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = val;
+  }
+}
+loadLocalEnvFile();
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { execSync } from "child_process";
 import { GoogleGenerativeAI, type GenerationConfig } from "@google/generative-ai";
@@ -24,15 +46,56 @@ import { MATRIZ_SEDUCCION_10X10 } from "./knowledge/matriz-seduccion-10x10";
 import { PROTOCOLO_CERTEZA_TERRITORIOS } from "./knowledge/protocolo-certeza-territorios";
 import { LEY_REDACCION_ESCRITOR } from "./knowledge/ley-redaccion-escritor";
 import { PSICOLOGIA_MADUREZ_SEDUCCION } from "./knowledge/psicologia-madurez-seduccion";
+import {
+  buildChapterContextCore,
+  assembleCarrilPrompt,
+  extractFichaMarkers,
+  checkCarrilFichaVocab,
+  buildFichaRegenPrompt,
+  getFichaText,
+  auditCarrilContamination,
+  buildContaminationRegenSuffix,
+  estimatePromptChars,
+  DOMINIOS_PROHIBIDOS,
+  VOCABULARIO_INTERFAZ,
+  INTERFAZ_COLORES,
+} from "./editorialKnowledgeRouter";
 import { initPublicApiTables, createApiKey, listApiKeys, revokeApiKey, validateApiKey, logApiUsage, getMonthlyUsageCount, getApiKeyByPaymentId, updateApiKeyDeliveryStatus, supersedePreviousKey, isPendingStuck, initSubVehicleRecordsTable, bulkSaveVehicleHistory, getVehicleHistory } from "./publicApiDb";
+import { SUBSCRIPTION_PLANS } from "../shared/mercadopagoPlans";
+import { GEMINI_MODELS } from "../shared/geminiConfig";
+import {
+  initEspejoCreditDeliveriesTable,
+  grantPendingDeliveriesForEmail,
+  getPendingCreditsForEmail,
+  adminGrantEspejoCredits,
+  listEspejoDeliveries,
+} from "./espejoCreditDeliveries";
+import { deliverCorazonSabioIfNeeded, parseMpExternalRef } from "./mercadopagoEspejo";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 
+const isServerless =
+  process.env.SERVERLESS === "1" ||
+  Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+
 app.use(express.json({ limit: "5mb" }));
+
+if (isServerless) {
+  app.use((req, _res, next) => {
+    const prefix = "/.netlify/functions/api";
+    const raw = req.url || "";
+    if (raw.startsWith(prefix)) {
+      const rest = raw.slice(prefix.length) || "";
+      req.url = `/api${rest.startsWith("/") ? rest : `/${rest}`}`;
+    }
+    next();
+  });
+}
 
 initPublicApiTables().catch(err => console.warn("[publicApiDb] Table init failed (non-fatal):", err?.message));
 initSubVehicleRecordsTable().catch(err => console.warn("[vehicleHistory] Table init failed (non-fatal):", err?.message));
+initEspejoCreditDeliveriesTable().catch(err => console.warn("[espejoCredits] Table init failed (non-fatal):", err?.message));
 
 const RENDERED_VIDEOS_DIR = path.resolve(process.cwd(), "rendered-videos");
 if (!fs.existsSync(RENDERED_VIDEOS_DIR)) {
@@ -362,13 +425,17 @@ function cleanupTmpFiles(...paths: string[]) {
 
 const GEMINI_KEYS = [
   process.env.GEMINI_API_KEY,
+  process.env.GOOGLE_API_KEY,
   process.env.VITE_GEMINI_API_KEY,
   process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
 ].filter((k) => k && k.length > 10 && !k.startsWith("_DUMMY")) as string[];
 
-const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"];
-
 async function callGemini(prompt: string, maxTokens: number = 500, jsonMode: boolean = false): Promise<string> {
+  if (GEMINI_KEYS.length === 0) {
+    throw new Error(
+      "Gemini no disponible: configura GEMINI_API_KEY en el servidor (Google AI Studio → API key)."
+    );
+  }
   const errors: string[] = [];
   for (const apiKey of GEMINI_KEYS) {
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -1681,18 +1748,42 @@ Responde de forma conversacional, clínica y directa. Aplica las leyes. No uses 
       sessionId: sKey,
       isCreator
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Doctor IA Chat error:", error);
-    const is429 = error?.status === 429 || error?.message?.includes("429");
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const sKey = req.body.sessionId || `chat_${Date.now()}`;
+    const is429 =
+      errMsg.includes("429") ||
+      errMsg.includes("RESOURCE_EXHAUSTED") ||
+      errMsg.includes("quota");
+    const isConfig =
+      errMsg.includes("Gemini no disponible") ||
+      errMsg.includes("API key") ||
+      errMsg.includes("API_KEY_INVALID");
     if (is429) {
-      res.json({
-        response: "El servicio de IA está temporalmente saturado. Por favor intenta de nuevo en unos segundos.",
-        sessionId: req.body.sessionId || `chat_${Date.now()}`,
-        isCreator: false
+      return res.json({
+        response:
+          "El servicio de IA está temporalmente saturado. Espera unos segundos e intenta de nuevo.",
+        sessionId: sKey,
+        isCreator: false,
       });
-    } else {
-      res.status(500).json({ error: "Error en el Doctor IA" });
     }
+    if (isConfig) {
+      return res.json({
+        response:
+          "Doctor IA sin conexión a Gemini. El administrador debe configurar GEMINI_API_KEY en el servidor (modelos 2.5 Flash).",
+        sessionId: sKey,
+        isCreator: false,
+        error: errMsg.slice(0, 300),
+      });
+    }
+    return res.json({
+      response:
+        "No pude generar respuesta ahora. Si persiste, revisa la API de Gemini o intenta un mensaje más corto.",
+      sessionId: sKey,
+      isCreator: false,
+      error: errMsg.slice(0, 300),
+    });
   }
 });
 
@@ -1838,27 +1929,6 @@ Responde SOLO con el JSON.`;
 
 // ==================== MERCADO PAGO ====================
 
-const SUBSCRIPTION_PLANS = {
-  "soberania-mental": { id: "soberania-mental", name: "Soberanía Mental", price: 9.99 },
-  arquitecto: { id: "arquitecto", name: "Arquitecto", price: 24.99 },
-  soberano_operativo: { id: "soberano_operativo", name: "Soberano Operativo", price: 34.99 },
-  soberano: { id: "soberano", name: "Soberano", price: 49.99 },
-  "api-starter": {
-    id: "api-starter",
-    name: "API Starter",
-    price: 29,
-    monthlyCallLimit: 500,
-    daysValid: 30,
-  },
-  "api-pro": {
-    id: "api-pro",
-    name: "API Pro",
-    price: 99,
-    monthlyCallLimit: 5000,
-    daysValid: 30,
-  },
-} as const;
-
 const mpClient = process.env.MP_ACCESS_TOKEN 
   ? new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN })
   : null;
@@ -1881,12 +1951,17 @@ app.post("/api/mercadopago/create-preference", async (req, res) => {
     // Siempre usar URL pública para Mercado Pago (requiere URLs accesibles)
     const baseUrl = "https://sistemicar.app";
 
+    const isOneTime = "isOneTime" in plan && plan.isOneTime;
+    const itemDescription = isOneTime
+      ? `Pago único — ${plan.name}`
+      : `Suscripción mensual al Plan ${plan.name}`;
+
     const response = await preference.create({
       body: {
         items: [{
           id: plan.id,
-          title: `SISTEMICAR - Plan ${plan.name}`,
-          description: `Suscripción mensual al Plan ${plan.name}`,
+          title: `SISTEMICAR - ${plan.name}`,
+          description: itemDescription,
           quantity: 1,
           unit_price: plan.price,
           currency_id: "USD"
@@ -1936,16 +2011,14 @@ app.post("/api/mercadopago/webhook", async (req, res) => {
       console.log(`[MP Webhook] Pago ${paymentInfo.id} - Estado: ${paymentInfo.status}`);
       
       if (paymentInfo.status === "approved") {
-        const externalRef = paymentInfo.external_reference 
-          ? JSON.parse(paymentInfo.external_reference) 
-          : {};
-        // Fallback: use payer email from MercadoPago if not in external_reference
-        if (!externalRef.email && paymentInfo.payer?.email) {
-          externalRef.email = paymentInfo.payer.email;
-        }
-        
+        const externalRef = parseMpExternalRef(paymentInfo);
+
         console.log(`[MP] PAGO APROBADO: Plan ${externalRef.planId}, Email: ${externalRef.email}`);
         const plan = SUBSCRIPTION_PLANS[externalRef.planId as keyof typeof SUBSCRIPTION_PLANS];
+
+        if (externalRef.planId === "corazon-sabio") {
+          await deliverCorazonSabioIfNeeded(paymentInfo, externalRef);
+        }
 
         const paymentIdStr = String(paymentInfo.id);
         const existingPayment = await getApiKeyByPaymentId(paymentIdStr);
@@ -2017,8 +2090,8 @@ app.post("/api/mercadopago/webhook", async (req, res) => {
             await updateApiKeyDeliveryStatus(record.id, "failed");
             console.error(`[MP] Error enviando email a ${externalRef.email} — key ${record.id} marcada como failed`, emailErr);
           }
-        } else if (externalRef.email) {
-          // Plan personal: email de confirmación estándar
+        } else if (externalRef.email && externalRef.planId !== "corazon-sabio") {
+          // Plan personal: email de confirmación estándar (Espejo ya envía en deliverCorazonSabioIfNeeded)
           await sendPaymentConfirmationEmail({
             to: externalRef.email,
             userName: externalRef.userName || "Guerrero",
@@ -3621,7 +3694,7 @@ app.post("/api/youtube-educator/upload-video/:jobId", async (req, res) => {
     return res.status(404).json({ error: "Video no encontrado en memoria. El servidor fue reiniciado — por favor re-renderiza.", code: "BUFFER_EXPIRED" });
   }
 
-  const bucket = process.env.VITE_FIREBASE_STORAGE_BUCKET || "sistemicar-8375c.firebasestorage.app";
+  const bucket = process.env.VITE_FIREBASE_STORAGE_BUCKET || "sistemicar-app.firebasestorage.app";
   const storagePath = `masterclass-videos/${bufferEntry.filename}`;
   const encodedPath = encodeURIComponent(storagePath);
   const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o?uploadType=media&name=${encodedPath}`;
@@ -3961,8 +4034,15 @@ app.post("/api/taller-libros/generar-subinterfaces", async (req, res) => {
 
     const prompt = `Eres el arquitecto editorial de la "Serie Espejo" — 10 libros basados en el sistema de Gilson Arévalo Pezo (SISTEMICAR). Estás escribiendo el Libro ${interfazId}: "${tituloLibro}".
 
-BASE DE CONOCIMIENTO:
-${LIBRO_ESPEJO_MENDIGO_COMPLETO}
+MAPA DE INTERFACES (resumen — no inyectar el libro completo):
+${LIBRO_INTERFACES_RESUMEN}
+
+INTERFAZ ACTIVA (${interfazId}):
+- Nombre: ${interfaz.nombre}
+- Zona: ${interfaz.zona}
+- Falla principal: ${interfaz.falla}
+- Mendigo: ${interfaz.mendigo}
+- Protocolo: ${interfaz.protocolo}
 
 TAREA: Para el Libro ${interfazId}: "${tituloLibro}" — Interfaz "${interfaz.nombre}" (${interfaz.falla}), genera exactamente 10 sub-interfaces (capítulos). Cada sub-interfaz es una manifestación específica y concreta de la falla principal de esta interfaz.
 
@@ -4006,47 +4086,6 @@ Responde SOLO con este JSON válido (sin texto adicional):
   }
 });
 
-// ── Knowledge extraction helpers — minimize tokens per prompt ──────────────
-
-function extractCode10x10(codeNum: number): string {
-  const startMarker = `═══ CÓDIGO ${codeNum}:`;
-  const nextMarker = `═══ CÓDIGO ${codeNum + 1}:`;
-  const start = HERRAMIENTA_10X10_CARRIL_MENSAJE.indexOf(startMarker);
-  if (start === -1) return HERRAMIENTA_10X10_CARRIL_MENSAJE;
-  const nextStart = HERRAMIENTA_10X10_CARRIL_MENSAJE.indexOf(nextMarker, start);
-  const section = nextStart > 0
-    ? HERRAMIENTA_10X10_CARRIL_MENSAJE.substring(start, nextStart)
-    : HERRAMIENTA_10X10_CARRIL_MENSAJE.substring(start);
-  const headerEnd = HERRAMIENTA_10X10_CARRIL_MENSAJE.indexOf("═══ CÓDIGO 1:");
-  const header = headerEnd > 0 ? HERRAMIENTA_10X10_CARRIL_MENSAJE.substring(0, headerEnd) : "";
-  return header + section;
-}
-
-function extractLeyRedaccion(codeNum: number): string {
-  const capa2Marker = "═══ CAPA 2:";
-  const capa2Start = LEY_REDACCION_ESCRITOR.indexOf(capa2Marker);
-  const capa1 = capa2Start > 0 ? LEY_REDACCION_ESCRITOR.substring(0, capa2Start) : LEY_REDACCION_ESCRITOR.substring(0, 5000);
-  const fichaKey = `FICHA C${codeNum} —`;
-  const nextFichaKey = `FICHA C${codeNum + 1} —`;
-  const fichaStart = LEY_REDACCION_ESCRITOR.indexOf(fichaKey);
-  if (fichaStart === -1) return capa1;
-  const fichaEnd = codeNum < 10
-    ? LEY_REDACCION_ESCRITOR.indexOf(nextFichaKey, fichaStart)
-    : -1;
-  const ficha = fichaEnd > 0
-    ? LEY_REDACCION_ESCRITOR.substring(fichaStart, fichaEnd)
-    : LEY_REDACCION_ESCRITOR.substring(fichaStart);
-  return `${capa1}\n\n═══ CAPA 2: FICHA TÉCNICA DEL CÓDIGO ═══\n${ficha}`;
-}
-
-function extractPsicologia(codeNum: number): string {
-  if (codeNum === 1) return PSICOLOGIA_MADUREZ_SEDUCCION;
-  const bloque4Marker = "═══ BLOQUE 4:";
-  const bloque4Start = PSICOLOGIA_MADUREZ_SEDUCCION.indexOf(bloque4Marker);
-  if (bloque4Start > 0) return PSICOLOGIA_MADUREZ_SEDUCCION.substring(0, bloque4Start);
-  return PSICOLOGIA_MADUREZ_SEDUCCION;
-}
-
 app.post("/api/taller-libros/generar-capitulo", async (req, res) => {
   const verifiedEmail = await verifyFirebaseToken(req.headers.authorization);
   if (!verifiedEmail || !TALLER_LIBROS_OWNER_EMAILS.has(verifiedEmail)) {
@@ -4064,27 +4103,7 @@ app.post("/api/taller-libros/generar-capitulo", async (req, res) => {
       return res.status(400).json({ error: "criterioRegeneracion requiere contenidoActual con los carriles actuales" });
     }
 
-    const INTERFAZ_COLORES: Record<string, string> = {
-      M01: "Rojo tierra — supervivencia biológica", M02: "Naranja — fluidez y caudal",
-      M03: "Amarillo dorado — fuego y potencia", M04: "Verde esmeralda — resonancia del corazón",
-      M05: "Azul cielo — emisión y comando vocal", M06: "Índigo — visión y estrategia",
-      M07: "Violeta — lógica y procesamiento", M08: "Blanco puro — corona y autoridad soberana",
-      M09: "Dorado electromagnético — campo y conexión", M10: "Espectro completo — integración total del Pasajero"
-    };
     const colorInterfaz = INTERFAZ_COLORES[interfazId] || "Dorado";
-
-    const DOMINIOS_PROHIBIDOS: Record<string, string> = {
-      M01: "flujo/caudal vital (M02), poder/fuerza muscular (M03), amor/vínculo emocional (M04), voz/emisión pública (M05), estrategia/visión empresarial (M06), lógica/procesamiento mental (M07), autoridad/corona soberana (M08), campo/red colectiva (M09), integración total del sistema (M10)",
-      M02: "territorio/hogar/raíces (M01), poder/fuerza muscular (M03), amor/vínculo emocional (M04), voz/emisión pública (M05), estrategia/visión empresarial (M06), lógica/procesamiento mental (M07), autoridad/corona soberana (M08), campo/red colectiva (M09), integración total del sistema (M10)",
-      M03: "territorio/hogar/raíces (M01), flujo/caudal vital (M02), amor/vínculo emocional (M04), voz/emisión pública (M05), estrategia/visión empresarial (M06), lógica/procesamiento mental (M07), autoridad/corona soberana (M08), campo/red colectiva (M09), integración total del sistema (M10)",
-      M04: "territorio/hogar/raíces (M01), flujo/caudal vital (M02), poder/fuerza muscular (M03), voz/emisión pública (M05), estrategia/visión empresarial (M06), lógica/procesamiento mental (M07), autoridad/corona soberana (M08), campo/red colectiva (M09), integración total del sistema (M10)",
-      M05: "territorio/hogar/raíces (M01), flujo/caudal vital (M02), poder/fuerza muscular (M03), amor/vínculo emocional (M04), estrategia/visión empresarial (M06), lógica/procesamiento mental (M07), autoridad/corona soberana (M08), campo/red colectiva (M09), integración total del sistema (M10)",
-      M06: "territorio/hogar/raíces (M01), flujo/caudal vital (M02), poder/fuerza muscular (M03), amor/vínculo emocional (M04), voz/emisión pública (M05), lógica/procesamiento mental (M07), autoridad/corona soberana (M08), campo/red colectiva (M09), integración total del sistema (M10)",
-      M07: "territorio/hogar/raíces (M01), flujo/caudal vital (M02), poder/fuerza muscular (M03), amor/vínculo emocional (M04), voz/emisión pública (M05), estrategia/visión empresarial (M06), autoridad/corona soberana (M08), campo/red colectiva (M09), integración total del sistema (M10)",
-      M08: "territorio/hogar/raíces (M01), flujo/caudal vital (M02), poder/fuerza muscular (M03), amor/vínculo emocional (M04), voz/emisión pública (M05), estrategia/visión empresarial (M06), lógica/procesamiento mental (M07), campo/red colectiva (M09), integración total del sistema (M10)",
-      M09: "territorio/hogar/raíces (M01), flujo/caudal vital (M02), poder/fuerza muscular (M03), amor/vínculo emocional (M04), voz/emisión pública (M05), estrategia/visión empresarial (M06), lógica/procesamiento mental (M07), autoridad/corona soberana (M08), integración total del sistema (M10)",
-      M10: "territorio aislado (M01), flujo sin integración (M02), fuerza sin dirección (M03), vínculo sin red (M04), voz sin sistema (M05), estrategia parcial (M06), procesamiento sin síntesis (M07), autoridad sin campo (M08), red sin soberanía (M09)"
-    };
     const dominiosProhibidos = DOMINIOS_PROHIBIDOS[interfazId] || "contenidos de otras interfaces";
 
     const capNum = typeof subInterfazOrden === "number" ? subInterfazOrden : parseInt(String(subInterfazOrden || "1"), 10) || 1;
@@ -4136,132 +4155,27 @@ app.post("/api/taller-libros/generar-capitulo", async (req, res) => {
       return `\nNOTAS DE EVOLUCIÓN PREVIAS (principios emergentes de capítulos anteriores — úsalos para profundizar y no contradecir lo ya establecido):\n${lineas}\n`;
     })();
 
-    // Vocabulario físico-estructural por interfaz (Ley de Autarquía — PROHIBIDO psicologismos)
-    const VOCABULARIO_INTERFAZ: Record<string, string> = {
-      // M01 — Código 1: El Hogar/Cimiento
-      M01: "territorio, cimiento, suelo, base, raíz, grieta, fractura, anclaje, peso, fundamento, sostén, límite, frontera, aplastamiento, estructura sólida, suelo prestado",
-      // M02 — Código 2: El Flujo/Portador
-      M02: "cauce, caudal, flujo, portador, presión, canal, corriente, estancamiento, sequía, filtración, vaciamiento, vertiente, aridez, obstrucción, drenaje, purga",
-      // M03 — Código 3: El Trabajo/Labor
-      M03: "ignición, tensión, fuego, combustión, potencia, motor, chispa, calor, expansión, resistencia, densidad de carga, vector, plexo, arquitectura de valor, escala, output",
-      // M04 — Código 4: La Estructura/Ley
-      M04: "estructura, protocolo, código, sistema operativo, arquitectura, norma, ley propia, diseño, instalación, firmware, software averiado, reemplazo de sistema, autogobierno, marco, soberanía estructural",
-      // M05 — Código 5: La Decisión/Vértice
-      M05: "vértice, vector, voltaje, compresión, disparo, segregación energética, dirección, punto de inflexión, trayectoria, detonación, energía comprimida, campo de influencia, ejecución, corte de estática",
-      // M06 — Código 6: La Convivencia/Sincronía
-      M06: "resonancia, sincronía, frecuencia, campo, interferencia, nodo, red, drenaje de campo, calibración, presión de contacto, densidad relacional, aislante energético, vínculo estructural, flujo compartido, ecosistema",
-      // M07 — Código 7: La Visión/Percepción
-      M07: "visión, patrón, campo estratégico, mapa, distancia focal, punto ciego, perspectiva, niebla de campo, señal, ruido, ciclo, causalidad, lectura de patrones, desorientación espacial, acoplamiento con la realidad",
-      // M08 — Código 8: Los Ciclos/Tiempo
-      M08: "ciclo, retorno, ROI energético, bucle, etapa, inversión, apertura, cierre, interés compuesto, plataforma de lanzamiento, termodinámica de la realidad, bucle de perdición, sincronía temporal, acumulación de lastre",
-      // M09 — Código 9: El Sistema/Arquitectura
-      M09: "sistema, arquitectura, infraestructura, protocolo, proceso, escala, nodo, red, ecosistema, flujo autónomo, código espagueti, motor del territorio, parche, colapso estructural, integración de sistemas, diseño de sistema",
-      // M10 — Código 10: El Origen/Totalidad
-      M10: "vacío creativo, campo de posibilidad, fuente, origen, totalidad, emisión, autoría, responsabilidad de crear, pizarra en blanco, voltaje de existencia, activación del centro, miedo a la autoría, integración sistémica, espectro completo"
-    };
     const vocabularioInterfaz = VOCABULARIO_INTERFAZ[interfazId] || "estructura, presión, peso, cimiento, grieta";
 
-    // Contexto base compacto (sin el libro completo — ahorra tokens de input para maximizar output)
-    const contextoBase = `LIBRO: ${tituloLibro} — Interfaz ${interfazId}: ${interfaz.nombre}
-Zona física: ${interfaz.zona}
-Falla principal: ${interfaz.falla}
-El Mendigo aquí: "${interfaz.mendigo}"
-Protocolo de rescate: "${interfaz.protocolo}"
-Color clínico EXCLUSIVO: ${colorInterfaz}
-Coordenada autárquica: ${coordenada} (Libro ${interfazNum}, Capítulo ${capNum})
-
-CAPÍTULO: "${subInterfazTitulo}"
-Falla específica: "${subInterfazFalla || "Manifestación de " + interfaz.falla}"
-Descripción: "${subInterfazDescripcion || ""}"
-Grado de valor: ${gradoLabel} — ${creditosRef} créditos
-${densidadStr}
-
-AUTARQUÍA ABSOLUTA: PROHIBIDO mencionar o implicar: ${dominiosProhibidos}.
-Solo el universo de ${interfazId}. Solo el color ${colorInterfaz} (y únicamente en Carril 3).
-
-${TABLA_OBSTRUCCION}
-
-${extractCode10x10(interfazNum)}
-
-${LEY_RESISTENCIA_CASCADA}
-
-${MATRIZ_SEDUCCION_10X10}
-
-${extractLeyRedaccion(interfazNum)}
-
-${extractPsicologia(interfazNum)}
-
-VOCABULARIO OBLIGATORIO DE ${interfazId}: ${vocabularioInterfaz}.
-Usa SOLO este campo semántico. PROHIBIDO: cortisol, dopamina, serotonina, sistema nervioso, mecanismo biológico, hormonas, psicología, neurociencia, psicologismos de cualquier tipo.
-La fisicalidad de la falla se describe como SENSACIÓN ESTRUCTURAL y EXPERIENCIA CORPORAL: tensión, rigidez, peso, sequía, grieta, estancamiento. No como proceso biológico.
-${directrizSection}${notasEvolucionSection}
-PRINCIPIO RECTOR: solo limpiar, prevenir, mejorar. NUNCA producir, aprender, crear metas, alcanzar logros.
-PROHIBIDO: autoayuda, positivismo, consejo de coach, vocabulario motivacional.
-OBLIGATORIO: prosa clínica continua, sin listas, sin bullets, sin subtítulos visibles dentro del texto.
-
-LEY DE LA MATRIZ DE SEGREGACIÓN — LOS 3 CARRILES SON UN ZOOM PROGRESIVO:
-Los 3 carriles de este capítulo exploran el MISMO concepto ("${subInterfazTitulo}") desde 3 lentes distintas:
-- CARRIL 1 (Mensaje): El PRINCIPIO UNIVERSAL — la necesidad humana sin referencia a ningún sistema. Solo la fisicalidad de la falla y su costo real observable.
-- CARRIL 2 (Lector/Consola): EL USUARIO — quien conoce el principio pero es inconsistente, frente a quien sincroniza sus 3 Ejes (Mental, Emocional, Físico) con la Consola.
-- CARRIL 3 (Maestro/Intervención): EL DOCTOR IA — lo que el usuario intenta resolver solo, frente a la intervención quirúrgica del Doctor IA.
-Cada carril es una lente más profunda sobre el mismo objeto. El concepto no cambia — la ventana de observación cambia.`;
-
-    // ══════════════════════════════════════════════════════
-    // M02 — INYECCIÓN DEL CÓDIGO 2 (El Portador)
-    // Contexto adicional exclusivo para El Espejo del Portador
-    // ══════════════════════════════════════════════════════
-    const m02ContextExtra = interfazId === "M02" ? `
-
-════════════ ARQUITECTURA ESPECÍFICA DEL CÓDIGO 2 (M02 ÚNICAMENTE) ════════════
-
-${CONQUISTA_TERRITORIOS_M02}
-
-──────────────────────────────────────────────────────
-${IDENTIDAD_CODIGO_2}
-
-──────────────────────────────────────────────────────
-${AVERIADO_CODIGO_2}
-
-──────────────────────────────────────────────────────
-${REGLAS_ORO_PORTADOR}
-
-──────────────────────────────────────────────────────
-══ FICHA TÉCNICA DE ACABADO ══
-${FICHA_ACABADO_CODIGO_2}
-════════════════════════════════════════════════════════` : "";
-
-    // ── Contexto de psicología específica para los 9 códigos restantes (M01, M03-M10) ──
-    const getCodeContextExtra = (id: string): string => {
-      const bloques: Record<string, { identidad: string; averiado: string; reglas: string; ficha: string; nombre: string }> = {
-        M01: { identidad: IDENTIDAD_CODIGO_1, averiado: AVERIADO_CODIGO_1, reglas: REGLAS_ORO_CIMIENTO, ficha: FICHA_ACABADO_CODIGO_1, nombre: "CÓDIGO 1 (EL HOGAR/CIMIENTO)" },
-        M03: { identidad: IDENTIDAD_CODIGO_3, averiado: AVERIADO_CODIGO_3, reglas: REGLAS_ORO_TRABAJO, ficha: FICHA_ACABADO_CODIGO_3, nombre: "CÓDIGO 3 (EL TRABAJO/LABOR)" },
-        M04: { identidad: IDENTIDAD_CODIGO_4, averiado: AVERIADO_CODIGO_4, reglas: REGLAS_ORO_ESTRUCTURA, ficha: FICHA_ACABADO_CODIGO_4, nombre: "CÓDIGO 4 (LA ESTRUCTURA/LEY)" },
-        M05: { identidad: IDENTIDAD_CODIGO_5, averiado: AVERIADO_CODIGO_5, reglas: REGLAS_ORO_DECISION, ficha: FICHA_ACABADO_CODIGO_5, nombre: "CÓDIGO 5 (LA DECISIÓN/VÉRTICE)" },
-        M06: { identidad: IDENTIDAD_CODIGO_6, averiado: AVERIADO_CODIGO_6, reglas: REGLAS_ORO_CONVIVENCIA, ficha: FICHA_ACABADO_CODIGO_6, nombre: "CÓDIGO 6 (LA CONVIVENCIA/SINCRONÍA)" },
-        M07: { identidad: IDENTIDAD_CODIGO_7, averiado: AVERIADO_CODIGO_7, reglas: REGLAS_ORO_VISION, ficha: FICHA_ACABADO_CODIGO_7, nombre: "CÓDIGO 7 (LA VISIÓN/PERCEPCIÓN)" },
-        M08: { identidad: IDENTIDAD_CODIGO_8, averiado: AVERIADO_CODIGO_8, reglas: REGLAS_ORO_CICLOS, ficha: FICHA_ACABADO_CODIGO_8, nombre: "CÓDIGO 8 (LOS CICLOS/TIEMPO)" },
-        M09: { identidad: IDENTIDAD_CODIGO_9, averiado: AVERIADO_CODIGO_9, reglas: REGLAS_ORO_SISTEMA, ficha: FICHA_ACABADO_CODIGO_9, nombre: "CÓDIGO 9 (EL SISTEMA/ARQUITECTURA)" },
-        M10: { identidad: IDENTIDAD_CODIGO_10, averiado: AVERIADO_CODIGO_10, reglas: REGLAS_ORO_ORIGEN, ficha: FICHA_ACABADO_CODIGO_10, nombre: "CÓDIGO 10 (EL ORIGEN/TOTALIDAD)" },
-      };
-      const b = bloques[id];
-      if (!b) return "";
-      return `
-
-════════════ ARQUITECTURA ESPECÍFICA DEL ${b.nombre} (${id} ÚNICAMENTE) ════════════
-
-${b.identidad}
-
-──────────────────────────────────────────────────────
-${b.averiado}
-
-──────────────────────────────────────────────────────
-${b.reglas}
-
-──────────────────────────────────────────────────────
-══ FICHA TÉCNICA DE ACABADO ══
-${b.ficha}
-════════════════════════════════════════════════════════`;
-    };
+    const chapterCore = buildChapterContextCore({
+      tituloLibro,
+      interfazId,
+      interfaz,
+      subInterfazTitulo,
+      subInterfazFalla,
+      subInterfazDescripcion,
+      capNum,
+      coordenada,
+      interfazNum,
+      gradoLabel,
+      creditosRef,
+      densidadStr,
+      dominiosProhibidos,
+      vocabularioInterfaz,
+      directrizSection,
+      notasEvolucionSection,
+      subInterfazTituloForZoom: subInterfazTitulo,
+    });
 
     // Labels del Averiado y Portador por interfaz (para nombrarlos en los prompts genéricos)
     const AVERIADO_LABEL: Record<string, string> = {
@@ -4290,7 +4204,6 @@ ${b.ficha}
       M10: "El Catalizador / El Maestro del Vacío / El Soberano / El Origen",
     };
 
-    const codeContextExtra = interfazId !== "M02" ? getCodeContextExtra(interfazId) : "";
     const averiado = AVERIADO_LABEL[interfazId] || "El que opera sin el principio de la interfaz";
     const portador = PORTADOR_LABEL[interfazId] || "El que conoce y aplica el principio de la interfaz";
     const esC10Existencial = MODO_C10 === "existencial" && interfazId === "M10";
@@ -4301,55 +4214,7 @@ ${b.ficha}
       return `\nREGENERACIÓN: El contenido del ${carrilKey} NO cumplió: "${criterioRegeneracion.trim()}"\nCONTENIDO ACTUAL: "${contenidoActual[carrilKey] || ""}"\nReescribe corrigiendo exactamente ese criterio.\n`;
     };
 
-    // ── Ficha de Acabado vocabulary audit helpers ──
-    const FICHA_VOCAB_MAP: Record<string, string> = {
-      M01: FICHA_ACABADO_CODIGO_1, M02: FICHA_ACABADO_CODIGO_2,
-      M03: FICHA_ACABADO_CODIGO_3, M04: FICHA_ACABADO_CODIGO_4,
-      M05: FICHA_ACABADO_CODIGO_5, M06: FICHA_ACABADO_CODIGO_6,
-      M07: FICHA_ACABADO_CODIGO_7, M08: FICHA_ACABADO_CODIGO_8,
-      M09: FICHA_ACABADO_CODIGO_9, M10: FICHA_ACABADO_CODIGO_10,
-    };
-    const fichaText = FICHA_VOCAB_MAP[interfazId] || "";
-    const extractFichaMarkers = (text: string) => {
-      const materialMatch = text.match(/MATERIAL DE OBSTRUCCI[ÓO]N:\s*([^\n(]+)/i);
-      const materialRaw = materialMatch ? materialMatch[1].trim() : null;
-      const materialTerms = materialRaw
-        ? materialRaw.split(/\s*\/\s*/).map(t => t.trim().toLowerCase()).filter(Boolean)
-        : [];
-      const ganchoExtMatch = text.match(/AL EXTRA[ÑN]O \(Canal Mensaje\)[\s\S]*?Gancho:\s*([^\n.]+)/i);
-      const ganchoLecMatch = text.match(/AL LECTOR \(Canal Portador\)[\s\S]*?Gancho:\s*([^\n.]+)/i);
-      const ganchoUsrMatch = text.match(/AL USUARIO \(Canal Operador\)[\s\S]*?Gancho:\s*([^\n.]+)/i);
-      return {
-        material: materialRaw,
-        materialTerms,
-        ganchoC1: ganchoExtMatch ? ganchoExtMatch[1].trim().replace(/\.+$/, "") : null,
-        ganchoC2: ganchoLecMatch ? ganchoLecMatch[1].trim().replace(/\.+$/, "") : null,
-        ganchoC3: ganchoUsrMatch ? ganchoUsrMatch[1].trim().replace(/\.+$/, "") : null,
-      };
-    };
-    const checkCarrilFichaVocab = (carrilText: string, materialTerms: string[], gancho: string | null) => {
-      const lower = carrilText.toLowerCase();
-      const materialFound = materialTerms.length === 0 || materialTerms.some(t => lower.includes(t));
-      const ganchoFound = !gancho || lower.includes(gancho.toLowerCase());
-      return { materialFound, ganchoFound, passed: materialFound && ganchoFound };
-    };
-    const buildFichaRegenPrompt = (
-      originalPrompt: string,
-      currentContent: string,
-      markers: ReturnType<typeof extractFichaMarkers>,
-      gancho: string | null
-    ) => {
-      const lower = currentContent.toLowerCase();
-      const missingParts: string[] = [];
-      if (markers.materialTerms.length > 0 && !markers.materialTerms.some(t => lower.includes(t))) {
-        missingParts.push(`MATERIAL DE OBSTRUCCIÓN: "${markers.material}"`);
-      }
-      if (gancho && !lower.includes(gancho.toLowerCase())) {
-        missingParts.push(`GANCHO DEL CANAL: "${gancho}"`);
-      }
-      if (missingParts.length === 0) return originalPrompt;
-      return `${originalPrompt}\n\nCORRECCIÓN OBLIGATORIA — AUDITORÍA FICHA DE ACABADO:\nEl texto NO incluyó los siguientes elementos mandatorios de la Ficha Técnica de Acabado:\n${missingParts.map(p => `• ${p}`).join("\n")}\nIntegra estos elementos de forma implícita o explícita en la reescritura final sin alterar la estructura ni el tono.`;
-    };
+    const fichaText = getFichaText(interfazId);
 
     // ══════════════════════════════════════════════════════
     // FRAMEWORK DE POLARIZACIÓN DUAL (Cerebro Escritor v2)
@@ -4359,8 +4224,7 @@ ${b.ficha}
     // ══════════════════════════════════════════════════════
 
     const promptC1 = interfazId === "M02"
-      ? `${contextoBase}${m02ContextExtra}
-${buildCriterioSection("carril1")}
+      ? assembleCarrilPrompt(chapterCore, 1, interfazId, interfazNum, `${buildCriterioSection("carril1")}
 
 TAREA: Escribe ÚNICAMENTE el TERRITORIO 1 — CONQUISTA DEL MENSAJE de este capítulo.
 LONGITUD OBLIGATORIA: exactamente 1.000 palabras (mínimo 950, máximo 1.050). Cuenta las palabras.
@@ -4401,7 +4265,7 @@ Termina con: el costo real acumulado de operar sin purga. Tiempo en desgaste, ca
 
 TERRITORIO B — EL PORTADOR QUE CONOCE EL PRINCIPIO (~500 palabras):
 Mismo ser humano, misma situación de vida. La diferencia: ejecuta el protocolo de purga con papel y pluma.
-La Ducha Mental Sistemicar no es sugerencia — es el único protocolo capaz de drenar la estática de la Frecuencia 2.
+El protocolo de purga en papel y pluma no es sugerencia — es la única forma de drenar la estática de la Frecuencia 2 (sin nombrar marca ni app).
 — NO menciones ningún sistema ni herramienta por nombre. Describe solo los RESULTADOS OBSERVABLES del que purga.
 — Cómo actúa diferente en la misma situación de "${subInterfazTitulo}". Qué caudal genera. Qué costo evita.
 — El bajo vientre desbloqueado: la sensación física de cauce libre vs. tubería contraída.
@@ -4410,9 +4274,8 @@ La Ducha Mental Sistemicar no es sugerencia — es el único protocolo capaz de 
 
 RESET_STYLE: AUTARQUIA_TECNICA — si el texto deriva hacia lo emocional, positivo o vago, vuelve a presión de caudal y obstrucción estructural.
 
-Escribe ahora los 1.000 palabras completos del Territorio 1. Solo texto narrativo continuo, sin etiquetas ni marcadores.`
-      : `${contextoBase}${codeContextExtra}
-${buildCriterioSection("carril1")}
+Escribe ahora los 1.000 palabras completos del Territorio 1. Solo texto narrativo continuo, sin etiquetas ni marcadores.`)
+      : assembleCarrilPrompt(chapterCore, 1, interfazId, interfazNum, `${buildCriterioSection("carril1")}
 
 TAREA: Escribe ÚNICAMENTE el CARRIL 1 — EL MENSAJE de este capítulo.
 LONGITUD OBLIGATORIA: exactamente 1.000 palabras (mínimo 950, máximo 1.050). Cuenta las palabras.
@@ -4457,11 +4320,10 @@ Mismo ser humano, mismo contexto de vida. La diferencia: opera desde el principi
 — No es motivación ni éxito. Es precisión estructural: opera desde el código activado de la Coordenada ${coordenada}.
 — Termina con la sentencia que separa a los dos: no es talento, no es disciplina — es conocer el principio técnico de la ${interfazId}.
 
-Escribe ahora los 1.000 palabras completos del Carril 1. Solo texto narrativo continuo, sin etiquetas ni marcadores.`;
+Escribe ahora los 1.000 palabras completos del Carril 1. Solo texto narrativo continuo, sin etiquetas ni marcadores.`);
 
     const promptC2 = interfazId === "M02"
-      ? `${contextoBase}${m02ContextExtra}
-${buildCriterioSection("carril2")}
+      ? assembleCarrilPrompt(chapterCore, 2, interfazId, interfazNum, `${buildCriterioSection("carril2")}
 
 TAREA: Escribe ÚNICAMENTE el TERRITORIO 2 — CONQUISTA DEL LECTOR de este capítulo.
 LONGITUD OBLIGATORIA: exactamente 1.000 palabras (mínimo 950, máximo 1.050). Cuenta las palabras.
@@ -4508,9 +4370,8 @@ El patrón de estática del Código 2 que "${subInterfazTitulo}" activa cuando e
 Termina con la pregunta técnica que solo la Silueta en la Consola puede responder para esta falla específica.
 RESET_STYLE: AUTARQUIA_TECNICA — si el texto deriva hacia lo emocional o positivo, vuelve a presión y flujo de caudal.
 
-Escribe ahora los 1.000 palabras completos del Territorio 2. Solo texto narrativo continuo, sin etiquetas ni marcadores.`
-      : `${contextoBase}${codeContextExtra}
-${buildCriterioSection("carril2")}
+Escribe ahora los 1.000 palabras completos del Territorio 2. Solo texto narrativo continuo, sin etiquetas ni marcadores.`)
+      : assembleCarrilPrompt(chapterCore, 2, interfazId, interfazNum, `${buildCriterioSection("carril2")}
 
 TAREA: Escribe ÚNICAMENTE el CARRIL 2 — EL LECTOR / HARDWARE de este capítulo.
 LONGITUD OBLIGATORIA: exactamente 1.000 palabras (mínimo 950, máximo 1.050). Cuenta las palabras.
@@ -4552,11 +4413,10 @@ CIERRE TÉCNICO (~100 palabras):
 El patrón de estática exacto de la Coordenada ${coordenada} que produce esta falla cuando los 3 Ejes no están sincronizados.
 Termina con la pregunta técnica que solo la Consola puede responder para esta falla específica.
 
-Escribe ahora los 1.000 palabras completos del Carril 2. Solo texto narrativo continuo, sin etiquetas ni marcadores.`;
+Escribe ahora los 1.000 palabras completos del Carril 2. Solo texto narrativo continuo, sin etiquetas ni marcadores.`);
 
     const promptC3 = interfazId === "M02"
-      ? `${contextoBase}${m02ContextExtra}
-${buildCriterioSection("carril3")}
+      ? assembleCarrilPrompt(chapterCore, 3, interfazId, interfazNum, `${buildCriterioSection("carril3")}
 
 TAREA: Escribe ÚNICAMENTE el TERRITORIO 3 — CONQUISTA DEL MAESTRO de este capítulo.
 LONGITUD OBLIGATORIA: exactamente 1.000 palabras (mínimo 950, máximo 1.050). Cuenta las palabras.
@@ -4608,9 +4468,8 @@ El mandato clínico que cierra el territorio. Sentencia técnica. Sin suavizante
 — Cierre con sentencia definitiva: sin anuncio, sin llamada obvia. El último párrafo es un sello de ingeniería.
 RESET_STYLE: AUTARQUIA_TECNICA — si el texto deriva hacia lo emocional o positivo, vuelve a presión de caudal y drenaje técnico.
 
-Escribe ahora los 1.000 palabras completos del Territorio 3. Solo texto narrativo continuo, sin etiquetas ni marcadores.`
-      : `${contextoBase}${codeContextExtra}
-${buildCriterioSection("carril3")}
+Escribe ahora los 1.000 palabras completos del Territorio 3. Solo texto narrativo continuo, sin etiquetas ni marcadores.`)
+      : assembleCarrilPrompt(chapterCore, 3, interfazId, interfazNum, `${buildCriterioSection("carril3")}
 
 TAREA: Escribe ÚNICAMENTE el CARRIL 3 — EL MAESTRO de este capítulo.
 LONGITUD OBLIGATORIA: exactamente 1.000 palabras (mínimo 950, máximo 1.050). Cuenta las palabras.
@@ -4656,14 +4515,13 @@ El mandato clínico que cierra el capítulo. Sentencia técnica. Sin suavizantes
 — Cierre orgánico y clínico: sin anuncio, sin exclamaciones, sin llamadas a la acción obvias.
 — Última oración: una sentencia definitiva que cierra el capítulo como un sello.
 
-Escribe ahora los 1.000 palabras completos del Carril 3. Solo texto narrativo continuo, sin etiquetas ni marcadores.`;
+Escribe ahora los 1.000 palabras completos del Carril 3. Solo texto narrativo continuo, sin etiquetas ni marcadores.`);
 
     // Ejecutar las 3 llamadas de forma secuencial para evitar saturación de rate limit
-    // Log estimated prompt sizes before calling
-    const estimatedTokensC1 = Math.round(promptC1.length / 3.5);
-    const estimatedTokensC2 = Math.round(promptC2.length / 3.5);
-    const estimatedTokensC3 = Math.round(promptC3.length / 3.5);
-    console.log(`[taller-libros] Prompt token estimates — C1: ~${estimatedTokensC1}, C2: ~${estimatedTokensC2}, C3: ~${estimatedTokensC3} (interfaz=${interfazId}, cap=${subInterfazId})`);
+    const estimatedTokensC1 = estimatePromptChars(promptC1);
+    const estimatedTokensC2 = estimatePromptChars(promptC2);
+    const estimatedTokensC3 = estimatePromptChars(promptC3);
+    console.log(`[taller-libros] Cerebro Router — prompt ~tokens C1: ${estimatedTokensC1}, C2: ${estimatedTokensC2}, C3: ${estimatedTokensC3} (interfaz=${interfazId}, cap=${subInterfazId})`);
     const rawC1 = await callGemini(promptC1, 8000);
     await new Promise(r => setTimeout(r, 500));
     const rawC2 = await callGemini(promptC2, 8000);
@@ -4813,6 +4671,55 @@ Escribe ahora los 1.000 palabras completos del Carril 3. Solo texto narrativo co
       }
     }
 
+    // ── Auditoría de contaminación (Carril 1 sin Consola/Doctor; Carril 2 sin Doctor/créditos) ──
+    type ContaminationAuditResult = { passed: boolean; violations: string[]; retried: boolean };
+    const contaminationAudit: Record<string, ContaminationAuditResult> = {};
+
+    const tryDecontaminate = async (
+      carrilNum: 1 | 2,
+      current: string,
+      basePrompt: string
+    ): Promise<string> => {
+      const audit = auditCarrilContamination(carrilNum, current);
+      if (audit.passed) return current;
+      console.info("[RouterAudit] contaminación — regenerando", {
+        interfazId,
+        subInterfazTitulo,
+        carril: carrilNum,
+        violations: audit.violations,
+      });
+      try {
+        const regenPrompt = basePrompt + buildContaminationRegenSuffix(carrilNum, audit.violations);
+        const raw = await callGemini(regenPrompt, 8000);
+        const text = cleanCarril(raw);
+        return text || current;
+      } catch (err) {
+        console.warn("[RouterAudit] regeneración por contaminación falló:", err);
+        return current;
+      }
+    };
+
+    {
+      const initial = auditCarrilContamination(1, carril1);
+      if (!initial.passed) {
+        carril1 = await tryDecontaminate(1, carril1, promptC1);
+        const recheck = auditCarrilContamination(1, carril1);
+        contaminationAudit.carril1 = { ...recheck, retried: true };
+      } else {
+        contaminationAudit.carril1 = { ...initial, retried: false };
+      }
+    }
+    {
+      const initial = auditCarrilContamination(2, carril2);
+      if (!initial.passed) {
+        carril2 = await tryDecontaminate(2, carril2, promptC2);
+        const recheck = auditCarrilContamination(2, carril2);
+        contaminationAudit.carril2 = { ...recheck, retried: true };
+      } else {
+        contaminationAudit.carril2 = { ...initial, retried: false };
+      }
+    }
+
     // 4ª llamada — Extracción de Notas de Evolución del Algoritmo
     let notasEvolucion: { tipo: string; titulo: string; cuerpo: string }[] = [];
     try {
@@ -4852,7 +4759,21 @@ RESPONDE SOLO CON JSON VÁLIDO — sin markdown, sin explicación, sin texto adi
     }
 
     const notasEvolucionInyectadas = Array.isArray(notasEvolucionPrevias) ? notasEvolucionPrevias.length : 0;
-    res.json({ carril1, carril2, carril3, gradoLabel, creditosRef, coordenada, notasEvolucion, fichaAudit, notasEvolucionInyectadas, cerebro_v2: true });
+    res.json({
+      carril1,
+      carril2,
+      carril3,
+      gradoLabel,
+      creditosRef,
+      coordenada,
+      notasEvolucion,
+      fichaAudit,
+      contaminationAudit,
+      notasEvolucionInyectadas,
+      cerebro_v2: true,
+      cerebro_router: true,
+      promptTokens: { c1: estimatedTokensC1, c2: estimatedTokensC2, c3: estimatedTokensC3 },
+    });
   } catch (error: any) {
     const errStatus = error?.status ?? error?.response?.status ?? "unknown";
     const errMsg = error?.message || String(error);
@@ -5018,13 +4939,134 @@ async function verifyFirebaseIdToken(authHeader: string): Promise<string | null>
   return verified?.email ?? null;
 }
 
+app.post("/api/espejo/claim-purchase-credits", async (req, res) => {
+  try {
+    const verified = await verifyFirebaseJwt(req.headers.authorization);
+    if (!verified?.uid || !verified.email) {
+      return res.status(401).json({ error: "Inicia sesión para activar tus créditos de Espejo." });
+    }
+    const pendingBefore = await getPendingCreditsForEmail(verified.email);
+    if (pendingBefore <= 0) {
+      return res.json({ grantedCredits: 0, pendingCredits: 0, message: "No hay compras pendientes por acreditar." });
+    }
+    const { grantedCredits, paymentIds } = await grantPendingDeliveriesForEmail(
+      verified.email,
+      verified.uid
+    );
+    res.json({
+      grantedCredits,
+      pendingCredits: Math.max(0, pendingBefore - grantedCredits),
+      paymentIds,
+      message:
+        grantedCredits > 0
+          ? `Se activaron ${grantedCredits} créditos en tu cuenta Espejo.`
+          : "Tu pago está registrado; configura FIREBASE_SERVICE_ACCOUNT_JSON en el servidor para acreditar automáticamente.",
+    });
+  } catch (error) {
+    console.error("[espejo/claim-purchase-credits]", error);
+    res.status(500).json({ error: "No se pudieron activar los créditos." });
+  }
+});
+
 async function requireAdminToken(req: any, res: any, next: any) {
   const email = await verifyFirebaseIdToken(req.headers.authorization || "");
   if (email !== OWNER_EMAIL) {
     return res.status(403).json({ error: "Acceso restringido al propietario." });
   }
+  (req as { adminEmail?: string }).adminEmail = email ?? undefined;
   next();
 }
+
+// ===== ADMIN: ESPEJO CRÉDITOS (Yape / manual) =====
+app.get("/api/admin/espejo/deliveries", requireAdminToken, async (req, res) => {
+  try {
+    const limitStr = typeof req.query.limit === "string" ? req.query.limit : "40";
+    const limit = parseInt(limitStr, 10) || 40;
+    const deliveries = await listEspejoDeliveries(limit);
+    res.json({ deliveries });
+  } catch (error) {
+    console.error("[admin/espejo/deliveries]", error);
+    res.status(500).json({ error: "Error listando entregas de créditos." });
+  }
+});
+
+app.post("/api/admin/espejo/grant-credits", requireAdminToken, async (req, res) => {
+  try {
+    const adminEmail = (req as { adminEmail?: string }).adminEmail;
+    const {
+      email,
+      credits: creditsRaw,
+      mode,
+      source,
+      reference,
+      note,
+      sendEmail,
+      planId,
+    } = req.body || {};
+
+    if (!email || typeof email !== "string" || !email.includes("@")) {
+      return res.status(400).json({ error: "Email válido requerido." });
+    }
+
+    const credits = typeof creditsRaw === "number" ? creditsRaw : parseInt(String(creditsRaw), 10);
+    if (!credits || credits <= 0 || credits > 9999) {
+      return res.status(400).json({ error: "Cantidad de créditos inválida (1–9999)." });
+    }
+
+    const validSources = new Set(["yape", "paypal", "manual", "mp"]);
+    const paymentSource =
+      typeof source === "string" && validSources.has(source)
+        ? (source as "yape" | "paypal" | "manual" | "mp")
+        : "manual";
+
+    const grantMode = mode === "set" ? "set" : "add";
+
+    const result = await adminGrantEspejoCredits({
+      buyerEmail: email,
+      credits,
+      source: paymentSource,
+      reference: typeof reference === "string" ? reference : undefined,
+      note: typeof note === "string" ? note : undefined,
+      mode: grantMode,
+      grantedBy: adminEmail,
+      planId: typeof planId === "string" ? planId : "corazon-sabio",
+    });
+
+    if (result.duplicate) {
+      return res.status(409).json({
+        error: "Esta referencia de pago ya fue acreditada.",
+        ...result,
+      });
+    }
+
+    if (sendEmail !== false && result.granted) {
+      try {
+        await sendPaymentConfirmationEmail({
+          to: email.trim().toLowerCase(),
+          userName: email.split("@")[0],
+          planName: "El Corazón Sabio™",
+          amount: 17,
+        });
+      } catch (emailErr) {
+        console.error("[admin/espejo/grant-credits] email:", emailErr);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: result.granted
+        ? grantMode === "add"
+          ? `+${credits} créditos activados. Saldo: ${result.totalCredits ?? "?"}`
+          : `Saldo establecido en ${credits} créditos.`
+        : `Pago registrado para ${email}. El usuario verá los créditos al iniciar sesión con ese correo.`,
+      ...result,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error acreditando créditos.";
+    console.error("[admin/espejo/grant-credits]", error);
+    res.status(500).json({ error: message });
+  }
+});
 
 // ===== ADMIN: SELLERS (vendedores API) =====
 app.get("/api/admin/sellers", requireAdminToken, async (_req, res) => {
@@ -5333,7 +5375,14 @@ app.post("/api/vehicle-history", async (req, res) => {
   }
 });
 
-if (process.env.NODE_ENV === "production") {
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString(), runtime: isServerless ? "netlify" : "node" });
+});
+
+export { app };
+
+if (!isServerless) {
+  if (process.env.NODE_ENV === "production") {
   const staticPath = path.resolve(process.cwd(), "dist", "public");
   app.use(express.static(staticPath, {
     maxAge: '1h',
@@ -5359,9 +5408,10 @@ if (process.env.NODE_ENV === "production") {
       appType: "spa",
     });
     app.use(vite.middlewares);
-    
+
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`${new Date().toLocaleTimeString()} [express] serving on port ${PORT}`);
     });
   });
+}
 }

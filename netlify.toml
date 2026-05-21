@@ -1,30 +1,30 @@
-# Copia este archivo a la raíz de tu proyecto y ajusta publish/command según tu stack.
-# Valores por defecto: Vite (salida en dist).
+# SISTEMICAR — Netlify (frontend estático + API serverless)
 
 [build]
   command = "npm run build"
   publish = "dist/public"
+  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "20"
 
-# --- Alternativas (deja solo un bloque [build] activo; aquí están comentadas) ---
-#
-# Create React App:
-#   command = "npm run build"
-#   publish = "build"
-#
-# Astro:
-#   command = "npm run build"
-#   publish = "dist"
-#
-# Si tu package.json usa otro script (ej. "build:prod"):
-#   command = "npm run build:prod"
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["server/**", "shared/**"]
 
+[functions.api]
+  timeout = 26
+  memory = 1024
+
+# API Express → función serverless (ruta original /api/* se conserva con force)
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api"
+  status = 200
+  force = true
+
+# SPA (wouter) — después de la regla /api
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-# Nota: el redirect SPA anterior sirve para routers del lado del cliente en sitio estático.
-# Si usas Next.js u otro framework con SSR, NO uses este archivo genérico sin adaptarlo.
