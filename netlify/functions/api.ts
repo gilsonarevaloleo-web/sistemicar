@@ -10,9 +10,9 @@ function loadApp() {
   process.env.SERVERLESS = "1";
   process.env.NODE_ENV = "production";
 
-  const bundlePath = path.join(process.cwd(), "dist", "index.cjs");
+  const bundlePath = path.join(process.cwd(), "dist", "netlify-api.cjs");
 
-  // Netlify empaqueta la funciÛn como CJS ó import.meta.url queda undefined.
+  // Netlify empaqueta la funciùn como CJS ù import.meta.url queda undefined.
   // createRequire desde package.json o __filename funciona en Lambda.
   const requireFrom =
     typeof __filename !== "undefined"
@@ -23,7 +23,7 @@ function loadApp() {
   const mod = req(bundlePath) as { app?: Parameters<typeof serverless>[0] };
 
   if (!mod?.app) {
-    throw new Error(`dist/index.cjs no exporta app (buscado en ${bundlePath})`);
+    throw new Error(`dist/netlify-api.cjs no exporta app (buscado en ${bundlePath})`);
   }
 
   return mod.app;

@@ -59,6 +59,23 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  // Bundle autocontenido para Netlify Functions (sin node_modules en Lambda)
+  console.log("building netlify api bundle...");
+  await esbuild({
+    entryPoints: ["server/index.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outfile: "dist/netlify-api.cjs",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    minify: true,
+    packages: "bundle",
+    external: ["bufferutil", "utf-8-validate", "pg-native", "cpu-features"],
+    logLevel: "info",
+  });
 }
 
 buildAll().catch((err) => {

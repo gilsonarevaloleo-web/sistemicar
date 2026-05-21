@@ -17,7 +17,7 @@
 [functions.api]
   timeout = 10
   memory = 1024
-  included_files = ["dist/index.cjs"]
+  included_files = ["dist/netlify-api.cjs"]
 
 # API Express → función serverless
 [[redirects]]
