@@ -97,9 +97,15 @@ initPublicApiTables().catch(err => console.warn("[publicApiDb] Table init failed
 initSubVehicleRecordsTable().catch(err => console.warn("[vehicleHistory] Table init failed (non-fatal):", err?.message));
 initEspejoCreditDeliveriesTable().catch(err => console.warn("[espejoCredits] Table init failed (non-fatal):", err?.message));
 
-const RENDERED_VIDEOS_DIR = path.resolve(process.cwd(), "rendered-videos");
-if (!fs.existsSync(RENDERED_VIDEOS_DIR)) {
-  fs.mkdirSync(RENDERED_VIDEOS_DIR, { recursive: true });
+const RENDERED_VIDEOS_DIR = isServerless
+  ? path.join("/tmp", "rendered-videos")
+  : path.resolve(process.cwd(), "rendered-videos");
+try {
+  if (!fs.existsSync(RENDERED_VIDEOS_DIR)) {
+    fs.mkdirSync(RENDERED_VIDEOS_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.warn("[rendered-videos] Could not create directory (non-fatal):", err);
 }
 app.use("/videos", express.static(RENDERED_VIDEOS_DIR));
 app.use(express.static(path.resolve(process.cwd(), "public")));
