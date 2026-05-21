@@ -7,23 +7,26 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Instalar devDependencies (vite, tsx) necesarias para npm run build
+  NPM_CONFIG_PRODUCTION = "false"
 
 [functions]
   node_bundler = "esbuild"
-  included_files = ["server/**", "shared/**"]
 
+# Plan Free: máximo 10s. Plan Pro: hasta 26s.
 [functions.api]
-  timeout = 26
+  timeout = 10
   memory = 1024
+  included_files = ["dist/index.cjs"]
 
-# API Express → función serverless (ruta original /api/* se conserva con force)
+# API Express → función serverless
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api"
   status = 200
   force = true
 
-# SPA (wouter) — después de la regla /api
+# SPA (wouter)
 [[redirects]]
   from = "/*"
   to = "/index.html"
