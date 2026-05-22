@@ -105,6 +105,16 @@ export function computeRutaEnfoquePS(
   return 8;
 }
 
+/** Suma PS de ruta por subvehículo (cada sub declara sus bandas). */
+export function computeRutaEnfoquePSFromSubs(
+  subs: { rutaEnfoque?: RutaEnfoqueState; rutaDeclarada?: RutaBandaId[] }[]
+): number {
+  return subs.reduce((sum, s) => {
+    if (!s.rutaEnfoque?.activa || !s.rutaDeclarada?.length) return sum;
+    return sum + computeRutaEnfoquePS(s.rutaDeclarada, s.rutaEnfoque.cruzado);
+  }, 0);
+}
+
 export function formatRutaPreview(N: number): string {
   const u = computeRutaUmbrales(N);
   return `${N} ? ${u.fluido} ? | ${u.fluido} ? ${u.concentrado} ? | ${u.concentrado} ? 0 ?`;

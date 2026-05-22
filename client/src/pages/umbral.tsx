@@ -30,7 +30,8 @@ import {
   addAliadoEntry,
   updateAliadoEntry,
   subscribeToAliados,
-  AliadoEntry
+  AliadoEntry,
+  awardSovereigntyPoints
 } from "@/lib/persistence";
 import { ManualTriggerButton } from "@/components/master-manual-drawer";
 
@@ -505,8 +506,14 @@ export default function Umbral() {
         personificationLevels: newLevels
       } : null);
     }
+
+    const pts = levelData?.puntos || 0;
+    if (user && pts > 0) {
+      awardSovereigntyPoints(user.uid, pts, `Umbral: ${capsule?.label || capsuleId} N${nivel}`)
+        .catch(() => toast.error("Nivel guardado; PS se sincronizarán al reconectar."));
+    }
     
-    toast.success(`¡Nivel ${nivel} completado! +${levelData?.puntos || 0} pts`);
+    toast.success(`¡Nivel ${nivel} completado! +${pts} PS`);
     
     if (nivel < 5) {
       setCurrentLevel(prev => ({
@@ -550,6 +557,9 @@ export default function Umbral() {
       
       setCurrentAvatar(newAvatar);
       setPhase("personification");
+      if (totalPoints > 0) {
+        await awardSovereigntyPoints(user.uid, totalPoints, `Umbral: Avatar "${finalName}" creado`);
+      }
       toast.success(`¡Avatar "${avatarName}" creado! Continúa desarrollando tus cápsulas.`);
     } catch (error) {
       toast.error("Error al guardar");

@@ -29,7 +29,8 @@ import {
   subscribeToAlquimiaEntries,
   subscribeToPublicAlquimia,
   AlquimiaEntry,
-  addPrincipioMaestro
+  addPrincipioMaestro,
+  awardSovereigntyPoints
 } from "@/lib/persistence";
 import { cn } from "@/lib/utils";
 import { ManualTriggerButton, MasterManualDrawer } from "@/components/master-manual-drawer";
@@ -396,6 +397,13 @@ export default function Alquimia() {
 
       setSavedEntry(entry);
       setShowResult(true);
+      try {
+        await awardSovereigntyPoints(user.uid, 20, "Alquimia: Transmutación completada");
+      } catch {
+        toast.error("Transmutación guardada; PS se sincronizarán al reconectar.", {
+          style: { backgroundColor: "#1a1a1a", border: `1px solid ${GOLD}`, color: GOLD }
+        });
+      }
       if (marcarSello) {
         await addPrincipioMaestro({
           texto: formData.oro,

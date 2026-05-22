@@ -474,6 +474,9 @@ export interface SubVehiculo {
   rutaEnfoque?: RutaEnfoqueState;
   /** Bandas declaradas al cierre de esta sub (opcional). */
   rutaDeclarada?: RutaBandaId[];
+  tipoSub?: "normal" | "interrupcion";
+  /** Interrupciones efímeras no entran al buscador/historial IA. */
+  excluirDeHistorial?: boolean;
 }
 
 export interface EnergiaOscuraEntry {
@@ -576,6 +579,20 @@ export interface Vehicle {
   rutaDeclarada?: RutaBandaId[];
   /** Copia automática de bandas cruzadas al cierre (agregado de subs). */
   rutaCruzada?: RutaCruzadaSnapshot;
+  /** Pausa del desglosador para incrustar interrupción. */
+  desglosadorPausa?: {
+    pausadoAt: number;
+    subActivoId: string;
+    restanteUnidades?: number;
+    cantidadRealizadaSnapshot?: number;
+    elapsedSecSnapshot?: number;
+  };
+  /** Hay una interrupción activa fuera del flujo normal de subs. */
+  interrupcionActiva?: boolean;
+  /** No aparece en buscador/historial desglosador. */
+  excluirDeHistorial?: boolean;
+  /** Vehículo situación lanzado desde pausa de desglosador. */
+  vehiculoPadreDesglosadorId?: string;
 }
 
 const VEHICLES_KEY = "sistemicar_vehicles";
@@ -680,6 +697,66 @@ export function notifyVehicleClosed(vehicleId?: string): void {
   }
 }
 
+function countSubTareasEnCronometro(v: Vehicle): number {
+  return v.subTareas?.filter(st => st.enDesgloseCronometro).length ?? 0;
+}
+
+function hasActiveSituacionDesglose(v: Vehicle): boolean {
+  return v.tipoFlota === "situacion" && (
+    v.situacionCronometro?.activo === true ||
+    countSubTareasEnCronometro(v) > 0
+  );
+}
+
+/** Fusiona estado de sesión local (desglosador tiempo / desglosador situacional) sobre snapshot Firebase. */
+export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehicle | undefined): Vehicle {
+  if (!localV) return firebaseV;
+
+  if (localV.status !== "activo" && firebaseV.status === "activo") {
+    return {
+      ...firebaseV,
+      status: localV.status,
+      ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
+      ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
+      ...(localV.cierreManual != null ? { cierreManual: localV.cierreManual } : {}),
+      ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
+      situacionCronometro: localV.situacionCronometro ?? null,
+      situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
+    };
+  }
+
+  if (firebaseV.status !== "activo" || localV.status !== "activo") {
+    return firebaseV;
+  }
+
+  let merged: Vehicle = { ...firebaseV };
+
+  if (firebaseV.tipoReloj === "desglosador" && localV.subVehiculos && localV.subVehiculos.length > 0) {
+    merged = { ...merged, subVehiculos: localV.subVehiculos };
+  }
+  if (localV.desglosadorPausa) {
+    merged = { ...merged, desglosadorPausa: localV.desglosadorPausa };
+  }
+  if (localV.interrupcionActiva) {
+    merged = { ...merged, interrupcionActiva: localV.interrupcionActiva };
+  }
+
+  const localCronCount = countSubTareasEnCronometro(localV);
+  const fbCronCount = countSubTareasEnCronometro(firebaseV);
+  const preferLocalSituacion =
+    hasActiveSituacionDesglose(localV) &&
+    (localCronCount > fbCronCount ||
+      localV.situacionCronometro?.activo === true && firebaseV.situacionCronometro?.activo !== true);
+
+  if (preferLocalSituacion) {
+    if (localV.subTareas) merged = { ...merged, subTareas: localV.subTareas };
+    if (localV.situacionCronometro) merged = { ...merged, situacionCronometro: localV.situacionCronometro };
+    if (localV.situacionCupoAnchor != null) merged = { ...merged, situacionCupoAnchor: localV.situacionCupoAnchor };
+  }
+
+  return merged;
+}
+
 /** Evita crear un segundo centinela si otra pestaña/dispositivo ya escribió uno en Firestore. */
 export async function hasActiveCentinelaInFirestore(userId: string): Promise<boolean> {
   if (!isFirebaseConfigured() || !db) return false;
@@ -781,24 +858,7 @@ export function subscribeToVehicles(
       const existingLocal = getLocalVehicles();
       const sortedWithSubs = sorted.map(v => {
         const localV = existingLocal.find(lv => lv.id === v.id);
-        if (localV && localV.status !== "activo" && v.status === "activo") {
-          return {
-            ...v,
-            status: localV.status,
-            ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
-            ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
-            ...(localV.cierreManual != null ? { cierreManual: localV.cierreManual } : {}),
-            ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
-            situacionCronometro: null,
-            situacionCupoAnchor: null,
-          };
-        }
-        if (v.tipoReloj === "desglosador" && v.status === "activo") {
-          if (localV?.subVehiculos && localV.subVehiculos.length > 0) {
-            return { ...v, subVehiculos: localV.subVehiculos };
-          }
-        }
-        return v;
+        return mergeActiveVehicleSessionState(v, localV);
       });
 
       if (snapshot.metadata.fromCache) {
@@ -1145,7 +1205,7 @@ export async function getLastCierreJornada(userId: string): Promise<CierreJornad
 }
 
 export async function getTodayCierreJornada(userId: string): Promise<CierreJornadaLog | null> {
-  const today = new Date().toISOString().split("T")[0];
+  const today = getLimaDateString();
   if (isFirebaseConfigured() && db) {
     try {
       const path = getPrivatePath(userId, "cierreJornada");
@@ -2387,7 +2447,7 @@ export async function awardSovereigntyPoints(
 }
 
 // Calcular inicio del día en Lima (UTC-5) - Función helper
-function getLimaDayStart(): Date {
+export function getLimaDayStart(): Date {
   // Lima es UTC-5 (sin horario de verano)
   const LIMA_OFFSET_HOURS = -5;
   
@@ -2416,6 +2476,16 @@ function getLimaDayStart(): Date {
   return new Date(midnightLimaUtcMs);
 }
 
+/** Fecha YYYY-MM-DD en zona Lima (UTC-5). */
+export function getLimaDateString(fromMs: number = Date.now()): string {
+  const LIMA_OFFSET_MS = -5 * 60 * 60 * 1000;
+  const lima = new Date(fromMs + LIMA_OFFSET_MS);
+  const y = lima.getUTCFullYear();
+  const mo = String(lima.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(lima.getUTCDate()).padStart(2, "0");
+  return `${y}-${mo}-${d}`;
+}
+
 // Obtener timestamp en milisegundos desde cualquier formato
 function getTimestampMs(ts: any): number {
   if (!ts) return 0;
@@ -2440,18 +2510,15 @@ export async function getDailyPoints(userId: string): Promise<{
   console.log(`[getDailyPoints] Timestamp inicio: ${todayStartMs}`);
   
   let allLogs: SovereigntyPointsLog[] = [];
-  
-  // 1. Obtener logs del sovereigntyPointsLog (nuevos registros)
+
+  // Fuente única: sovereigntyPointsLog (awardSovereigntyPoints escribe aquí)
   if (isFirebaseConfigured() && db) {
     try {
       const path = getPrivatePath(userId, "sovereigntyPointsLog");
-      console.log(`[getDailyPoints] SPLogsPath: ${path}`);
       const snapshot = await getDocs(collection(db, path));
-      console.log(`[getDailyPoints] SPLogs en Firebase: ${snapshot.docs.length}`);
       snapshot.docs.forEach(d => {
         const data = d.data();
         const ts = getTimestampMs(data.timestamp);
-        console.log(`[getDailyPoints] SPLog ts=${ts}, start=${todayStartMs}, diff=${ts - todayStartMs}`);
         if (ts >= todayStartMs) {
           allLogs.push({
             id: d.id,
@@ -2463,139 +2530,6 @@ export async function getDailyPoints(userId: string): Promise<{
       });
     } catch (error) {
       console.error("[getDailyPoints] Error SP logs:", error);
-    }
-    
-    // 2. TAMBIÉN buscar en energyLogs del día (tienen timestamp y otorgan puntos)
-    try {
-      const energyPath = getPrivatePath(userId, "energyLogs");
-      console.log(`[getDailyPoints] EnergyPath: ${energyPath}`);
-      const energySnapshot = await getDocs(collection(db, energyPath));
-      console.log(`[getDailyPoints] EnergyLogs en Firebase: ${energySnapshot.docs.length}`);
-      energySnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp);
-        if (ts >= todayStartMs && data.points > 0) {
-          // Evitar duplicados
-          const sourceId = `energy_${d.id}`;
-          if (!allLogs.find(l => l.id === sourceId)) {
-            allLogs.push({
-              id: sourceId,
-              amount: data.points || 0,
-              source: `Registro: ${data.type === "positive" ? "Energía+" : data.type === "negative" ? "Tensión" : "Neutral"}`,
-              timestamp: data.timestamp?.toDate() || new Date()
-            });
-          }
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error energy logs:", error);
-    }
-    
-    // 3. Buscar vehículos completados hoy
-    try {
-      const vehiclesPath = getPrivatePath(userId, "vehicles");
-      const vehiclesSnapshot = await getDocs(collection(db, vehiclesPath));
-      vehiclesSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.completedAt || data.updatedAt);
-        if (ts >= todayStartMs && (data.status === "cumplido" || data.status === "archivado")) {
-          // Calcular CP potencial del vehículo
-          const ejes = data.ejes || {};
-          let vehiclePoints = 0;
-          const trifectaToBase = (t: string) => t === "reto" ? 10 : t === "intermedio" ? 5 : t === "blando" ? 2 : 0;
-          Object.values(ejes).forEach((eje: any) => {
-            vehiclePoints += trifectaToBase(eje?.trifecta || "omitir");
-          });
-          if (data.status === "cumplido") vehiclePoints = Math.round(vehiclePoints * 1.5);
-          if (data.status === "archivado") vehiclePoints = Math.round(vehiclePoints * 0.3);
-          
-          if (vehiclePoints > 0) {
-            const sourceId = `vehicle_${d.id}`;
-            if (!allLogs.find(l => l.id === sourceId)) {
-              allLogs.push({
-                id: sourceId,
-                amount: vehiclePoints,
-                source: `Vehículo: ${data.titulo || "Misión"}`,
-                timestamp: new Date(ts)
-              });
-            }
-          }
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error vehicles:", error);
-    }
-    
-    // 4. Buscar entradas de alquimia del día (+2 PS cada una)
-    try {
-      const alquimiaPath = getPrivatePath(userId, "alquimia");
-      const alquimiaSnapshot = await getDocs(collection(db, alquimiaPath));
-      console.log(`[getDailyPoints] Alquimia en Firebase: ${alquimiaSnapshot.docs.length}`);
-      alquimiaSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.createdAt);
-        if (ts >= todayStartMs) {
-          const sourceId = `alquimia_${d.id}`;
-          if (!allLogs.find(l => l.id === sourceId)) {
-            allLogs.push({
-              id: sourceId,
-              amount: 2,
-              source: `Alquimia: ${data.type || "Reflexión"}`,
-              timestamp: new Date(ts)
-            });
-          }
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error alquimia:", error);
-    }
-    
-    // 5. Buscar sesiones de meditación del día (+3 PS cada una)
-    try {
-      const meditationPath = getPrivatePath(userId, "meditationSessions");
-      const meditationSnapshot = await getDocs(collection(db, meditationPath));
-      console.log(`[getDailyPoints] Meditación en Firebase: ${meditationSnapshot.docs.length}`);
-      meditationSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.completedAt);
-        if (ts >= todayStartMs) {
-          const sourceId = `meditation_${d.id}`;
-          if (!allLogs.find(l => l.id === sourceId)) {
-            allLogs.push({
-              id: sourceId,
-              amount: 3,
-              source: `Meditación: ${data.duration || 0}min`,
-              timestamp: new Date(ts)
-            });
-          }
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error meditation:", error);
-    }
-    
-    // 6. Buscar hopeLogs del día (+1 PS cada uno)
-    try {
-      const hopePath = getPrivatePath(userId, "hopeLogs");
-      const hopeSnapshot = await getDocs(collection(db, hopePath));
-      console.log(`[getDailyPoints] HopeLogs en Firebase: ${hopeSnapshot.docs.length}`);
-      hopeSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.createdAt);
-        if (ts >= todayStartMs) {
-          const sourceId = `hope_${d.id}`;
-          if (!allLogs.find(l => l.id === sourceId)) {
-            allLogs.push({
-              id: sourceId,
-              amount: 1,
-              source: "Registro de Esperanza",
-              timestamp: new Date(ts)
-            });
-          }
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error hopeLogs:", error);
     }
   }
   
@@ -2636,21 +2570,19 @@ export function subscribeToDailyPoints(
   // Cargar inicialmente
   fetchAllDailyPoints();
   
+  const handler = () => fetchAllDailyPoints();
+  window.addEventListener("sovereignty-points-awarded", handler);
+
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "sovereigntyPointsLog");
-    
-    // Escuchar cambios en sovereigntyPointsLog y recargar todos los puntos
-    return onSnapshot(collection(db, path),
-      () => {
-        fetchAllDailyPoints();
-      },
-      onError
-    );
-  } else {
-    const handler = () => fetchAllDailyPoints();
-    window.addEventListener("sovereignty-points-awarded", handler);
-    return () => window.removeEventListener("sovereignty-points-awarded", handler);
+    const unsubSnap = onSnapshot(collection(db, path), () => fetchAllDailyPoints(), onError);
+    return () => {
+      unsubSnap();
+      window.removeEventListener("sovereignty-points-awarded", handler);
+    };
   }
+
+  return () => window.removeEventListener("sovereignty-points-awarded", handler);
 }
 
 export function getSovereigntyPointsBreakdown() {
@@ -4806,24 +4738,35 @@ export function subscribeToPlanilla(
     return onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
         const data = snapshot.docs[0].data();
+        const fbSegmentos = data.segmentos || [];
+        const localPlanilla = getLocalPlanilla(fecha);
+        const segmentos =
+          fbSegmentos.length === 0 && (localPlanilla?.segmentos.length ?? 0) > 0
+            ? localPlanilla!.segmentos
+            : fbSegmentos;
         const planilla: Planilla = {
           id: snapshot.docs[0].id,
           fecha: data.fecha,
-          segmentos: data.segmentos || [],
+          segmentos,
           createdAt: data.createdAt,
           updatedAt: data.updatedAt
         };
         saveLocalPlanilla(planilla);
         onData(planilla);
       } else {
-        const newPlanilla: Planilla = {
-          id: `planilla_${fecha}_${Date.now()}`,
-          fecha,
-          segmentos: [],
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        onData(newPlanilla);
+        const localFallback = getLocalPlanilla(fecha);
+        if (localFallback && localFallback.segmentos.length > 0) {
+          onData(localFallback);
+        } else {
+          const newPlanilla: Planilla = {
+            id: `planilla_${fecha}_${Date.now()}`,
+            fecha,
+            segmentos: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          onData(newPlanilla);
+        }
       }
     }, onError);
   } catch (error) {
