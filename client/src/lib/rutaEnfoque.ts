@@ -20,9 +20,9 @@ export interface RutaEnfoqueState {
 }
 
 export const RUTA_BANDA_META: Record<RutaBandaId, { label: string; icon: string; color: string }> = {
-  fluido: { label: "Fluido", icon: "?", color: "#94a3b8" },
-  concentrado: { label: "Concentrado", icon: "?", color: "#a78bfa" },
-  limite: { label: "Al l�mite", icon: "?", color: "#f87171" },
+  fluido: { label: "Fluido", icon: "?", color: "#38BDF8" },
+  concentrado: { label: "Concentrado", icon: "?", color: "#A855F7" },
+  limite: { label: "Al límite", icon: "?", color: "#f87171" },
 };
 
 /** Umbrales enteros: fluido = ceil(N/2), concentrado = ceil(N/4). */
@@ -54,31 +54,39 @@ export function getRutaBandaActual(restantes: number, umbrales: RutaEnfoqueUmbra
 
 export type RutaUmbralAlert = "concentrado" | "limite";
 
-/** Actualiza `cruzado` al bajar restantes; devuelve aviso si se cruza umbral por primera vez. */
+/** Actualiza `cruzado` al bajar restantes; devuelve avisos si se cruzan umbrales por primera vez. */
 export function applyRutaThresholdCrossing(
   ruta: RutaEnfoqueState,
   restantes: number,
   prevRestantes: number | null
-): { ruta: RutaEnfoqueState; alert?: RutaUmbralAlert } {
+): { ruta: RutaEnfoqueState; alerts: RutaUmbralAlert[]; alert?: RutaUmbralAlert } {
   const curr = Math.max(0, Math.floor(restantes));
   const prev = prevRestantes == null ? null : Math.max(0, Math.floor(prevRestantes));
   const { umbrales, cruzado } = ruta;
-  let alert: RutaUmbralAlert | undefined;
+  const alerts: RutaUmbralAlert[] = [];
   const nextCruzado = { ...cruzado };
 
   if (!cruzado.concentrado && curr <= umbrales.fluido && (prev === null || prev > umbrales.fluido)) {
     nextCruzado.concentrado = true;
-    alert = "concentrado";
+    alerts.push("concentrado");
   }
   if (!cruzado.limite && curr <= umbrales.concentrado && (prev === null || prev > umbrales.concentrado)) {
     nextCruzado.limite = true;
-    alert = "limite";
+    alerts.push("limite");
   }
 
-  if (alert === undefined && nextCruzado.concentrado === cruzado.concentrado && nextCruzado.limite === cruzado.limite) {
-    return { ruta };
+  if (
+    alerts.length === 0 &&
+    nextCruzado.concentrado === cruzado.concentrado &&
+    nextCruzado.limite === cruzado.limite
+  ) {
+    return { ruta, alerts: [] };
   }
-  return { ruta: { ...ruta, cruzado: nextCruzado }, alert };
+  return {
+    ruta: { ...ruta, cruzado: nextCruzado },
+    alerts,
+    alert: alerts[alerts.length - 1],
+  };
 }
 
 export function mergeRutaCruzadaFromSubs(

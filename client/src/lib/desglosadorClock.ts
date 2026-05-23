@@ -1,0 +1,115 @@
+import type { SubVehiculo, Vehicle } from "./persistence";
+
+export function suggestedSec(sub: SubVehiculo): number | null {
+  if (sub.cantidadObjetivo && sub.tiempoRecordMinPerUnit) {
+    return Math.round(sub.cantidadObjetivo * sub.tiempoRecordMinPerUnit * 60);
+  }
+  return sub.tiempoSugeridoSeg ?? null;
+}
+
+export interface DesglosadorClockResult {
+  subElapsedSec: number;
+  subRemainingSec: number | null;
+  subEndAt: number | null;
+  cycleRemainSec: number | null;
+  cycleEndAt: number | null;
+  liveAccumDeltaSec: number;
+  unitsRemaining: number | null;
+  hasProjection: boolean;
+}
+
+export function computeDesglosadorClocks(now: number, vehicle: Vehicle): DesglosadorClockResult {
+  const subs = vehicle.subVehiculos || [];
+  const activeSub = subs.find(s => s.status === "activo");
+  const pausa = vehicle.desglosadorPausa;
+  const frozen =
+    vehicle.interrupcionActiva &&
+    pausa?.elapsedSecSnapshot != null &&
+    pausa.subActivoId === activeSub?.id;
+
+  let subElapsedSec = 0;
+  if (activeSub?.aperturaAt) {
+    subElapsedSec = frozen
+      ? pausa!.elapsedSecSnapshot!
+      : Math.floor((now - activeSub.aperturaAt) / 1000);
+  }
+
+  const objSecs = activeSub ? suggestedSec(activeSub) : null;
+  const subRemainingSec = objSecs != null ? objSecs - subElapsedSec : null;
+  const subEndAt =
+    activeSub?.aperturaAt && objSecs != null
+      ? activeSub.aperturaAt + objSecs * 1000
+      : null;
+
+  let unitsRemaining: number | null = null;
+  if (
+    activeSub?.cantidadObjetivo &&
+    activeSub.tiempoRecordMinPerUnit &&
+    activeSub.tiempoRecordMinPerUnit > 0
+  ) {
+    const elapsedMin = subElapsedSec / 60;
+    const done = Math.floor(elapsedMin / activeSub.tiempoRecordMinPerUnit);
+    unitsRemaining = Math.max(0, activeSub.cantidadObjetivo - done);
+  }
+
+  const terminados = subs.filter(s => s.status === "cumplido" || s.status === "fallado");
+  const pendientes = subs.filter(s => s.status === "pendiente");
+
+  const completedDelta = terminados.reduce((acc, s) => {
+    const sug = suggestedSec(s);
+    if (s.duracionFinal == null || sug == null) return acc;
+    return acc + (s.duracionFinal - sug);
+  }, 0);
+
+  const pendingSec = pendientes.reduce((acc, s) => acc + (suggestedSec(s) ?? 0), 0);
+  const anySuggested = subs.some(s => suggestedSec(s) != null);
+
+  if (!anySuggested) {
+    return {
+      subElapsedSec,
+      subRemainingSec,
+      subEndAt,
+      cycleRemainSec: null,
+      cycleEndAt: null,
+      liveAccumDeltaSec: 0,
+      unitsRemaining,
+      hasProjection: false,
+    };
+  }
+
+  const remainActive = objSecs != null ? Math.max(0, objSecs - subElapsedSec) : 0;
+  const cycleRemainSec = Math.max(0, remainActive + pendingSec + completedDelta);
+  const cycleEndAt = now + cycleRemainSec * 1000;
+  const liveAccumDeltaSec =
+    objSecs != null ? completedDelta + (subElapsedSec - objSecs) : completedDelta;
+
+  return {
+    subElapsedSec,
+    subRemainingSec,
+    subEndAt,
+    cycleRemainSec,
+    cycleEndAt,
+    liveAccumDeltaSec,
+    unitsRemaining,
+    hasProjection: true,
+  };
+}
+
+export function formatHHMM(fromMs: number): string {
+  const d = new Date(fromMs);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+export function formatMMSS(totalSec: number): string {
+  const abs = Math.abs(totalSec);
+  const m = Math.floor(abs / 60);
+  const s = abs % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+export function formatElapsedHHMMSS(totalSec: number): string {
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}

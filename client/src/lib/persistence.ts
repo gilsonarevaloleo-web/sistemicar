@@ -21,6 +21,11 @@ import {
 import { activateSovereignModeGlobal, deactivateSovereignModeGlobal, backupToLocal, restoreFromLocal } from "./sovereign-mode";
 import type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
 export type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
+export {
+  mergeActiveVehicleSessionState,
+  mergeSubTareasById,
+} from "./situacionSessionMerge";
+import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
 
 export interface AcervoEntry {
   id: string;
@@ -573,7 +578,7 @@ export interface Vehicle {
     /** Suma de PS de profundidad (+5/h de bloque) ya entregados en este vehículo activo. */
     depthBlockPsGranted?: number;
   } | null;
-  /** PS de profundidad por duración real del desglosador de tiempo (sesión); evita doble premio al activar subs. */
+  /** PS de profundidad por duración real del desglosador de tiempo (sesión); curva progresiva 5→6→8→12… sin tope. */
   desglosadorBloqueDepthPsGranted?: number;
   /** Bandas de ruta de enfoque declaradas al cierre (desglosador u otros con ruta activa). */
   rutaDeclarada?: RutaBandaId[];
@@ -695,69 +700,6 @@ export function notifyVehicleClosed(vehicleId?: string): void {
       if (t < cutoff) _recentlyClosedIds.delete(id);
     }
   }
-}
-
-function countSubTareasEnCronometro(v: Vehicle): number {
-  return v.subTareas?.filter(st => st.enDesgloseCronometro).length ?? 0;
-}
-
-function hasActiveSituacionDesglose(v: Vehicle): boolean {
-  return v.tipoFlota === "situacion" && (
-    v.situacionCronometro?.activo === true ||
-    countSubTareasEnCronometro(v) > 0
-  );
-}
-
-/** Fusiona estado de sesión local (desglosador tiempo / desglosador situacional) sobre snapshot Firebase. */
-export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehicle | undefined): Vehicle {
-  if (!localV) return firebaseV;
-
-  if (localV.status !== "activo" && firebaseV.status === "activo") {
-    return {
-      ...firebaseV,
-      status: localV.status,
-      ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
-      ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
-      ...(localV.cierreManual != null ? { cierreManual: localV.cierreManual } : {}),
-      ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
-      situacionCronometro: localV.situacionCronometro ?? null,
-      situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
-    };
-  }
-
-  if (firebaseV.status !== "activo" || localV.status !== "activo") {
-    return firebaseV;
-  }
-
-  let merged: Vehicle = { ...firebaseV };
-
-  if (firebaseV.tipoReloj === "desglosador" && localV.subVehiculos && localV.subVehiculos.length > 0) {
-    merged = { ...merged, subVehiculos: localV.subVehiculos };
-  }
-  if (localV.desglosadorBloqueDepthPsGranted != null) {
-    merged = { ...merged, desglosadorBloqueDepthPsGranted: localV.desglosadorBloqueDepthPsGranted };
-  }
-  if (localV.desglosadorPausa) {
-    merged = { ...merged, desglosadorPausa: localV.desglosadorPausa };
-  }
-  if (localV.interrupcionActiva) {
-    merged = { ...merged, interrupcionActiva: localV.interrupcionActiva };
-  }
-
-  const localCronCount = countSubTareasEnCronometro(localV);
-  const fbCronCount = countSubTareasEnCronometro(firebaseV);
-  const preferLocalSituacion =
-    hasActiveSituacionDesglose(localV) &&
-    (localCronCount > fbCronCount ||
-      localV.situacionCronometro?.activo === true && firebaseV.situacionCronometro?.activo !== true);
-
-  if (preferLocalSituacion) {
-    if (localV.subTareas) merged = { ...merged, subTareas: localV.subTareas };
-    if (localV.situacionCronometro) merged = { ...merged, situacionCronometro: localV.situacionCronometro };
-    if (localV.situacionCupoAnchor != null) merged = { ...merged, situacionCupoAnchor: localV.situacionCupoAnchor };
-  }
-
-  return merged;
 }
 
 /** Evita crear un segundo centinela si otra pestaña/dispositivo ya escribió uno en Firestore. */
@@ -1064,7 +1006,7 @@ export async function deleteVehicle(userId: string, vehicleId: string): Promise<
 export async function updateVehicle(
   userId: string,
   vehicleId: string,
-  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted">>
+  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted" | "desglosadorPausa" | "interrupcionActiva" | "excluirDeHistorial" | "vehiculoPadreDesglosadorId">>
 ): Promise<void> {
   const updateLocally = () => {
     const vehicles = getLocalVehicles().map(v =>
@@ -1850,8 +1792,13 @@ export function hasDesglosadorAccess(subscriptionPlan?: string | null, email?: s
   return subscriptionPlan === "soberano_operativo" || subscriptionPlan === "soberano";
 }
 
-export function hasArquitectoAccess(subscriptionPlan?: string | null, email?: string | null): boolean {
+export function hasArquitectoAccess(
+  subscriptionPlan?: string | null,
+  email?: string | null,
+  rank?: UserRank | null
+): boolean {
   if (email?.toLowerCase() === OWNER_EMAIL) return true;
+  if (rank === "arquitecto" || rank === "soberano_operativo" || rank === "soberano") return true;
   return subscriptionPlan === "arquitecto" || subscriptionPlan === "soberano_operativo" || subscriptionPlan === "soberano";
 }
 
