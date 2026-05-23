@@ -734,6 +734,9 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
   if (firebaseV.tipoReloj === "desglosador" && localV.subVehiculos && localV.subVehiculos.length > 0) {
     merged = { ...merged, subVehiculos: localV.subVehiculos };
   }
+  if (localV.desglosadorBloqueDepthPsGranted != null) {
+    merged = { ...merged, desglosadorBloqueDepthPsGranted: localV.desglosadorBloqueDepthPsGranted };
+  }
   if (localV.desglosadorPausa) {
     merged = { ...merged, desglosadorPausa: localV.desglosadorPausa };
   }
@@ -1987,8 +1990,12 @@ function getLocalProgression(userId: string): UserProgression {
     const data = localStorage.getItem(PROGRESSION_KEY);
     if (!data) return getDefaultProgression(userId);
     const prog = JSON.parse(data) as UserProgression;
+    if (prog.userId && prog.userId !== userId) {
+      return getDefaultProgression(userId);
+    }
     return {
       ...prog,
+      userId: prog.userId || userId,
       lastActivityDate: prog.lastActivityDate ? new Date(prog.lastActivityDate) : null,
       cooldownUntil: prog.cooldownUntil ? new Date(prog.cooldownUntil) : null,
       createdAt: new Date(prog.createdAt),
@@ -2009,13 +2016,20 @@ export function subscribeToProgression(
   onData: (prog: UserProgression) => void,
   onError: (error: Error) => void
 ): () => void {
+  const emitLocal = () => {
+    const local = reconcileProgressionFromLocalLog(userId);
+    deactivateSovereignModeGlobal();
+    onData(local);
+  };
+  emitLocal();
+
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "progression");
     const q = query(collection(db, path));
     const applySnapshot = async (snapshot: { empty: boolean; docs: Array<{ id: string; data: () => Record<string, unknown> }> }) => {
       if (snapshot.empty) {
         const defaultProg = getDefaultProgression(userId);
-        const localProg = getLocalProgression(userId);
+        const localProg = reconcileProgressionFromLocalLog(userId);
         const localBelongsToUser = !localProg.userId || localProg.userId === userId;
         const localHasMeaningfulProgress =
           localBelongsToUser &&
@@ -2041,7 +2055,7 @@ export function subscribeToProgression(
         }
         const data = d.data();
         const remoteMax = maxSovereigntyAcrossRemoteDocs(snapshot.docs);
-        const localProg = getLocalProgression(userId);
+        const localProg = reconcileProgressionFromLocalLog(userId);
         const localSp = localProg.sovereigntyPoints ?? 0;
         const sovereigntyPoints = Math.max(remoteMax.sovereignty, localSp);
         const ptsEspejo = Math.max(remoteMax.ptsE, localProg.ptsEspejo ?? 0);
@@ -2077,7 +2091,7 @@ export function subscribeToProgression(
       onError(error);
     });
     const onLocalProgressionRefresh = () => {
-      onData(getLocalProgression(userId));
+      onData(reconcileProgressionFromLocalLog(userId));
     };
     window.addEventListener("progression-updated", onLocalProgressionRefresh);
     return () => {
@@ -2085,8 +2099,8 @@ export function subscribeToProgression(
       window.removeEventListener("progression-updated", onLocalProgressionRefresh);
     };
   } else {
-    onData(getLocalProgression(userId));
-    const handler = () => onData(getLocalProgression(userId));
+    onData(reconcileProgressionFromLocalLog(userId));
+    const handler = () => onData(reconcileProgressionFromLocalLog(userId));
     window.addEventListener("progression-updated", handler);
     return () => window.removeEventListener("progression-updated", handler);
   }
@@ -2353,13 +2367,30 @@ export interface SovereigntyPointsLog {
   timestamp: Date;
 }
 
-const SP_LOG_KEY = "sistemicar_sp_log";
+const SP_LOG_KEY_PREFIX = "sistemicar_sp_log_";
 
-function getLocalSPLog(): SovereigntyPointsLog[] {
+function spLogKey(userId: string): string {
+  return `${SP_LOG_KEY_PREFIX}${userId}`;
+}
+
+function getLocalSPLog(userId: string): SovereigntyPointsLog[] {
   try {
-    const data = localStorage.getItem(SP_LOG_KEY);
-    if (!data) return [];
-    return JSON.parse(data).map((e: any) => ({
+    const data = localStorage.getItem(spLogKey(userId));
+    if (!data) {
+      // Migración desde clave global legacy
+      const legacy = localStorage.getItem("sistemicar_sp_log");
+      if (!legacy) return [];
+      const parsed = JSON.parse(legacy).map((e: SovereigntyPointsLog & { timestamp: string }) => ({
+        ...e,
+        timestamp: new Date(e.timestamp)
+      }));
+      if (parsed.length > 0) {
+        saveLocalSPLog(userId, parsed);
+        localStorage.removeItem("sistemicar_sp_log");
+      }
+      return parsed;
+    }
+    return JSON.parse(data).map((e: SovereigntyPointsLog & { timestamp: string }) => ({
       ...e,
       timestamp: new Date(e.timestamp)
     }));
@@ -2368,8 +2399,30 @@ function getLocalSPLog(): SovereigntyPointsLog[] {
   }
 }
 
-function saveLocalSPLog(logs: SovereigntyPointsLog[]): void {
-  localStorage.setItem(SP_LOG_KEY, JSON.stringify(logs));
+function saveLocalSPLog(userId: string, logs: SovereigntyPointsLog[]): void {
+  localStorage.setItem(spLogKey(userId), JSON.stringify(logs));
+}
+
+/** serverTimestamp pendiente (ts=0) se trata como hoy para no perder PS recién otorgados */
+function isLogTimestampToday(ts: number, todayStartMs: number): boolean {
+  if (ts === 0 || Number.isNaN(ts)) return true;
+  return ts >= todayStartMs;
+}
+
+/** Si la progresión local quedó en 0 pero hay log SP, reconstruir el total acumulado */
+function reconcileProgressionFromLocalLog(userId: string): UserProgression {
+  const prog = getLocalProgression(userId);
+  const logs = getLocalSPLog(userId);
+  if (logs.length === 0) return prog;
+  const totalFromLog = logs.reduce((s, l) => s + (l.amount || 0), 0);
+  const current = prog.sovereigntyPoints ?? 0;
+  if (totalFromLog > current) {
+    const updated = { ...prog, userId, sovereigntyPoints: totalFromLog, updatedAt: new Date() };
+    saveLocalProgression(updated);
+    backupToLocal("progression", updated);
+    return updated;
+  }
+  return prog;
 }
 
 export async function awardSovereigntyPoints(
@@ -2381,16 +2434,21 @@ export async function awardSovereigntyPoints(
   const progBefore = getLocalProgression(userId);
   if (roundedAmount <= 0) return { newTotal: progBefore.sovereigntyPoints || 0 };
 
-  const currentPoints = progBefore.sovereigntyPoints || 0;
-  const newTotal = currentPoints + roundedAmount;
+  const newTotal = (progBefore.sovereigntyPoints || 0) + roundedAmount;
 
-  // Guardar log de puntos con timestamp para consultas diarias
   const logEntry: SovereigntyPointsLog = {
-    id: `sp_${Date.now()}`,
+    id: `sp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     amount: roundedAmount,
     source: source || "Sistema",
     timestamp: new Date()
   };
+
+  // Siempre persistir local primero — la UI y getDailyPoints no dependen solo de Firebase
+  const logs = getLocalSPLog(userId);
+  logs.unshift(logEntry);
+  saveLocalSPLog(userId, logs);
+  saveLocalProgression({ ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
+  backupToLocal("progression", { ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
 
   if (isFirebaseConfigured() && db) {
     try {
@@ -2401,14 +2459,7 @@ export async function awardSovereigntyPoints(
       });
     } catch (error) {
       console.error("Error saving SP log to Firebase:", error);
-      const logs = getLocalSPLog();
-      logs.unshift(logEntry);
-      saveLocalSPLog(logs);
     }
-  } else {
-    const logs = getLocalSPLog();
-    logs.unshift(logEntry);
-    saveLocalSPLog(logs);
   }
 
   if (isFirebaseConfigured() && db) {
@@ -2425,18 +2476,10 @@ export async function awardSovereigntyPoints(
           sovereigntyPoints: increment(roundedAmount),
           updatedAt: serverTimestamp()
         });
-        const localProg = getLocalProgression(userId);
-        const mergedSp = (localProg.sovereigntyPoints || 0) + roundedAmount;
-        const merged = { ...localProg, sovereigntyPoints: mergedSp, updatedAt: new Date() };
-        saveLocalProgression(merged);
-        backupToLocal("progression", merged);
       }
     } catch (error) {
       console.error("[awardSovereigntyPoints] Error actualizando progresión:", error);
-      await updateProgression(userId, { sovereigntyPoints: newTotal });
     }
-  } else {
-    await updateProgression(userId, { sovereigntyPoints: newTotal });
   }
 
   window.dispatchEvent(new CustomEvent("sovereignty-points-awarded", {
@@ -2505,13 +2548,22 @@ export async function getDailyPoints(userId: string): Promise<{
 }> {
   const todayLima = getLimaDayStart();
   const todayStartMs = todayLima.getTime();
-  
-  console.log(`[getDailyPoints] Inicio del día Lima: ${todayLima.toISOString()}`);
-  console.log(`[getDailyPoints] Timestamp inicio: ${todayStartMs}`);
-  
-  let allLogs: SovereigntyPointsLog[] = [];
 
-  // Fuente única: sovereigntyPointsLog (awardSovereigntyPoints escribe aquí)
+  let allLogs: SovereigntyPointsLog[] = [];
+  const seenIds = new Set<string>();
+
+  const pushLog = (entry: SovereigntyPointsLog) => {
+    if (seenIds.has(entry.id)) return;
+    seenIds.add(entry.id);
+    allLogs.push(entry);
+  };
+
+  // 1. Log local (fuente más fiable — awardSovereigntyPoints escribe aquí primero)
+  getLocalSPLog(userId)
+    .filter(l => isLogTimestampToday(l.timestamp.getTime(), todayStartMs))
+    .forEach(pushLog);
+
+  // 2. sovereigntyPointsLog en Firebase
   if (isFirebaseConfigured() && db) {
     try {
       const path = getPrivatePath(userId, "sovereigntyPointsLog");
@@ -2519,35 +2571,128 @@ export async function getDailyPoints(userId: string): Promise<{
       snapshot.docs.forEach(d => {
         const data = d.data();
         const ts = getTimestampMs(data.timestamp);
-        if (ts >= todayStartMs) {
-          allLogs.push({
+        if (isLogTimestampToday(ts, todayStartMs)) {
+          pushLog({
             id: d.id,
             amount: data.amount || 0,
             source: data.source || "Sistema",
-            timestamp: data.timestamp?.toDate() || new Date()
+            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now())
           });
         }
       });
     } catch (error) {
       console.error("[getDailyPoints] Error SP logs:", error);
     }
-  }
-  
-  // Fallback local
-  const localLogs = getLocalSPLog().filter(l => l.timestamp.getTime() >= todayStartMs);
-  localLogs.forEach(l => {
-    if (!allLogs.find(existing => existing.id === l.id)) {
-      allLogs.push(l);
+
+    // 3. Fuentes legacy (actividad que aún no pasó por awardSovereigntyPoints)
+    try {
+      const energyPath = getPrivatePath(userId, "energyLogs");
+      const energySnapshot = await getDocs(collection(db, energyPath));
+      energySnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp);
+        if (isLogTimestampToday(ts, todayStartMs) && data.points > 0) {
+          pushLog({
+            id: `energy_${d.id}`,
+            amount: data.points || 0,
+            source: `Registro: ${data.type === "positive" ? "Energía+" : data.type === "negative" ? "Tensión" : "Neutral"}`,
+            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now())
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[getDailyPoints] Error energy logs:", error);
     }
-  });
-  
+
+    try {
+      const vehiclesPath = getPrivatePath(userId, "vehicles");
+      const vehiclesSnapshot = await getDocs(collection(db, vehiclesPath));
+      vehiclesSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.completedAt || data.updatedAt);
+        if (isLogTimestampToday(ts, todayStartMs) && (data.status === "cumplido" || data.status === "archivado")) {
+          const ejes = data.ejes || {};
+          let vehiclePoints = 0;
+          const trifectaToBase = (t: string) => t === "reto" ? 10 : t === "intermedio" ? 5 : t === "blando" ? 2 : 0;
+          Object.values(ejes).forEach((eje: unknown) => {
+            const trifecta = (eje as { trifecta?: string })?.trifecta || "omitir";
+            vehiclePoints += trifectaToBase(trifecta);
+          });
+          if (data.status === "cumplido") vehiclePoints = Math.round(vehiclePoints * 1.5);
+          if (data.status === "archivado") vehiclePoints = Math.round(vehiclePoints * 0.3);
+          if (vehiclePoints > 0) {
+            pushLog({
+              id: `vehicle_${d.id}`,
+              amount: vehiclePoints,
+              source: `Vehículo: ${data.titulo || "Misión"}`,
+              timestamp: new Date(ts || Date.now())
+            });
+          }
+        }
+      });
+    } catch (error) {
+      console.error("[getDailyPoints] Error vehicles:", error);
+    }
+
+    try {
+      const alquimiaPath = getPrivatePath(userId, "alquimia");
+      const alquimiaSnapshot = await getDocs(collection(db, alquimiaPath));
+      alquimiaSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp || data.createdAt);
+        if (isLogTimestampToday(ts, todayStartMs)) {
+          pushLog({
+            id: `alquimia_${d.id}`,
+            amount: 2,
+            source: `Alquimia: ${data.type || "Reflexión"}`,
+            timestamp: new Date(ts || Date.now())
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[getDailyPoints] Error alquimia:", error);
+    }
+
+    try {
+      const meditationPath = getPrivatePath(userId, "meditationSessions");
+      const meditationSnapshot = await getDocs(collection(db, meditationPath));
+      meditationSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp || data.completedAt);
+        if (isLogTimestampToday(ts, todayStartMs)) {
+          pushLog({
+            id: `meditation_${d.id}`,
+            amount: 3,
+            source: `Meditación: ${data.duration || 0}min`,
+            timestamp: new Date(ts || Date.now())
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[getDailyPoints] Error meditation:", error);
+    }
+
+    try {
+      const hopePath = getPrivatePath(userId, "hopeLogs");
+      const hopeSnapshot = await getDocs(collection(db, hopePath));
+      hopeSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp || data.createdAt);
+        if (isLogTimestampToday(ts, todayStartMs)) {
+          pushLog({
+            id: `hope_${d.id}`,
+            amount: 1,
+            source: "Registro de Esperanza",
+            timestamp: new Date(ts || Date.now())
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[getDailyPoints] Error hopeLogs:", error);
+    }
+  }
+
   const total = allLogs.reduce((sum, log) => sum + log.amount, 0);
-  
-  console.log(`[getDailyPoints] Usuario: ${userId}`);
-  console.log(`[getDailyPoints] Logs encontrados hoy: ${allLogs.length}`);
-  console.log(`[getDailyPoints] TOTAL PS HOY: ${total}`);
-  allLogs.forEach(l => console.log(`  - ${l.source}: +${l.amount}`));
-  
   return { total, logs: allLogs };
 }
 
@@ -2557,7 +2702,15 @@ export function subscribeToDailyPoints(
   onData: (data: { total: number; logs: SovereigntyPointsLog[] }) => void,
   onError: (error: Error) => void
 ): () => void {
-  // Función que obtiene todos los puntos del día
+  const emitLocalDaily = () => {
+    const todayStartMs = getLimaDayStart().getTime();
+    const localLogs = getLocalSPLog(userId).filter(l =>
+      isLogTimestampToday(l.timestamp.getTime(), todayStartMs)
+    );
+    const total = localLogs.reduce((sum, log) => sum + log.amount, 0);
+    onData({ total, logs: localLogs });
+  };
+
   const fetchAllDailyPoints = async () => {
     try {
       const result = await getDailyPoints(userId);
@@ -2566,12 +2719,17 @@ export function subscribeToDailyPoints(
       onError(error as Error);
     }
   };
-  
-  // Cargar inicialmente
-  fetchAllDailyPoints();
-  
-  const handler = () => fetchAllDailyPoints();
+
+  // Mostrar de inmediato lo que hay en local; luego enriquecer con Firebase
+  emitLocalDaily();
+  void fetchAllDailyPoints();
+
+  const handler = () => {
+    emitLocalDaily();
+    void fetchAllDailyPoints();
+  };
   window.addEventListener("sovereignty-points-awarded", handler);
+  window.addEventListener("progression-updated", handler);
 
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "sovereigntyPointsLog");
@@ -2579,10 +2737,14 @@ export function subscribeToDailyPoints(
     return () => {
       unsubSnap();
       window.removeEventListener("sovereignty-points-awarded", handler);
+      window.removeEventListener("progression-updated", handler);
     };
   }
 
-  return () => window.removeEventListener("sovereignty-points-awarded", handler);
+  return () => {
+    window.removeEventListener("sovereignty-points-awarded", handler);
+    window.removeEventListener("progression-updated", handler);
+  };
 }
 
 export function getSovereigntyPointsBreakdown() {

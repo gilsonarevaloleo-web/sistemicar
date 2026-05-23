@@ -396,14 +396,30 @@ function RutaEnfoqueBar({ restantes, ruta }: { restantes: number; ruta: { N: num
   );
 }
 
-/** PS por resistencia de profundidad: +5 por cada hora completa de referencia (1 h → 5, 2 h → 10, …). */
+/** PS por resistencia de profundidad (referencia por sub — solo situación/planificación). */
 const computeDesglosadorDepthPS = (tiempoSugeridoSeg: number | undefined): number => {
   if (tiempoSugeridoSeg == null || !Number.isFinite(tiempoSugeridoSeg) || tiempoSugeridoSeg <= 0) return 0;
   const fullHours = Math.floor(tiempoSugeridoSeg / 3600);
   return Math.max(0, 5 * fullHours);
 };
 
-/** +5 PS por cada hora completa de duración real del bloque (situación cronometrada o desglosador de tiempo). */
+const DEPTH_PS_PER_HOUR = 5;
+const DEPTH_PS_MAX_HOURS = 6;
+
+/** +5 PS por hora real activa en desglosador de tiempo (tope 6 h = 30 PS por ciclo). */
+function computeDesglosadorSessionDepthPS(elapsedSec: number): number {
+  if (!Number.isFinite(elapsedSec) || elapsedSec <= 0) return 0;
+  const hours = Math.min(Math.floor(elapsedSec / 3600), DEPTH_PS_MAX_HOURS);
+  return hours * DEPTH_PS_PER_HOUR;
+}
+
+function getDesglosadorElapsedSec(vehicle: Vehicle): number {
+  const aperturaMs = vehicle.aperturaAt ?? vehicle.createdAt?.getTime?.() ?? 0;
+  if (aperturaMs <= 0) return 0;
+  return Math.floor((Date.now() - aperturaMs) / 1000);
+}
+
+/** +5 PS por cada hora completa de duración real del bloque (situación cronometrada). */
 const computeBloqueDepthPS = (elapsedSec: number): number => {
   if (!Number.isFinite(elapsedSec) || elapsedSec <= 0) return 0;
   return 5 * Math.floor(elapsedSec / 3600);
@@ -956,6 +972,7 @@ export default function Planeacion() {
   const [nuevoSegIcono, setNuevoSegIcono] = useState(SEGMENT_ICONS[0]);
   const [nuevoSegCentinelaEnabled, setNuevoSegCentinelaEnabled] = useState(true);
   const [expandedSegId, setExpandedSegId] = useState<string | null>(null);
+  const segmentosAutoExpandRef = useRef(false);
   // --- RUTINAS ---
   const [plantillasRutina, setPlantillasRutina] = useState<PlantillaRutina[]>([]);
   const [rutinaBanner, setRutinaBanner] = useState<PlantillaRutina | null>(null);
@@ -1182,6 +1199,13 @@ export default function Planeacion() {
     const unsub = subscribeToPlanilla(user.uid, fecha, (p) => setPlanilla(p), (e) => console.error(e));
     return unsub;
   }, [user]);
+
+  useEffect(() => {
+    if (planilla?.segmentos?.length && !segmentosAutoExpandRef.current) {
+      segmentosAutoExpandRef.current = true;
+      setExpandedSegId("segmentos");
+    }
+  }, [planilla?.segmentos?.length]);
 
   // Cargar plantillas de rutina
   useEffect(() => {
@@ -1708,8 +1732,8 @@ export default function Planeacion() {
       if (relojTiempo === "desglosador" && user) {
         const filteredSubs = desglosadorSubs.filter(s => s.titulo.trim());
         if (filteredSubs[0]?.titulo.trim()) {
-          toast.info("Profundidad en bloque", {
-            description: "Cada hora completa de duración real del desglosador suma +5 PS al activar una nueva subtarea (no al crear el vehículo).",
+          toast.info("Profundidad de sesión", {
+            description: "+5 PS por cada hora real activa en el desglosador (máx. 6 h = 30 PS). Se otorgan al cruzar cada hora completa.",
             style: { backgroundColor: PIZARRA, border: `1px solid rgba(212,175,55,0.35)`, color: GOLD },
             duration: 4500,
           });
@@ -2699,45 +2723,76 @@ export default function Planeacion() {
     }
   };
 
-  const handleDesglosadorUpdate = (vehicleId: string, updatedSubs: SubVehiculo[]) => {
-    if (!user) return;
-    const prevVehicle = vehiclesRef.current.find(v => v.id === vehicleId);
-    const oldSubs = prevVehicle?.subVehiculos || [];
-    let depthGranted = prevVehicle?.desglosadorBloqueDepthPsGranted ?? 0;
-    for (const sv of updatedSubs) {
-      if (sv.status !== "activo" || !sv.aperturaAt) continue;
-      const old = oldSubs.find(s => s.id === sv.id);
-      const isNewActivation = !old || old.status !== "activo" || old.aperturaAt !== sv.aperturaAt;
-      if (!isNewActivation) continue;
-      const aperturaMs = prevVehicle?.aperturaAt ?? (prevVehicle?.createdAt?.getTime?.() ?? 0);
-      const elapsedSec = aperturaMs > 0 ? Math.floor((Date.now() - aperturaMs) / 1000) : 0;
-      const totalDepthPs = computeBloqueDepthPS(elapsedSec);
-      const delta = totalDepthPs - depthGranted;
-      if (delta <= 0) continue;
-      depthGranted = totalDepthPs;
-      awardSovereigntyPoints(user.uid, delta, `Profundidad desglosador (bloque): ${cleanSubTitulo(sv.titulo)}`).catch(e =>
-        console.warn("[handleDesglosadorUpdate] depth PS falló:", e)
-      );
-      toast.success(`+${delta} PS · profundidad de bloque`, {
-        description: `${cleanSubTitulo(sv.titulo)} · +5 PS por cada hora completa en el desglosador`,
+  const reconcileDesglosadorDepthPS = useCallback((
+    vehicleId: string,
+    options?: { silent?: boolean; sourceLabel?: string; resetGranted?: number }
+  ): number => {
+    if (!user) return 0;
+    const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
+    if (!vehicle || vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo") {
+      return vehicle?.desglosadorBloqueDepthPsGranted ?? 0;
+    }
+
+    const elapsedSec = getDesglosadorElapsedSec(vehicle);
+    const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
+    const depthGranted = options?.resetGranted ?? vehicle.desglosadorBloqueDepthPsGranted ?? 0;
+    const delta = totalDepthPs - depthGranted;
+    if (delta <= 0) return depthGranted;
+
+    const newGranted = totalDepthPs;
+    const patchVehicles = (list: Vehicle[]) =>
+      list.map(v => v.id === vehicleId ? { ...v, desglosadorBloqueDepthPsGranted: newGranted } : v);
+    setVehicles(patchVehicles);
+    vehiclesRef.current = patchVehicles(vehiclesRef.current);
+    try {
+      saveLocalVehicles(vehiclesRef.current);
+    } catch (e) {
+      console.warn("[reconcileDesglosadorDepthPS] localStorage save failed:", e);
+    }
+
+    const label = options?.sourceLabel ?? "Profundidad desglosador (sesión)";
+    awardSovereigntyPoints(user.uid, delta, label).catch(e =>
+      console.warn("[reconcileDesglosadorDepthPS] depth PS falló:", e)
+    );
+    if (!options?.silent) {
+      const hours = Math.floor(totalDepthPs / DEPTH_PS_PER_HOUR);
+      toast.success(`+${delta} PS · profundidad de sesión`, {
+        description: `+5 PS por hora activa (${hours}h · máx. ${DEPTH_PS_MAX_HOURS}h)`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
         duration: 3200,
       });
     }
-    // Compute new vehicles array directly (no side effects inside setter)
-    const newVehicles = vehicles.map(v => v.id === vehicleId ? { ...v, subVehiculos: updatedSubs, desglosadorBloqueDepthPsGranted: depthGranted } : v);
-    // Update React state — pure, no side effects inside
+    return newGranted;
+  }, [user]);
+
+  const handleDesglosadorDepthTick = useCallback((vehicleId: string) => {
+    reconcileDesglosadorDepthPS(vehicleId, { silent: false });
+  }, [reconcileDesglosadorDepthPS]);
+
+  const handleDesglosadorUpdate = (vehicleId: string, updatedSubs: SubVehiculo[], opts?: { resetDepth?: boolean }) => {
+    if (!user) return;
+    const prevVehicle = vehiclesRef.current.find(v => v.id === vehicleId);
+    let depthGranted = opts?.resetDepth ? 0 : (prevVehicle?.desglosadorBloqueDepthPsGranted ?? 0);
+
+    const newVehicles = vehicles.map(v => {
+      if (v.id !== vehicleId) return v;
+      const patch: Partial<Vehicle> = { subVehiculos: updatedSubs, desglosadorBloqueDepthPsGranted: depthGranted };
+      if (opts?.resetDepth) patch.aperturaAt = Date.now();
+      return { ...v, ...patch };
+    });
     setVehicles(newVehicles);
-    // Keep ref in sync for the Firebase listener protection
-    vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subVehiculos: updatedSubs } : v);
-    // Persist to localStorage outside the setter, wrapped in try/catch so storage
-    // quota errors on mobile never prevent the UI from updating
+    vehiclesRef.current = newVehicles;
     try {
       saveLocalVehicles(newVehicles);
     } catch (e) {
       console.warn("[Desglosador] localStorage save failed (quota?), UI still updated:", e);
     }
-    // No Firebase write — subVehiculos are session state; only written on global close
+
+    if (opts?.resetDepth) {
+      reconcileDesglosadorDepthPS(vehicleId, { silent: true, resetGranted: 0 });
+    } else {
+      reconcileDesglosadorDepthPS(vehicleId, { silent: false });
+    }
   };
 
   const handleDesglosadorGlobalClose = async (
@@ -2797,12 +2852,14 @@ export default function Planeacion() {
     }
 
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
+    const depthPsGranted = reconcileDesglosadorDepthPS(vehicleId, { silent: true });
     const closePatch = {
       status: "cumplido" as const,
       cierreAt,
       duracionFinal,
       cierreManual: true,
       subVehiculos: subsConRuta,
+      desglosadorBloqueDepthPsGranted: depthPsGranted,
       ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
       ...(rutaCruzada ? { rutaCruzada } : {}),
     };
@@ -2819,6 +2876,7 @@ export default function Planeacion() {
         duracionFinal,
         cierreManual: true,
         subVehiculos: subsConRuta,
+        desglosadorBloqueDepthPsGranted: depthPsGranted,
         ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
         ...(rutaCruzada ? { rutaCruzada } : {}),
       });
@@ -2828,6 +2886,7 @@ export default function Planeacion() {
       toast.success(`+${totalPS} PS — Ciclo cerrado`, {
         description: [
           `Base +10 · ${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""} (+${cumplidos * 2} PS).`,
+          depthPsGranted > 0 ? `Profundidad de sesión +${depthPsGranted} PS (ya otorgados).` : "",
           fallados > 0 ? `${fallados} fallado${fallados !== 1 ? "s" : ""} (no contabilizados en ritmo).` : "",
           psRuta > 0 ? `+${psRuta} PS · Ruta de enfoque por subvehículo.` : "",
           duracionFinal > 0 ? `${duracionFinal} min total.` : "",
@@ -4442,12 +4501,17 @@ export default function Planeacion() {
               </div>
             </motion.div>
 
-            {activeVehicles.length > 0 && (
+            {activeVehicles.length > 0 ? (
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length}>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSubTareaDeCronometro={handleQuitarSubTareaDeCronometro} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSubTareaDeCronometro={handleQuitarSubTareaDeCronometro} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
                 ))}
               </AccordionSection>
+            ) : (
+              <div className="p-4 rounded-xl border text-center space-y-1" style={{ backgroundColor: PIZARRA, borderColor: "rgba(255,255,255,0.06)" }}>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Sin vehículos activos</p>
+                <p className="text-[9px] text-slate-600">Lanza uno desde La Flota o el historial aparecerá al cerrar misiones.</p>
+              </div>
             )}
 
             {(() => {
@@ -4760,7 +4824,7 @@ export default function Planeacion() {
                                 <span className="text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider" style={{ backgroundColor: `${cfg.color}15`, color: cfg.color, opacity: 0.7 }}>Planificación</span>
                               </div>
                               <p className="text-[8px] text-slate-500 leading-snug">
-                                Resistencia de profundidad: <span className="font-bold" style={{ color: cfg.color }}>+5 PS por cada hora completa</span> de referencia (cantidad × récord min/unidad en cada sub-tarea al activarla). Menos de 1 h de referencia → 0 PS.
+                                Profundidad de sesión: <span className="font-bold" style={{ color: cfg.color }}>+5 PS por cada hora real activa</span> en el desglosador (máx. 6 h = 30 PS por ciclo). Se otorgan al cruzar cada hora completa.
                               </p>
 
                               {/* Secuencia histórica */}
@@ -5264,6 +5328,61 @@ export default function Planeacion() {
             </div>
             <button onClick={resetForm} className="w-full py-2 text-xs text-slate-500 hover:text-slate-400">Cancelar</button>
           </motion.div>
+        ) : vehicleMode === "profundo" ? (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: GOLD }}>
+                  {editingVehicle ? "Detallar 4 Ejes" : "Misión Profunda"}
+                </p>
+                <p className="text-[9px] text-slate-600">Paso {currentStep + 1} de {STEPS.length}</p>
+              </div>
+              <button onClick={resetForm} className="p-2 rounded-full hover:bg-white/5 transition-colors" aria-label="Cancelar">
+                <X size={16} className="text-slate-500" />
+              </button>
+            </div>
+            <div className="flex gap-1">
+              {STEPS.map((_, i) => (
+                <div
+                  key={STEPS[i]}
+                  className="flex-1 h-1 rounded-full transition-all"
+                  style={{ backgroundColor: i <= currentStep ? GOLD : "rgba(255,255,255,0.08)" }}
+                />
+              ))}
+            </div>
+            <AnimatePresence mode="wait">{renderStepProfundo()}</AnimatePresence>
+            <div className="flex gap-2">
+              {currentStep > 0 && (
+                <button
+                  onClick={() => setCurrentStep(s => s - 1)}
+                  className="flex-1 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1 bg-white/5 text-slate-400"
+                >
+                  <ChevronLeft size={16} /> Atrás
+                </button>
+              )}
+              {currentStep < STEPS.length - 1 ? (
+                <button
+                  onClick={() => setCurrentStep(s => s + 1)}
+                  disabled={!canProceed()}
+                  className="flex-1 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1 transition-all disabled:opacity-40"
+                  style={{ backgroundColor: GOLD, color: "#000" }}
+                >
+                  Siguiente <ChevronRight size={16} />
+                </button>
+              ) : (
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !canProceed()}
+                  className="flex-1 py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40"
+                  style={{ backgroundColor: GOLD, color: "#000" }}
+                  data-testid="button-save-profundo"
+                >
+                  {saving ? "Guardando…" : editingVehicle ? "Guardar cambios" : "Lanzar misión"}
+                </button>
+              )}
+            </div>
+            <button onClick={resetForm} className="w-full py-2 text-xs text-slate-500 hover:text-slate-400">Cancelar</button>
+          </motion.div>
         ) : null}
 
         {cierreEnergiaPending && (() => {
@@ -5588,7 +5707,7 @@ function VehicleCard({
   planilla, monitorState,
   onJustificar, onAddSubTarea, onToggleSubTarea, onSetSubTareaMinutosCupo, onExtendSituacionCupo, onSyncSituacionCupoAnchor, onAddDetalle, onEntregarDetalle, arquitectoUnlocked,
   onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onQuitarSubTareaDeCronometro, onCerrarSituacionDesgloseBloque,
-  onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose, onDesglosadorPausaInterrupcion,
+  onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose, onDesglosadorDepthTick, onDesglosadorPausaInterrupcion,
   onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle, onOpenCierreEnergia
 }: {
   vehicle: Vehicle; expanded: boolean; onToggle: () => void; onComplete?: () => void; onArchive?: () => void;
@@ -5612,8 +5731,9 @@ function VehicleCard({
   onEntregarDetalle?: (vehicleId: string, subTareaId: string, detalleId: string) => void;
   arquitectoUnlocked?: boolean;
   onInvestigadorClose?: (vehicleId: string, cumplido: boolean, cantidadRealizada: number, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => void;
-  onDesglosadorUpdate?: (vehicleId: string, updatedSubs: SubVehiculo[]) => void;
+  onDesglosadorUpdate?: (vehicleId: string, updatedSubs: SubVehiculo[], opts?: { resetDepth?: boolean }) => void;
   onDesglosadorGlobalClose?: (vehicleId: string, subs: SubVehiculo[], intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite", rutaDeclarada?: RutaBandaId[]) => void;
+  onDesglosadorDepthTick?: (vehicleId: string) => void;
   onDesglosadorPausaInterrupcion?: (vehicleId: string, tituloInterrupcion: string) => void;
   onDescansoClose?: (vehicleId: string, status: "cumplido" | "archivado", etiqueta: "recuperado" | "parcial" | "fragmentado", nota: string, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => void;
   onMicroPasoToggle?: (vehicleId: string, paso: "hidratacion" | "respiracion" | "pantallaZero") => void;
@@ -5781,6 +5901,13 @@ function VehicleCard({
     const id = window.setInterval(() => setSituacionCupoUiTick(t => t + 1), 1000);
     return () => clearInterval(id);
   }, [vehicle.tipoFlota, vehicle.status]);
+
+  useEffect(() => {
+    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || !onDesglosadorDepthTick) return;
+    onDesglosadorDepthTick(vehicle.id);
+    const id = window.setInterval(() => onDesglosadorDepthTick(vehicle.id), 60_000);
+    return () => clearInterval(id);
+  }, [vehicle.id, vehicle.tipoReloj, vehicle.status, vehicle.aperturaAt, onDesglosadorDepthTick]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -6359,7 +6486,9 @@ function VehicleCard({
                   const deltaLabel = deltaGanando ? `↓ ${fmtSec(Math.abs(deltaTotalSec))} ganado` : deltaPerdiendo ? `↑ ${fmtSec(deltaTotalSec)} extra` : "→ en tiempo";
                   const psBase = 10;
                   const psCumplidos = cumplidos * 2;
-                  const totalPS = psBase + psCumplidos;
+                  const psProfundidad = vehicle.desglosadorBloqueDepthPsGranted ?? 0;
+                  const psRutaResumen = computeRutaEnfoquePSFromSubs(subs);
+                  const totalPS = psBase + psCumplidos + psProfundidad + psRutaResumen;
                   return (
                     <div className="pt-3">
                       <div className="p-4 rounded-xl border-2 space-y-3" style={{ backgroundColor: "rgba(212,175,55,0.05)", borderColor: "#D4AF37", boxShadow: "0 0 20px rgba(212,175,55,0.15)" }}>
@@ -6413,7 +6542,7 @@ function VehicleCard({
                         {/* PS breakdown */}
                         <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ backgroundColor: "rgba(212,175,55,0.08)", border: "1px solid rgba(212,175,55,0.15)" }}>
                           <span className="text-[8px] font-black uppercase tracking-widest" style={{ color: "#D4AF37" }}>PS</span>
-                          <span className="text-[8px] font-bold flex-1" style={{ color: "rgba(255,255,255,0.78)" }}>Base +{psBase} · {cumplidos}×cumplido +{psCumplidos}{fallados > 0 ? ` · ${fallados} fallado(s) sin PS` : ""}</span>
+                          <span className="text-[8px] font-bold flex-1" style={{ color: "rgba(255,255,255,0.78)" }}>Base +{psBase} · {cumplidos}×cumplido +{psCumplidos}{psProfundidad > 0 ? ` · profundidad +${psProfundidad}` : ""}{psRutaResumen > 0 ? ` · ruta +${psRutaResumen}` : ""}{fallados > 0 ? ` · ${fallados} fallado(s) sin PS` : ""}</span>
                           <span className="text-[10px] font-black" style={{ color: "#D4AF37" }}>={totalPS}</span>
                         </div>
 
@@ -6472,7 +6601,7 @@ function VehicleCard({
                                   ? { ...sv.rutaEnfoque, cruzado: { fluido: true, concentrado: false, limite: false } }
                                   : undefined,
                               }));
-                              if (onDesglosadorUpdate) onDesglosadorUpdate(vehicle.id, resetSubs);
+                              if (onDesglosadorUpdate) onDesglosadorUpdate(vehicle.id, resetSubs, { resetDepth: true });
                               setDesglosadorSummary(false);
                             }}
                             className="py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5"
@@ -6509,6 +6638,17 @@ function VehicleCard({
                       <div className="flex items-center gap-2">
                         <span className="text-[8px] font-mono font-bold" style={{ color: "rgba(255,255,255,0.82)" }}>{cumplidos + fallados}/{subs.length}</span>
                         <span className="text-[8px] font-mono font-bold" style={{ color: futuroCicloLabel === "—" ? "rgba(255,255,255,0.45)" : "#FDBA74" }}>🏁 CICLO: {futuroCicloLabel}</span>
+                        {(() => {
+                          const elapsed = getDesglosadorElapsedSec(vehicle);
+                          const depthGranted = vehicle.desglosadorBloqueDepthPsGranted ?? 0;
+                          const hoursDone = Math.min(Math.floor(elapsed / 3600), DEPTH_PS_MAX_HOURS);
+                          const minsToNext = hoursDone >= DEPTH_PS_MAX_HOURS ? 0 : Math.max(0, Math.ceil(((hoursDone + 1) * 3600 - elapsed) / 60));
+                          return (
+                            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: "rgba(212,175,55,0.12)", color: GOLD }}>
+                              ⏳ {depthGranted} PS prof. {hoursDone < DEPTH_PS_MAX_HOURS ? `· ${minsToNext}m → +5` : "· tope"}
+                            </span>
+                          );
+                        })()}
                         <button
                           onClick={(e) => { e.stopPropagation(); setSubTasksCollapsed(c => !c); }}
                           className="p-1 rounded-md transition-colors hover:bg-white/10"
