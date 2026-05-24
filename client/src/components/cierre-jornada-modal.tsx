@@ -28,6 +28,7 @@ import {
   SovereigntyPointsLog,
   subscribeToPlanilla,
   getLimaDayStart,
+  getLimaDateString,
   Planilla,
 } from "@/lib/persistence";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
@@ -162,6 +163,7 @@ export function CierreJornadaModal() {
     if (!user) return;
     const unsubscribe = subscribeToPlanilla(
       user.uid,
+      getLimaDateString(),
       (data) => setPlanilla(data),
       (error) => console.error(error)
     );
