@@ -458,6 +458,8 @@ export interface SubTarea {
   detalles?: DetalleSubTarea[];
   /** Cupo de tiempo (min) para foco situacional; opcional. */
   minutosCupo?: number;
+  /** Si true, el usuario fijó minutosCupo manualmente; no se sobrescribe al redistribuir. */
+  cupoFijo?: boolean;
   /** Si true, la fila está en el desglose con tiempo madre (4 PS al cumplir, cupo/+5′). */
   enDesgloseCronometro?: boolean;
   /** Resultado en lista cronometrada; en lista libre suele omitirse (solo `completada`). */
@@ -515,6 +517,10 @@ export interface CierreJornadaLog {
   energiaOscuraDetectada?: number;
   selloTexto?: string;
   cierreAt?: number;
+  conquistaMin?: number;
+  entropiaMin?: number;
+  vacioMin?: number;
+  jornadaPlanMin?: number;
 }
 
 export interface Vehicle {
@@ -754,7 +760,7 @@ export function subscribeToVehicles(
       const todayStartMs = todayStart.getTime();
       const thirtyDaysAgoMs = todayStartMs - 30 * 24 * 60 * 60 * 1000;
 
-      const activos = data.filter(v => v.status === "activo");
+      const activos = data.filter(v => v.status === "activo" && !wasVehicleRecentlyClosed(v.id));
 
       const completadosRecientes = data.filter(v => {
         if (v.status !== "cumplido" && v.status !== "archivado") return false;

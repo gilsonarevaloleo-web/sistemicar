@@ -1,4 +1,6 @@
-/** Cola secuencial para speechSynthesis — evita que utterances se cancelen entre sí. */
+/** Cola secuencial para speechSynthesis â€” evita que utterances se cancelen entre sÃ­. */
+
+import { isSituacionAlertsEnabled } from "./tikSound";
 
 let queue: string[] = [];
 let speaking = false;
@@ -49,6 +51,8 @@ export function speakUbicacionQueue(phrases: string[], cancelPrevious = false): 
   const filtered = phrases.map(p => p.trim()).filter(Boolean);
   if (filtered.length === 0) return;
   if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+  if (!isSituacionAlertsEnabled()) return;
 
   if (cancelPrevious) {
     try {

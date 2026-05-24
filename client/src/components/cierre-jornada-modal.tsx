@@ -25,8 +25,13 @@ import {
   Vehicle,
   subscribeToDailyPoints,
   getDailyPoints,
-  SovereigntyPointsLog
+  SovereigntyPointsLog,
+  subscribeToPlanilla,
+  getLimaDayStart,
+  Planilla,
 } from "@/lib/persistence";
+import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
+import { calcularBalanceConquistaJornada } from "@/engines/ConcienciaEngine";
 
 const GOLD = "#D4AF37";
 const PURPLE = "#A855F7";
@@ -72,6 +77,7 @@ export function CierreJornadaModal() {
   const [aliados, setAliados] = useState<AliadoEntry[]>([]);
   const [alquimias, setAlquimias] = useState<AlquimiaEntry[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [planilla, setPlanilla] = useState<Planilla | null>(null);
   const [progression, setProgression] = useState<UserProgression | null>(null);
   const [hasClosed, setHasClosed] = useState(false);
   
@@ -151,6 +157,34 @@ export function CierreJornadaModal() {
     );
     return unsubscribe;
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = subscribeToPlanilla(
+      user.uid,
+      (data) => setPlanilla(data),
+      (error) => console.error(error)
+    );
+    return unsubscribe;
+  }, [user]);
+
+  const todayVehicles = useMemo(() => {
+    const todayStart = getLimaDayStart().getTime();
+    return vehicles.filter(v => {
+      const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
+      return ts >= todayStart;
+    });
+  }, [vehicles]);
+
+  const balance = useMemo(
+    () =>
+      calcularBalanceConquistaJornada({
+        segmentos: planilla?.segmentos ?? [],
+        vehiculos: todayVehicles,
+        dayStartMs: getLimaDayStart().getTime(),
+      }),
+    [planilla?.segmentos, todayVehicles]
+  );
 
   useEffect(() => {
     const checkTime = () => {
@@ -299,6 +333,14 @@ export function CierreJornadaModal() {
                     <p className="text-3xl font-black" style={{ color: GOLD }}>
                       +{cierreData.dailyPS ?? dailySovereigntyPoints} PS
                     </p>
+                  </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.08 }}
+                  >
+                    <BalanceConquistaPanel balance={balance} />
                   </motion.div>
 
                   <motion.div

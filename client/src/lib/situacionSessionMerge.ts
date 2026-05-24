@@ -15,6 +15,7 @@ function subTareaSessionScore(st: SubTarea): number {
   let score = (st.detalles?.length ?? 0) * 10;
   if (st.enDesgloseCronometro) score += 4;
   if ((st.minutosCupo ?? 0) > 0) score += 2;
+  if (st.cupoFijo) score += 3;
   if (st.resultadoSituacion && st.resultadoSituacion !== "pendiente") score += 1;
   if (st.completada) score += 1;
   return score;
@@ -36,7 +37,7 @@ function mergeDetallesLists(
   return [...byId.values()].sort((x, y) => x.creadaAt - y.creadaAt);
 }
 
-/** Fusiona subtareas por id conservando la versión más rica (detalles, cronómetro, cupos). */
+/** Fusiona subtareas por id conservando la versiï¿½n mï¿½s rica (detalles, cronï¿½metro, cupos). */
 export function mergeSubTareasById(
   firebaseSubs: SubTarea[] | undefined,
   localSubs: SubTarea[] | undefined
@@ -98,7 +99,7 @@ function pickSituacionCupoAnchor(
   return fb ?? local;
 }
 
-/** Aplica merge de sesión situacional sobre un vehículo ya parcialmente fusionado. */
+/** Aplica merge de sesiï¿½n situacional sobre un vehï¿½culo ya parcialmente fusionado. */
 export function applySituacionDesgloseMerge(
   merged: Vehicle,
   firebaseV: Vehicle,
@@ -121,7 +122,7 @@ export function applySituacionDesgloseMerge(
   };
 }
 
-/** Fusiona estado de sesión local sobre snapshot Firebase (desglosador tiempo + situación). */
+/** Fusiona estado de sesiï¿½n local sobre snapshot Firebase (desglosador tiempo + situaciï¿½n). */
 export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehicle | undefined): Vehicle {
   if (!localV) return firebaseV;
 
@@ -133,6 +134,8 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
       ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
       ...(localV.cierreManual != null ? { cierreManual: localV.cierreManual } : {}),
       ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
+      ...(localV.etiquetaSalida ? { etiquetaSalida: localV.etiquetaSalida } : {}),
+      ...(localV.notaSalida != null ? { notaSalida: localV.notaSalida } : {}),
       situacionCronometro: localV.situacionCronometro ?? null,
       situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
     };

@@ -49,6 +49,32 @@ export function cancelAllNotifications(): void {
   scheduledTimers.length = 0;
 }
 
+/** Alerta situacional — siempre que haya permiso (también con pestaña visible). */
+export function notifySituacionAlert(opts: {
+  title: string;
+  body: string;
+  tag: string;
+  requireInteraction?: boolean;
+  vehicleId?: string;
+}): void {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const n = new Notification(opts.title, {
+      body: opts.body,
+      icon: "/favicon.ico",
+      tag: opts.tag,
+      requireInteraction: opts.requireInteraction ?? false,
+    });
+    n.onclick = () => {
+      window.focus();
+      window.location.href = opts.vehicleId ? `/planeacion?vehicle=${opts.vehicleId}` : "/planeacion";
+      n.close();
+    };
+  } catch {
+    /* noop */
+  }
+}
+
 export function scheduleEspejoFollowup(habitoTitulo: string): void {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const VEINTICUATRO_HORAS = 24 * 60 * 60 * 1000;

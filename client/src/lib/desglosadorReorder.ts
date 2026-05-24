@@ -6,7 +6,7 @@ export function isSituacionCronometroPendiente(st: SubTarea): boolean {
   return !!st.enDesgloseCronometro && (st.resultadoSituacion ?? "pendiente") === "pendiente";
 }
 
-/** Reordena subs pendientes; null si id inválido o movimiento imposible. */
+/** Reordena subs pendientes; null si id invï¿½lido o movimiento imposible. */
 export function reorderSubVehiculos(
   subs: SubVehiculo[],
   movedId: string,
@@ -31,7 +31,7 @@ export function reorderSubVehiculos(
   return [...subs.slice(0, firstPending), ...reordered, ...afterPending];
 }
 
-/** Reordena filas pendientes del cronómetro situacional (swap en subTareas). */
+/** Reordena filas pendientes del cronï¿½metro situacional (swap en subTareas). */
 export function reorderSubTareasCronometro(
   subTareas: SubTarea[],
   movedId: string,

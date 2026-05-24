@@ -9,8 +9,15 @@ interface SegmentoLite {
 
 interface AnilloConcienciaProps {
   planificacionPct: number;
-  conquistaPct: number;
+  /** Arco violeta (conquista) dentro del presupuesto compartido de jornada */
+  conquistaArcPct: number;
+  /** Arco rojo (entropía / centinela) — opuesto a conquista en el mismo anillo */
+  entropiaArcPct?: number;
+  /** @deprecated use conquistaArcPct */
+  conquistaPct?: number;
+  /** @deprecated use entropiaArcPct */
   entropiaPct?: number;
+  conquistaPulse?: boolean;
   size?: number;
   segmentos?: SegmentoLite[];
 }
@@ -36,11 +43,17 @@ function arcPath(cx: number, cy: number, r: number, startDeg: number, endDeg: nu
 
 export default function AnilloConciencia({
   planificacionPct,
+  conquistaArcPct,
+  entropiaArcPct: entropiaArcPctProp,
   conquistaPct,
-  entropiaPct = 0,
+  entropiaPct,
+  conquistaPulse = false,
   size = 140,
   segmentos = [],
 }: AnilloConcienciaProps) {
+  const resolvedConquista = conquistaArcPct ?? conquistaPct ?? 0;
+  const resolvedEntropia = entropiaArcPctProp ?? entropiaPct ?? 0;
+
   const GOLD = "#D4AF37";
   const CYAN = "#00FFC3";
   const BLOOD = "#FF3131";
@@ -50,30 +63,29 @@ export default function AnilloConciencia({
 
   const relojR = size * 0.455;
   const outerR = size * 0.375;
-  const midR = size * 0.305;
-  const innerR = size * 0.235;
+  const innerR = size * 0.265;
   const strokeW = size * 0.055;
   const relojSW = size * 0.05;
 
   const circumference = (r: number) => 2 * Math.PI * r;
   const outerCirc = circumference(outerR);
-  const midCirc = circumference(midR);
   const innerCirc = circumference(innerR);
 
   const outerDash = (planificacionPct / 100) * outerCirc;
-  const midDash = (Math.min(100, entropiaPct) / 100) * midCirc;
-  const innerDash = (conquistaPct / 100) * innerCirc;
+  const conquistaDash = (Math.min(100, resolvedConquista) / 100) * innerCirc;
+  const entropiaDash = (Math.min(100, resolvedEntropia) / 100) * innerCirc;
 
   const planLabel = Math.round(planificacionPct);
-  const conquLabel = Math.round(conquistaPct);
-  const entropiaLabel = Math.round(entropiaPct);
+  const conquLabel = Math.round(resolvedConquista);
+  const entropiaLabel = Math.round(resolvedEntropia);
+  const fillLabel = Math.round(Math.min(100, resolvedConquista + resolvedEntropia));
 
   const PURPLE = "#8B5CF6";
   const planColor = planLabel >= 70 ? CYAN : planLabel >= 40 ? GOLD : "#6b7280";
   const conquColor = PURPLE;
-  const showEntropia = entropiaPct > 0;
+  const showEntropia = resolvedEntropia > 0;
+  const showConquista = resolvedConquista > 0;
 
-  // --- RELOJ DE SEGMENTOS (outer ring) ---
   const segDataRaw = segmentos
     .map(s => {
       const ini = parseMin(s.horaInicio);
@@ -119,10 +131,7 @@ export default function AnilloConciencia({
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} overflow="visible">
 
-          {/* ── OUTER RELOJ RING: Segment progress ── */}
-          {/* Track */}
           <circle cx={cx} cy={cy} r={relojR} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={relojSW} />
-          {/* Segment arcs */}
           {segArcs.map((arc, i) => (
             <motion.path
               key={i}
@@ -143,7 +152,6 @@ export default function AnilloConciencia({
               }}
             />
           ))}
-          {/* Pulsing glow for active segment */}
           {segArcs.filter(a => a.isActive).map((arc, i) => (
             <motion.path
               key={`active-glow-${i}`}
@@ -157,7 +165,6 @@ export default function AnilloConciencia({
             />
           ))}
 
-          {/* ── OUTER RING: Planificación ── */}
           <circle cx={cx} cy={cy} r={outerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeW} />
           <motion.circle
             cx={cx} cy={cy} r={outerR} fill="none"
@@ -170,37 +177,45 @@ export default function AnilloConciencia({
             style={{ filter: `drop-shadow(0 0 4px ${planColor}60)` }}
           />
 
-          {/* ── MID RING: Entropía ── */}
+          {/* Anillo interno compartido: conquista (horario) vs entropía (antihorario) */}
+          <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeW} />
           {showEntropia && (
-            <>
-              <circle cx={cx} cy={cy} r={midR} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={strokeW} />
-              <motion.circle
-                cx={cx} cy={cy} r={midR} fill="none"
-                stroke={BLOOD} strokeWidth={strokeW} strokeLinecap="round"
-                strokeDasharray={`${midDash} ${midCirc}`}
-                transform={`rotate(-90 ${cx} ${cy})`}
-                initial={{ strokeDasharray: `0 ${midCirc}` }}
-                animate={{ strokeDasharray: `${midDash} ${midCirc}` }}
-                transition={{ duration: 1.0, ease: "easeOut", delay: 0.1 }}
-                style={{ filter: `drop-shadow(0 0 5px ${BLOOD}70)` }}
-              />
-            </>
+            <motion.circle
+              cx={cx} cy={cy} r={innerR} fill="none"
+              stroke={BLOOD} strokeWidth={strokeW} strokeLinecap="round"
+              strokeDasharray={`${entropiaDash} ${innerCirc}`}
+              transform={`rotate(90 ${cx} ${cy})`}
+              initial={{ strokeDasharray: `0 ${innerCirc}` }}
+              animate={{ strokeDasharray: `${entropiaDash} ${innerCirc}` }}
+              transition={{ duration: 0.8, ease: "easeOut" }}
+              style={{ filter: `drop-shadow(0 0 5px ${BLOOD}70)` }}
+            />
+          )}
+          {showConquista && (
+            <motion.circle
+              cx={cx} cy={cy} r={innerR} fill="none"
+              stroke={conquColor}
+              strokeWidth={conquistaPulse ? strokeW * 1.35 : strokeW}
+              strokeLinecap="round"
+              strokeDasharray={`${conquistaDash} ${innerCirc}`}
+              transform={`rotate(-90 ${cx} ${cy})`}
+              initial={{ strokeDasharray: `0 ${innerCirc}` }}
+              animate={{
+                strokeDasharray: `${conquistaDash} ${innerCirc}`,
+                opacity: conquistaPulse ? [1, 0.65, 1] : 1,
+              }}
+              transition={{
+                strokeDasharray: { duration: 0.8, ease: "easeOut" },
+                opacity: conquistaPulse ? { duration: 0.8, times: [0, 0.5, 1] } : { duration: 0 },
+              }}
+              style={{
+                filter: conquistaPulse
+                  ? `drop-shadow(0 0 10px ${conquColor})`
+                  : `drop-shadow(0 0 4px ${conquColor}60)`,
+              }}
+            />
           )}
 
-          {/* ── INNER RING: Conquista ── */}
-          <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeW} />
-          <motion.circle
-            cx={cx} cy={cy} r={innerR} fill="none"
-            stroke={conquColor} strokeWidth={strokeW} strokeLinecap="round"
-            strokeDasharray={`${innerDash} ${innerCirc}`}
-            transform={`rotate(-90 ${cx} ${cy})`}
-            initial={{ strokeDasharray: `0 ${innerCirc}` }}
-            animate={{ strokeDasharray: `${innerDash} ${innerCirc}` }}
-            transition={{ duration: 1.4, ease: "easeOut", delay: 0.2 }}
-            style={{ filter: `drop-shadow(0 0 4px ${conquColor}60)` }}
-          />
-
-          {/* ── CENTER LABELS ── */}
           <text x={cx} y={cy - 8} textAnchor="middle" fill={planColor}
             fontSize={size * 0.13} fontFamily="JetBrains Mono, monospace" fontWeight="bold">
             {planLabel}%
@@ -209,9 +224,9 @@ export default function AnilloConciencia({
             fontSize={size * 0.05} fontFamily="JetBrains Mono, monospace">
             PLAN
           </text>
-          <text x={cx} y={cy + 20} textAnchor="middle" fill={conquColor}
+          <text x={cx} y={cy + 20} textAnchor="middle" fill={showEntropia && !showConquista ? BLOOD : conquColor}
             fontSize={size * 0.09} fontFamily="JetBrains Mono, monospace" fontWeight="bold">
-            {conquLabel}%
+            {showEntropia && showConquista ? fillLabel : showEntropia ? entropiaLabel : conquLabel}%
           </text>
         </svg>
 
@@ -221,7 +236,6 @@ export default function AnilloConciencia({
         />
       </div>
 
-      {/* Legend */}
       <div className="flex items-center flex-wrap justify-center gap-2">
         <div className="flex items-center gap-1">
           <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: planColor, boxShadow: `0 0 4px ${planColor}` }} />
@@ -235,7 +249,7 @@ export default function AnilloConciencia({
         )}
         <div className="flex items-center gap-1">
           <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: conquColor, boxShadow: `0 0 4px ${conquColor}` }} />
-          <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.4)" }}>Conquista</span>
+          <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.4)" }}>Conquista {conquLabel}%</span>
         </div>
         {segmentos.length > 0 && (
           <div className="flex items-center gap-1">

@@ -1,6 +1,6 @@
 /**
- * PS de profundidad por sesiùn desglosador ù curva progresiva sin tope de horas.
- * Hora 1 = 5 PS; hora n (n?2) = award(n-1) + 2^(n-2) ? 5, 6, 8, 12, 20, 36ù
+ * PS de profundidad por sesiÔøΩn desglosador ÔøΩ curva progresiva sin tope de horas.
+ * Hora 1 = 5 PS; hora n (n?2) = award(n-1) + 2^(n-2) ? 5, 6, 8, 12, 20, 36ÔøΩ
  */
 
 /** PS otorgados al completar la hora n (1-based). */
@@ -22,7 +22,7 @@ export function computeDesglosadorSessionDepthPS(elapsedSec: number): number {
   return total;
 }
 
-/** PS de la prùxima hora a cruzar (para badge UI). */
+/** PS de la prÔøΩxima hora a cruzar (para badge UI). */
 export function nextDepthAwardAfterHours(completedHours: number): number {
   if (!Number.isFinite(completedHours) || completedHours < 0) return depthAwardForHour(1);
   return depthAwardForHour(completedHours + 1);

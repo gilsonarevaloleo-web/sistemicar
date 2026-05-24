@@ -34,7 +34,7 @@ describe("computeDesglosadorSessionDepthPS", () => {
     assert.equal(computeDesglosadorSessionDepthPS(14400), 31);
   });
 
-  it("has no 6h cap — 10h cumulative matches closed formula 4N + 2^N - 1", () => {
+  it("has no 6h cap ï¿½ 10h cumulative matches closed formula 4N + 2^N - 1", () => {
     const tenHours = 10 * 3600;
     const expected = 4 * 10 + (1 << 10) - 1; // 355
     assert.equal(computeDesglosadorSessionDepthPS(tenHours), expected);

@@ -58,7 +58,9 @@ import {
   MonitorOff,
   Battery,
   Circle,
-  RotateCcw
+  RotateCcw,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { toast } from "sonner";
@@ -149,6 +151,14 @@ import {
   type RutaBandaId,
 } from "@/lib/rutaEnfoque";
 import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis } from "@/lib/speechQueue";
+import { isTikSoundEnabled, setTikSoundEnabled, isSituacionAlertsEnabled, setSituacionAlertsEnabled } from "@/lib/tikSound";
+import { playSituacionCumplidoChimes } from "@/lib/situacionAlertSounds";
+import {
+  fireSituacion2MinAlert,
+  fireSituacionCupoAlert,
+  SITUACION_CUPO_ESCALATION_MS,
+  SITUACION_CUPO_ESCALATION_MAX,
+} from "@/lib/situacionAlerts";
 import {
   computeDesglosadorClocks,
   formatElapsedHHMMSS,
@@ -156,6 +166,13 @@ import {
   formatMMSS,
   suggestedSec,
 } from "@/lib/desglosadorClock";
+import {
+  applyCupoManualYRedistribuir,
+  redistribuirMinutosSituacionCronometro,
+  situacionFilaCronometroPendiente,
+  sumMinutosCronometroPendientes,
+  totalBudgetMinFromCronometro,
+} from "@/lib/situacionCupoDistrib";
 import {
   computeDesglosadorSessionDepthPS,
   depthAwardForHour,
@@ -174,7 +191,10 @@ import { setActiveSegmento, registrarEvento, COMPONENTES } from "@/lib/evento-un
 import { ManualTriggerButton } from "@/components/master-manual-drawer";
 import { RelojResistencia } from "@/components/RelojResistencia";
 import AnilloConciencia from "@/components/AnilloConciencia";
-import { calcularAnilloSoberania } from "@/engines/ConcienciaEngine";
+import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada } from "@/engines/ConcienciaEngine";
+
+const CENTINELA_DELAY_MS = 120_000;
 
 const GOLD = "#D4AF37";
 const AZURE = "#1E90FF";
@@ -434,49 +454,6 @@ const computeBloqueDepthPS = (elapsedSec: number): number => {
   return 5 * Math.floor(elapsedSec / 3600);
 };
 
-function situacionFilaCronometroPendiente(st: SubTarea): boolean {
-  return !!st.enDesgloseCronometro && (st.resultadoSituacion ?? "pendiente") === "pendiente";
-}
-
-/** Opción B: reparte `remainingMin` entre filas pendientes del cronómetro, proporcional a cupos actuales (mín. 1 min/fila). */
-function redistribuirMinutosSituacionCronometro(subTareas: SubTarea[], remainingMin: number): SubTarea[] {
-  const pendingIdx = subTareas
-    .map((st, i) => ({ st, i }))
-    .filter(({ st }) => situacionFilaCronometroPendiente(st));
-  if (pendingIdx.length === 0) return subTareas;
-  const n = pendingIdx.length;
-  const total = Math.max(n, Math.round(remainingMin));
-  const weights = pendingIdx.map(({ st }) => Math.max(1, st.minutosCupo ?? 1));
-  const sumW = weights.reduce((a, b) => a + b, 0);
-  const floors = weights.map(w => Math.max(1, Math.floor((total * w) / sumW)));
-  const alloc = [...floors];
-  let diff = total - alloc.reduce((a, b) => a + b, 0);
-  let j = 0;
-  while (diff > 0) {
-    alloc[j % alloc.length] += 1;
-    diff -= 1;
-    j += 1;
-  }
-  j = 0;
-  while (diff < 0 && j < n * 100) {
-    const idx = j % alloc.length;
-    if (alloc[idx] > 1) {
-      alloc[idx] -= 1;
-      diff += 1;
-    }
-    j += 1;
-  }
-  const next = [...subTareas];
-  pendingIdx.forEach(({ st, i }, k) => {
-    next[i] = { ...st, minutosCupo: alloc[k] };
-  });
-  return next;
-}
-
-function sumMinutosCronometroPendientes(subTareas: SubTarea[] | undefined): number {
-  return (subTareas || []).filter(situacionFilaCronometroPendiente).reduce((a, st) => a + (st.minutosCupo ?? 0), 0);
-}
-
 type SituacionDesgloseSummary = {
   cumplidos: number;
   fallados: number;
@@ -528,39 +505,9 @@ function situacionDesgloseBloqueListo(subTareas: SubTarea[], sc: Vehicle["situac
   return !cronSubs.some(situacionFilaCronometroPendiente);
 }
 
-/** Timbres decrecientes por orden de lista (1.ª → N, 2.ª → N−1…). Wake Lock breve para no dormir al oír. */
+/** Timbres decrecientes al marcar cumplido — delegado a situacionAlertSounds. */
 async function playSituacionChimes(count: number) {
-  const n = Math.min(12, Math.max(1, Math.floor(count)));
-  const spacingMs = 240;
-  const beepMs = 150;
-  const freq = 880;
-  const totalMs = n * (spacingMs + beepMs) + 500;
-  let wake: { release: () => Promise<void> } | null = null;
-  if ("wakeLock" in navigator) {
-    try {
-      wake = await (navigator as unknown as { wakeLock: { request: (t: "screen") => Promise<{ release: () => Promise<void> }> } }).wakeLock.request("screen");
-      window.setTimeout(() => { wake?.release().catch(() => {}); }, totalMs);
-    } catch { /* permiso o no soportado */ }
-  }
-  const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AC) return;
-  const ctx = new AC();
-  await ctx.resume().catch(() => {});
-  for (let i = 0; i < n; i++) {
-    const t0 = ctx.currentTime + (i * (spacingMs + beepMs)) / 1000;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.14, t0 + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + beepMs / 1000);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(t0);
-    osc.stop(t0 + beepMs / 1000 + 0.02);
-  }
-  window.setTimeout(() => { ctx.close().catch(() => {}); }, totalMs);
+  return playSituacionCumplidoChimes(count);
 }
 
 const getSubVehicleRecordSuggestions = (query: string, limit = 5): Array<{ titulo: string; minPerUnit: number }> => {
@@ -960,9 +907,22 @@ export default function Planeacion() {
   const [recordBanner, setRecordBanner] = useState<{ mejora: number; titulo: string } | null>(null);
   const [showBoveda, setShowBoveda] = useState(false);
   const [selectedBovedaRecord, setSelectedBovedaRecord] = useState<VehicleRecord | null>(null);
-  const [tikSoundEnabled, setTikSoundEnabled] = useState(() => localStorage.getItem("sistemicar_tik_sound") !== "off");
+  const [tikSoundEnabled, setTikSoundEnabledState] = useState(() => isTikSoundEnabled());
+  const [situacionAlertsEnabled, setSituacionAlertsEnabledState] = useState(() => isSituacionAlertsEnabled());
 
   const [anilloTick, setAnilloTick] = useState(0);
+  const [conquistaPulse, setConquistaPulse] = useState(false);
+  const conquistaPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasCentinelaActivo = useMemo(
+    () => vehicles.some(v => v.autoVerdad && v.status === "activo"),
+    [vehicles]
+  );
+
+  const triggerConquistaPulse = useCallback(() => {
+    setConquistaPulse(true);
+    if (conquistaPulseTimerRef.current) clearTimeout(conquistaPulseTimerRef.current);
+    conquistaPulseTimerRef.current = setTimeout(() => setConquistaPulse(false), 800);
+  }, []);
 
   // ── RADIOGRAFÍA DEL OPERADOR ──
   const [radiografiaTokens, setRadiografiaTokens] = useState<RadiografiaTokenData>({ tokens: 0, milestonesCrossed: [], lastSubscriptionRefresh: "" });
@@ -1028,8 +988,13 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    const interval = setInterval(() => setAnilloTick(t => t + 1), 60000);
+    const ms = hasCentinelaActivo ? 10_000 : 60_000;
+    const interval = setInterval(() => setAnilloTick(t => t + 1), ms);
     return () => clearInterval(interval);
+  }, [hasCentinelaActivo]);
+
+  useEffect(() => () => {
+    if (conquistaPulseTimerRef.current) clearTimeout(conquistaPulseTimerRef.current);
   }, []);
 
   useEffect(() => () => {
@@ -1341,14 +1306,69 @@ export default function Planeacion() {
   const checkAutoVerdadRef = useRef<(() => Promise<void>) | null>(null);
   const checkTraslado50Ref = useRef<(() => Promise<void>) | null>(null);
 
+  const resetCentinelaTimer = useCallback(() => {
+    noVehicleSince.current = 0;
+    localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
+    setCentinelaEsperaSec(0);
+  }, []);
+
+  const ensureCentinelaTimerStarted = useCallback((now: number) => {
+    const persistedSince = parseInt(localStorage.getItem(NO_VEHICLE_SINCE_KEY) || "0", 10);
+    const MAX_SINCE_AGE = 4 * 3600 * 1000;
+    const persistedSinceValid = persistedSince > 0 && (now - persistedSince) < MAX_SINCE_AGE;
+    if (noVehicleSince.current === 0) {
+      if (persistedSinceValid) {
+        noVehicleSince.current = persistedSince;
+      } else {
+        if (persistedSince > 0) localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
+        noVehicleSince.current = now;
+        localStorage.setItem(NO_VEHICLE_SINCE_KEY, now.toString());
+      }
+    }
+    return noVehicleSince.current;
+  }, []);
+
+  // Cuenta regresiva 1s — visible desde el primer segundo de inactividad
   useEffect(() => {
     if (!user || !planilla) return;
-    // Fix 3: Al montar, limpiar NO_VEHICLE_SINCE_KEY si ya hay vehículos activos en localStorage
+
+    const tickCountdown = () => {
+      const segActivo = planilla.segmentos.find(s => s.estado === "activo");
+      if (!segActivo || segActivo.centinelaEnabled === false) {
+        resetCentinelaTimer();
+        return;
+      }
+
+      const hasActiveVehicles =
+        vehiclesRef.current.some(v => v.status === "activo" && !v.autoVerdad) ||
+        optimisticVehiclesRef.current.some(v => v.status === "activo" && !v.autoVerdad);
+      if (hasActiveVehicles) {
+        resetCentinelaTimer();
+        return;
+      }
+
+      if (vehiclesRef.current.some(v => v.autoVerdad && v.status === "activo")) {
+        resetCentinelaTimer();
+        return;
+      }
+
+      const now = Date.now();
+      const sinceMoment = ensureCentinelaTimerStarted(now);
+      const elapsedWait = now - sinceMoment;
+      setCentinelaEsperaSec(Math.max(0, Math.ceil((CENTINELA_DELAY_MS - elapsedWait) / 1000)));
+    };
+
+    const interval = setInterval(tickCountdown, 1000);
+    tickCountdown();
+    return () => clearInterval(interval);
+  }, [user, planilla, ensureCentinelaTimerStarted, resetCentinelaTimer]);
+
+  useEffect(() => {
+    if (!user || !planilla) return;
     const localVehicles = getLocalVehicles();
     const hasLocalActivos = localVehicles.some(v => v.status === "activo" && !v.autoVerdad);
     if (hasLocalActivos) {
-      noVehicleSince.current = 0;
-      localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
+      resetCentinelaTimer();
     }
     const checkAutoVerdad = async () => {
       if (sentinelSuppressed.current) return;
@@ -1358,68 +1378,43 @@ export default function Planeacion() {
 
       const currentVehicles = vehiclesRef.current;
       const segActivo = planilla.segmentos.find(s => s.estado === "activo");
-      const hasActiveSegment = !!segActivo;
-      const hasActiveVehicles =
-        currentVehicles.some(v => v.status === "activo" && !v.autoVerdad) ||
-        optimisticVehiclesRef.current.some(v => v.status === "activo" && !v.autoVerdad);
-      const hasAutoVerdadActive = currentVehicles.some(v => v.status === "activo" && v.autoVerdad);
 
-      // Si el segmento activo tiene Centinela desactivado, reiniciar timer silenciosamente
-      if (hasActiveSegment && segActivo && segActivo.centinelaEnabled === false) {
-        noVehicleSince.current = 0;
-        localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
-        setCentinelaEsperaSec(0);
+      if (!segActivo) {
+        resetCentinelaTimer();
+        return;
+      }
+
+      if (segActivo.centinelaEnabled === false) {
+        resetCentinelaTimer();
         console.log("[Centinela] Desactivado para segmento:", segActivo.nombre);
         return;
       }
 
+      const hasActiveVehicles =
+        currentVehicles.some(v => v.status === "activo" && !v.autoVerdad) ||
+        optimisticVehiclesRef.current.some(v => v.status === "activo" && !v.autoVerdad);
+
       if (hasActiveVehicles) {
-        noVehicleSince.current = 0;
-        localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
-        setCentinelaEsperaSec(0);
+        resetCentinelaTimer();
         return;
       }
 
-      if (!planilla) {
-        setCentinelaEsperaSec(0);
-        return;
-      }
-
-      if (hasAutoVerdadActive) return;
+      const localCentinela = currentVehicles.find(v => v.autoVerdad && v.status === "activo");
+      if (localCentinela) return;
 
       const remoteCentinela = await hasActiveCentinelaInFirestore(user.uid);
       if (remoteCentinela) {
-        noVehicleSince.current = 0;
-        localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
+        // Centinela remoto pendiente de snapshot — no resetear timer ni bloquear creación local
         return;
       }
 
-      const persistedSince = parseInt(localStorage.getItem(NO_VEHICLE_SINCE_KEY) || "0");
-      const MAX_SINCE_AGE = 4 * 3600 * 1000; // 4 horas — timestamps más antiguos se ignoran
-      const persistedSinceValid = persistedSince > 0 && (now - persistedSince) < MAX_SINCE_AGE;
-      if (noVehicleSince.current === 0) {
-        if (persistedSinceValid) {
-          noVehicleSince.current = persistedSince;
-        } else {
-          if (persistedSince > 0) {
-            // Timestamp obsoleto de sesión anterior — limpiar para evitar falso disparo
-            localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
-          }
-          noVehicleSince.current = now;
-          localStorage.setItem(NO_VEHICLE_SINCE_KEY, now.toString());
-          return;
-        }
-      }
-
-      const sinceMoment = noVehicleSince.current;
-      const CENTINELA_DELAY_MS = 30000;
+      const sinceMoment = ensureCentinelaTimerStarted(now);
       const elapsedWait = now - sinceMoment;
-      setCentinelaEsperaSec(Math.max(0, Math.ceil((CENTINELA_DELAY_MS - elapsedWait) / 1000)));
       if (elapsedWait < CENTINELA_DELAY_MS) return;
 
       if (sentinelSuppressed.current) return;
 
-      const centinelaAperturaAt = noVehicleSince.current || sinceMoment;
+      const centinelaAperturaAt = sinceMoment;
       await addVehicle(user.uid, {
         titulo: "Modo Centinela",
         criterioFin: "circunstancia",
@@ -1443,15 +1438,13 @@ export default function Planeacion() {
           silent: false
         });
       }
-      noVehicleSince.current = 0;
-      localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
-      setCentinelaEsperaSec(0);
+      resetCentinelaTimer();
     };
     checkAutoVerdadRef.current = checkAutoVerdad;
-    const interval = setInterval(checkAutoVerdad, 30000);
+    const interval = setInterval(checkAutoVerdad, 5000);
     checkAutoVerdad();
     return () => clearInterval(interval);
-  }, [user, planilla]);
+  }, [user, planilla, resetCentinelaTimer, ensureCentinelaTimerStarted]);
 
   useEffect(() => {
     if (!user) return;
@@ -1879,6 +1872,7 @@ export default function Planeacion() {
     setShowCrearSegmento(false);
     setPlanilla(planillaOptimista);
     setExpandedSegId("segmentos");
+    setSegmentoProgramando(false);
     window.setTimeout(() => {
       segmentosListEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }, 120);
@@ -1920,8 +1914,6 @@ export default function Planeacion() {
         description: "Revisa la conexión e intenta de nuevo.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
-    } finally {
-      setSegmentoProgramando(false);
     }
   };
 
@@ -2317,23 +2309,47 @@ export default function Planeacion() {
     closingInProgressRef.current.add(vehicleId);
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) { closingInProgressRef.current.delete(vehicleId); return; }
-    setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, status: closingStatus, ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}) } : v));
-    vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, status: closingStatus, ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}) } : v);
-    optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
+
     const aperturaAt = vehicle.aperturaAt || Date.now();
     const cierreAt = Date.now();
     const duracionMin = Math.round((cierreAt - aperturaAt) / 60000);
+    const descansoMatch = vehicle.criterioDetalle?.match(/([\d.]+)\s*min/i);
+    const descansoDurMin = descansoMatch ? parseFloat(descansoMatch[1]) : 0;
+    const descansoTargetMs = descansoDurMin > 0 ? aperturaAt + (descansoDurMin + 5) * 60000 : 0;
+    const dentroVentana = descansoTargetMs === 0 || cierreAt <= descansoTargetMs;
+
+    notifyVehicleClosed(vehicleId);
+
+    const optimisticClose = {
+      status: closingStatus,
+      cierreAt,
+      duracionFinal: duracionMin,
+      cierreManual: dentroVentana,
+      etiquetaSalida: etiqueta,
+      notaSalida: nota,
+      ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
+    };
+
+    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v)));
+    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v));
+    optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
+    saveLocalVehicles(vehiclesRef.current);
+    triggerConquistaPulse();
+
     const TIPO_BASE: Record<string, number> = { intercepcion: 3, microcarga: 5, reset_profundo: 8, punto_cero: 12 };
     const psBase = vehicle.tipoDescanso ? (TIPO_BASE[vehicle.tipoDescanso] || 5) : 5;
     const psEtiqueta = etiqueta === "recuperado" ? 2 : 0;
     const psTotal = psBase + psEtiqueta;
     const ETIQUETA_LABELS: Record<string, string> = { recuperado: "RECUPERADO", parcial: "PARCIAL", fragmentado: "FRAGMENTADO" };
     const ETIQUETA_COLOR: Record<string, string> = { recuperado: "#10b981", parcial: "#f59e0b", fragmentado: "#ef4444" };
-    const descansoMatch = vehicle.criterioDetalle?.match(/([\d.]+)\s*min/i);
-    const descansoDurMin = descansoMatch ? parseFloat(descansoMatch[1]) : 0;
-    const descansoTargetMs = descansoDurMin > 0 ? aperturaAt + (descansoDurMin + 5) * 60000 : 0;
-    const dentroVentana = descansoTargetMs === 0 || cierreAt <= descansoTargetMs;
-    updateVehicle(user.uid, vehicleId, { status: closingStatus, cierreAt, duracionFinal: duracionMin, cierreManual: dentroVentana, etiquetaSalida: etiqueta, notaSalida: nota, ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}) }).catch(() => {}).finally(() => { closingInProgressRef.current.delete(vehicleId); });
+
+    try {
+      await updateVehicle(user.uid, vehicleId, optimisticClose);
+    } catch {
+      /* updateVehicle ya persiste en local si Firebase falla */
+    } finally {
+      closingInProgressRef.current.delete(vehicleId);
+    }
     awardSovereigntyPoints(user.uid, psTotal, `Descanso cerrado (${ETIQUETA_LABELS[etiqueta]}): ${vehicle.titulo}`).catch(() => {});
     incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
     const esPuntoCero = vehicle.tipoDescanso === "punto_cero";
@@ -2398,6 +2414,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v));
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
     saveLocalVehicles(vehiclesRef.current);
+    if (!vehicle.autoVerdad) triggerConquistaPulse();
 
     // Helper: fire-and-forget (no await) — no bloqueamos la UI
     const safeFire = (fn: () => Promise<any>) => { fn().catch(() => {}); };
@@ -2600,6 +2617,7 @@ export default function Planeacion() {
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
     saveLocalVehicles(vehiclesRef.current);
+    triggerConquistaPulse();
 
     const cierreAt = closePatch.cierreAt;
     const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || 0;
@@ -2988,6 +3006,7 @@ export default function Planeacion() {
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
     saveLocalVehicles(vehiclesRef.current);
+    triggerConquistaPulse();
 
     try {
       const subPoints = cumplidos * 2;
@@ -3167,24 +3186,33 @@ export default function Planeacion() {
     if (!user) return;
     const vehicle = vehicles.find(v => v.id === vehicleId);
     if (!vehicle?.subTareas) return;
-    const subTareas = vehicle.subTareas.map(st => {
-      if (st.id !== subTareaId) return st;
-      if (minutos === undefined || minutos <= 0 || !Number.isFinite(minutos)) {
-        const next = { ...st };
-        delete (next as { minutosCupo?: number }).minutosCupo;
-        return next;
-      }
-      return { ...st, minutosCupo: Math.round(Math.min(999, Math.max(0, minutos))) };
-    });
+    const sc = vehicle.situacionCronometro;
+    const cronActivo = sc?.activo === true;
+    const base = sc?.bloqueInicioAt ?? Date.now();
+    let subTareas: SubTarea[];
+
+    if (cronActivo) {
+      const budget = totalBudgetMinFromCronometro(vehicle.subTareas, base, sc?.horaFinMs);
+      subTareas = applyCupoManualYRedistribuir(vehicle.subTareas, subTareaId, minutos, budget);
+    } else {
+      subTareas = vehicle.subTareas.map(st => {
+        if (st.id !== subTareaId) return st;
+        if (minutos === undefined || minutos <= 0 || !Number.isFinite(minutos)) {
+          const next = { ...st };
+          delete (next as { minutosCupo?: number; cupoFijo?: boolean }).minutosCupo;
+          delete (next as { cupoFijo?: boolean }).cupoFijo;
+          return next;
+        }
+        return { ...st, minutosCupo: Math.round(Math.min(999, Math.max(0, minutos))), cupoFijo: true };
+      });
+    }
+
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
     try {
-      const vAfter = vehiclesRef.current.find(x => x.id === vehicleId);
-      const sc = vAfter?.situacionCronometro;
       let situacionCronometroPatch: Vehicle["situacionCronometro"] | undefined;
-      if (sc?.activo && vAfter?.subTareas) {
-        const sum = sumMinutosCronometroPendientes(vAfter.subTareas);
-        const base = sc.bloqueInicioAt ?? Date.now();
+      if (cronActivo && sc) {
+        const sum = sumMinutosCronometroPendientes(subTareas);
         situacionCronometroPatch = { ...sc, horaFinMs: base + sum * 60000 };
       }
       await updateVehicle(user.uid, vehicleId, { subTareas, ...(situacionCronometroPatch ? { situacionCronometro: situacionCronometroPatch } : {}) });
@@ -3192,9 +3220,10 @@ export default function Planeacion() {
         setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCronometro: situacionCronometroPatch! } : x)));
         vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCronometro: situacionCronometroPatch! } : x));
       }
+      const vAfter = vehiclesRef.current.find(x => x.id === vehicleId);
       const first = (vAfter?.subTareas || []).find(st => {
         if (!((st.minutosCupo ?? 0) > 0)) return false;
-        if (sc?.activo) return situacionFilaCronometroPendiente(st);
+        if (cronActivo) return situacionFilaCronometroPendiente(st);
         return !st.enDesgloseCronometro && !st.completada;
       });
       void handleSyncSituacionCupoAnchor(vehicleId, first?.id === subTareaId ? { forceResetSameRow: true } : undefined);
@@ -3226,7 +3255,7 @@ export default function Planeacion() {
     const cur = list[idx];
     const donor = list[donorIdx];
     const subTareas = list.map((st, i) => {
-      if (i === idx) return { ...st, minutosCupo: (cur.minutosCupo ?? 0) + delta };
+      if (i === idx) return { ...st, minutosCupo: (cur.minutosCupo ?? 0) + delta, cupoFijo: true };
       if (i === donorIdx) return { ...st, minutosCupo: Math.max(0, (donor.minutosCupo ?? 0) - delta) };
       return st;
     });
@@ -3328,6 +3357,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
+      if (firstActivation) void requestNotificationPermission();
       void handleSyncSituacionCupoAnchor(vehicleId);
       toast.success("Desglose con tiempo", {
         description: `${lifted.length} subtarea(s) · Σ ${sum} min`,
@@ -3385,7 +3415,8 @@ export default function Planeacion() {
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void handleSyncSituacionCupoAnchor(vehicleId);
-      toast.success("Hora fin ajustada · cupos redistribuidos", {
+      toast.success("Hora fin ajustada · cupos flexibles redistribuidos", {
+        description: "Las filas con minutos fijados manualmente se conservan.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${VERDE}`, color: VERDE },
         duration: 2800,
       });
@@ -3607,13 +3638,23 @@ export default function Planeacion() {
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const tikTapIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tikSoundEnabledRef = useRef(tikSoundEnabled);
+  tikSoundEnabledRef.current = tikSoundEnabled;
+
+  const clearTikTapInterval = useCallback(() => {
+    if (tikTapIntervalRef.current) {
+      clearInterval(tikTapIntervalRef.current);
+      tikTapIntervalRef.current = null;
+    }
+  }, []);
+
   const playTikTap = useCallback(() => {
-    if (!tikSoundEnabled) return;
+    if (!tikSoundEnabledRef.current || !isTikSoundEnabled()) return;
     try {
       if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       const ctx = audioCtxRef.current;
       if (ctx.state === "suspended") {
-        ctx.resume();
+        void ctx.resume();
         return;
       }
       const osc = ctx.createOscillator();
@@ -3623,17 +3664,36 @@ export default function Planeacion() {
       gain.gain.setValueAtTime(0.03, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
       osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.08);
     } catch {}
-  }, [tikSoundEnabled]);
+  }, []);
+
+  useEffect(() => {
+    const onTikChange = (e: Event) => {
+      const on = (e as CustomEvent<{ on: boolean }>).detail?.on ?? isTikSoundEnabled();
+      setTikSoundEnabledState(on);
+      if (!on) clearTikTapInterval();
+    };
+    const onSituacionAlertsChange = (e: Event) => {
+      const on = (e as CustomEvent<{ on: boolean }>).detail?.on ?? isSituacionAlertsEnabled();
+      setSituacionAlertsEnabledState(on);
+    };
+    window.addEventListener("sistemicar-tik-sound-changed", onTikChange);
+    window.addEventListener("sistemicar-situacion-alerts-changed", onSituacionAlertsChange);
+    return () => {
+      window.removeEventListener("sistemicar-tik-sound-changed", onTikChange);
+      window.removeEventListener("sistemicar-situacion-alerts-changed", onSituacionAlertsChange);
+    };
+  }, [clearTikTapInterval]);
 
   useEffect(() => {
     const hasDelay = currentDelayMinutes > 0;
     const modalOpen = isCreating || expandedId !== null;
-    if (hasDelay && modalOpen) {
+    clearTikTapInterval();
+    if (hasDelay && modalOpen && tikSoundEnabled) {
       const interval = 2000 + Math.random() * 1000;
       tikTapIntervalRef.current = setInterval(playTikTap, interval);
     }
-    return () => { if (tikTapIntervalRef.current) { clearInterval(tikTapIntervalRef.current); tikTapIntervalRef.current = null; } };
-  }, [currentDelayMinutes, isCreating, expandedId, playTikTap]);
+    return clearTikTapInterval;
+  }, [currentDelayMinutes, isCreating, expandedId, playTikTap, tikSoundEnabled, clearTikTapInterval]);
 
   const segmentoActualIdx = planilla ? planilla.segmentos.findIndex(s => s.estado === "activo") : -1;
   const segmentoNumero = segmentoActualIdx >= 0 ? segmentoActualIdx + 1 : null;
@@ -3853,45 +3913,13 @@ export default function Planeacion() {
 
         {/* ANILLO DE CONCIENCIA */}
         {(() => {
+          void anilloTick;
           const segs = planilla?.segmentos || [];
-          const vRaw = vehicles.filter(v => !v.autoVerdad);
-          const { planificacionPct } = calcularAnilloSoberania(segs, vRaw);
-          const _todayStart = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
-          const _todayVehicles = vehicles.filter(v => !v.autoVerdad && (
-            v.status === "activo" ||
-            ((v.status === "cumplido" || v.status === "archivado") && ((v.cierreAt || v.aperturaAt || 0) >= _todayStart))
-          ));
-          const minutosPlaneados = segs.reduce((acc: number, s: any) => {
-            const [hi, mi] = (s.horaInicio || "0:0").split(":").map(Number);
-            const [hf, mf] = (s.horaFin || "0:0").split(":").map(Number);
-            const ini = hi * 60 + mi;
-            const fin = hf * 60 + mf;
-            const dur = fin >= ini ? fin - ini : fin + 1440 - ini;
-            return acc + Math.max(0, dur);
-          }, 0);
-          const horasCubiertas = Math.round(minutosPlaneados / 60);
-
-          const _openedToday = _todayVehicles.length;
-          const _conquiMax = Math.max(segs.length, 10);
-          const _minutosEnVehiculos = _todayVehicles.reduce((acc: number, v: any) => {
-            if (v.status === "activo" && v.aperturaAt) return acc + Math.max(0, (Date.now() - v.aperturaAt) / 60000);
-            if (v.duracionFinal != null) return acc + v.duracionFinal;
-            if (v.cierreAt && v.aperturaAt) return acc + Math.max(0, (v.cierreAt - v.aperturaAt) / 60000);
-            return acc;
-          }, 0);
-          const _tiempoPct = minutosPlaneados > 0 ? Math.min(100, (_minutosEnVehiculos / minutosPlaneados) * 100) : 0;
-          const _cantidadPct = Math.min(100, (_openedToday / _conquiMax) * 100);
-          const conquistaPct = 0.6 * _tiempoPct + 0.4 * _cantidadPct;
-
-          const centinelaActivo = vehicles.find(v => v.autoVerdad && v.status === "activo");
-          const centinelaMinActivo = centinelaActivo && centinelaActivo.aperturaAt
-            ? Math.round((Date.now() - centinelaActivo.aperturaAt) / 60000)
-            : 0;
-          const centinelasCerrados = vehicles.filter(v => v.autoVerdad && v.status !== "activo");
-          const totalEntropiaMin = centinelasCerrados.reduce((s: number, v: any) => s + (v.duracionFinal || 0), 0) + centinelaMinActivo;
-          const jornadaMin = minutosPlaneados || 1440;
-          const entropiaPct = Math.min(100, (totalEntropiaMin / jornadaMin) * 100);
-
+          const metricas = calcularMetricasAnilloConciencia({
+            segmentos: segs,
+            vehiculos: vehicles,
+            now: Date.now(),
+          });
           const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
           const segFallados = segs.filter((s: any) => s.estado === "entropia").length;
           return (
@@ -3904,11 +3932,18 @@ export default function Planeacion() {
               <p className="text-[8px] font-black uppercase tracking-[0.25em] text-center mb-2" style={{ color: "rgba(255,255,255,0.25)" }}>
                 ANILLO DE CONCIENCIA
               </p>
-              <AnilloConciencia planificacionPct={planificacionPct} conquistaPct={conquistaPct} entropiaPct={entropiaPct} size={130} segmentos={segs} />
+              <AnilloConciencia
+                planificacionPct={metricas.planificacionPct}
+                conquistaArcPct={metricas.conquistaArcPct}
+                entropiaArcPct={metricas.entropiaArcPct}
+                conquistaPulse={conquistaPulse}
+                size={130}
+                segmentos={segs}
+              />
               <div className="mt-2 grid grid-cols-3 gap-1 w-full text-center">
                 <div>
                   <p className="text-[7px] text-slate-500 uppercase">Hrs Plan</p>
-                  <p className="text-xs font-black" style={{ color: "#D4AF37" }}>{horasCubiertas}h</p>
+                  <p className="text-xs font-black" style={{ color: "#D4AF37" }}>{metricas.horasCubiertas}h</p>
                 </div>
                 <div>
                   <p className="text-[7px] uppercase font-bold" style={{ color: "#00FFC3" }}>✓ Seg.</p>
@@ -4300,9 +4335,8 @@ export default function Planeacion() {
                       )}
                     </div>
                     <button
-                      onClick={() => !segmentoProgramando && setShowCrearSegmento(true)}
-                      disabled={segmentoProgramando}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
+                      onClick={() => setShowCrearSegmento(true)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors"
                       style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }}
                     >
                       <Plus size={12} /> Nuevo Segmento
@@ -4626,22 +4660,41 @@ export default function Planeacion() {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[10px] text-slate-600 uppercase tracking-widest">La Flota</p>
-                <button
-                  onClick={() => {
-                    const next = !tikSoundEnabled;
-                    setTikSoundEnabled(next);
-                    localStorage.setItem("sistemicar_tik_sound", next ? "on" : "off");
-                  }}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md border transition-all"
-                  style={{ borderColor: tikSoundEnabled ? `${GOLD}40` : "rgba(255,255,255,0.08)", backgroundColor: tikSoundEnabled ? `${GOLD}10` : "rgba(0,0,0,0.2)" }}
-                  title={tikSoundEnabled ? "Silenciar tick del reloj" : "Activar tick del reloj"}
-                  data-testid="button-tik-sound-toggle"
-                >
-                  {tikSoundEnabled ? <Volume2 size={10} style={{ color: GOLD }} /> : <VolumeX size={10} style={{ color: "#475569" }} />}
-                  <span className="text-[8px] font-bold uppercase tracking-widest" style={{ color: tikSoundEnabled ? GOLD : "#475569" }}>
-                    Tick {tikSoundEnabled ? "ON" : "OFF"}
-                  </span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      const next = !situacionAlertsEnabled;
+                      setSituacionAlertsEnabledState(next);
+                      setSituacionAlertsEnabled(next);
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md border transition-all"
+                    style={{ borderColor: situacionAlertsEnabled ? `${GOLD}40` : "rgba(255,255,255,0.08)", backgroundColor: situacionAlertsEnabled ? `${GOLD}10` : "rgba(0,0,0,0.2)" }}
+                    title={situacionAlertsEnabled ? "Silenciar alertas situacionales" : "Activar alertas situacionales (sonido, vibración, notificaciones)"}
+                    data-testid="button-situacion-alerts-toggle"
+                  >
+                    {situacionAlertsEnabled ? <Bell size={10} style={{ color: GOLD }} /> : <BellOff size={10} style={{ color: "#475569" }} />}
+                    <span className="text-[8px] font-bold uppercase tracking-widest" style={{ color: situacionAlertsEnabled ? GOLD : "#475569" }}>
+                      Alertas {situacionAlertsEnabled ? "ON" : "OFF"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const next = !tikSoundEnabled;
+                      setTikSoundEnabledState(next);
+                      setTikSoundEnabled(next);
+                      if (!next) clearTikTapInterval();
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md border transition-all"
+                    style={{ borderColor: tikSoundEnabled ? `${GOLD}40` : "rgba(255,255,255,0.08)", backgroundColor: tikSoundEnabled ? `${GOLD}10` : "rgba(0,0,0,0.2)" }}
+                    title={tikSoundEnabled ? "Silenciar tick del reloj" : "Activar tick del reloj"}
+                    data-testid="button-tik-sound-toggle"
+                  >
+                    {tikSoundEnabled ? <Volume2 size={10} style={{ color: GOLD }} /> : <VolumeX size={10} style={{ color: "#475569" }} />}
+                    <span className="text-[8px] font-bold uppercase tracking-widest" style={{ color: tikSoundEnabled ? GOLD : "#475569" }}>
+                      Tick {tikSoundEnabled ? "ON" : "OFF"}
+                    </span>
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {(Object.entries(FLOTA_CONFIG) as [TipoFlota, typeof FLOTA_CONFIG["tiempo"]][]).map(([tipo, cfg]) => {
@@ -5783,6 +5836,8 @@ export default function Planeacion() {
               const todayStart = getLimaDayStart().getTime();
               return ts >= todayStart;
             })}
+            segmentos={planilla?.segmentos || []}
+            dayStartMs={getLimaDayStart().getTime()}
             todayPoints={dailyPS}
             onClose={() => setShowCierreJornada(false)}
             onSeal={async (cierre) => {
@@ -5966,6 +6021,11 @@ function VehicleCard({
   const prevTimerExpiredRef = useRef<boolean>(false);
   const situacionCupoFireKeyRef = useRef<string | null>(null);
   const situacion2MinWarnKeyRef = useRef<string | null>(null);
+  const situacionCupoEscalationRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const subTareasRef = useRef(vehicle.subTareas);
+  subTareasRef.current = vehicle.subTareas;
+  const situacionAnchorRef = useRef(vehicle.situacionCupoAnchor);
+  situacionAnchorRef.current = vehicle.situacionCupoAnchor;
   const [situacionCupoUiTick, setSituacionCupoUiTick] = useState(0);
   const subStartVoiceRef = useRef<Set<string>>(new Set());
   const [subRutaModal, setSubRutaModal] = useState<null | {
@@ -5982,7 +6042,7 @@ function VehicleCard({
   const [desglosadorReorderMode, setDesglosadorReorderMode] = useState(false);
 
   const playChime = useCallback(() => {
-    if (localStorage.getItem("sistemicar_tik_sound") === "off") return;
+    if (!isTikSoundEnabled()) return;
     try {
       const AudioCtx = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
@@ -6004,7 +6064,7 @@ function VehicleCard({
   }, []);
 
   const playWarDrum = useCallback(() => {
-    if (localStorage.getItem("sistemicar_tik_sound") === "off") return;
+    if (!isTikSoundEnabled()) return;
     try {
       const AudioCtx = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
@@ -6025,7 +6085,7 @@ function VehicleCard({
   }, []);
 
   const playAlarm = useCallback(() => {
-    if (localStorage.getItem("sistemicar_tik_sound") === "off") return;
+    if (!isTikSoundEnabled()) return;
     try {
       const AudioCtx = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
@@ -6107,27 +6167,69 @@ function VehicleCard({
     if (!sub.enDesgloseCronometro && sub.completada) return;
     const limitMs = sub.minutosCupo * 60 * 1000;
     const fireKey = `${anchor.subTareaId}-${anchor.startedAt}-${sub.minutosCupo}`;
+
+    const isSubStillPending = () => {
+      const a = situacionAnchorRef.current;
+      if (!a?.subTareaId) return false;
+      const cur = (subTareasRef.current || []).find(s => s.id === a.subTareaId);
+      if (!cur || !(cur.minutosCupo && cur.minutosCupo > 0)) return false;
+      if (cur.enDesgloseCronometro && (cur.resultadoSituacion ?? "pendiente") !== "pendiente") return false;
+      if (!cur.enDesgloseCronometro && cur.completada) return false;
+      return true;
+    };
+
+    const clearEscalation = () => {
+      if (situacionCupoEscalationRef.current) {
+        clearInterval(situacionCupoEscalationRef.current);
+        situacionCupoEscalationRef.current = null;
+      }
+    };
+
     const run = () => {
+      if (!isSubStillPending()) {
+        clearEscalation();
+        return;
+      }
       const elapsed = Date.now() - anchor.startedAt;
       if (elapsed < limitMs) return;
       if (situacionCupoFireKeyRef.current === fireKey) return;
       situacionCupoFireKeyRef.current = fireKey;
-      playAlarm();
-      if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
-      if (document.hidden && "Notification" in window && Notification.permission === "granted") {
-        try {
-          new Notification(`⏱ Cupo · ${vehicle.titulo}`, {
-            body: `La fila «${sub.texto.slice(0, 48)}${sub.texto.length > 48 ? "…" : ""}» alcanzó su cupo.`,
-            icon: "/favicon.ico",
-            tag: `situacion-cupo-${vehicle.id}-${fireKey}`,
-          });
-        } catch { /* empty */ }
-      }
+      fireSituacionCupoAlert({
+        vehicleId: vehicle.id,
+        vehicleTitulo: vehicle.titulo,
+        subTexto: sub.texto,
+        tagKey: fireKey,
+      });
+      clearEscalation();
+      let escalationCount = 0;
+      situacionCupoEscalationRef.current = window.setInterval(() => {
+        if (!isSubStillPending()) {
+          clearEscalation();
+          return;
+        }
+        escalationCount += 1;
+        if (escalationCount > SITUACION_CUPO_ESCALATION_MAX) {
+          clearEscalation();
+          return;
+        }
+        const cur = (subTareasRef.current || []).find(s => s.id === anchor.subTareaId);
+        if (!cur) return;
+        fireSituacionCupoAlert({
+          vehicleId: vehicle.id,
+          vehicleTitulo: vehicle.titulo,
+          subTexto: cur.texto,
+          tagKey: fireKey,
+          escalation: true,
+        });
+      }, SITUACION_CUPO_ESCALATION_MS);
     };
     run();
     const intervalId = window.setInterval(run, 2000);
-    return () => clearInterval(intervalId);
-  }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.titulo, vehicle.id, playAlarm]);
+    return () => {
+      clearInterval(intervalId);
+      clearEscalation();
+    };
+  }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.titulo, vehicle.id]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -6144,8 +6246,13 @@ function VehicleCard({
     const warnKey = `2m-${anchor.subTareaId}-${anchor.startedAt}-${sub.minutosCupo}`;
     if (situacion2MinWarnKeyRef.current === warnKey) return;
     situacion2MinWarnKeyRef.current = warnKey;
-    void playSituacionChimes(3);
-  }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.id, situacionCupoUiTick]);
+    fireSituacion2MinAlert({
+      vehicleId: vehicle.id,
+      vehicleTitulo: vehicle.titulo,
+      subTexto: sub.texto,
+      tagKey: warnKey,
+    });
+  }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.titulo, vehicle.id, situacionCupoUiTick]);
 
   useEffect(() => {
     const wasExpired = prevTimerExpiredRef.current;
@@ -6289,6 +6396,14 @@ function VehicleCard({
     const timer = setTimeout(() => setShowMicroPasos(true), delay);
     return () => clearTimeout(timer);
   }, [tipoFlota, vehicle.status, vehicle.aperturaAt]);
+
+  useEffect(() => {
+    if (vehicle.status === "activo") return;
+    setShowEtiquetaSalida(false);
+    setEtiquetaSalidaLocal(null);
+    setNotaSalidaLocal("");
+    setPendingDescansoStatus(null);
+  }, [vehicle.status, vehicle.id]);
 
   useEffect(() => {
     if (vehicle.status !== "activo") return;
@@ -7396,7 +7511,7 @@ function VehicleCard({
                     )}
                   </div>
                   <p className="text-[7px] text-slate-600 leading-snug mb-2 px-0.5 border-l-2 pl-2" style={{ borderColor: "rgba(148,163,184,0.35)" }}>
-                    Lista libre: +2 PS al completar (sin tiempo madre). Selecciona filas y «Llevar al desglose con tiempo»: +4 PS por fila, +5′ desde la siguiente pendiente del cronómetro, 3 pitidos a 2 min del cupo de la fila en foco, timbres al marcar cumplido (orden). Ajustar hora fin redistribuye los MIN (opción B).
+                    Lista libre: +2 PS al completar (sin tiempo madre). Selecciona filas y «Llevar al desglose con tiempo»: +4 PS por fila, +5′ desde la siguiente pendiente del cronómetro, 3 pitidos a 2 min del cupo de la fila en foco, timbres al marcar cumplido (orden). Minutos que fijes manualmente se conservan; el resto se reparte al ajustar hora fin.
                   </p>
                   {(() => {
                     void situacionCupoUiTick;
@@ -7711,12 +7826,15 @@ function VehicleCard({
                                         </div>
                                         {pend && (onSetSubTareaMinutosCupo || onExtendSituacionCupo) && (
                                           <div className="flex items-center gap-1.5 pl-1 flex-wrap" onClick={e => e.stopPropagation()}>
-                                            <span className="text-[7px] font-black uppercase tracking-wider text-slate-500">Min</span>
+                                            <span className="text-[7px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-0.5">
+                                              Min
+                                              {st.cupoFijo && <Lock size={8} style={{ color: GOLD }} title="Minutos fijados manualmente" />}
+                                            </span>
                                             <input
                                               type="number"
                                               min={0}
                                               max={999}
-                                              key={`cupo-cron-${st.id}-${st.minutosCupo ?? "x"}`}
+                                              key={`cupo-cron-${st.id}-${st.minutosCupo ?? "x"}-${st.cupoFijo ? "f" : "x"}`}
                                               defaultValue={st.minutosCupo ?? ""}
                                               onBlur={(e) => {
                                                 const raw = e.target.value.trim();
@@ -7728,7 +7846,8 @@ function VehicleCard({
                                                 onSetSubTareaMinutosCupo?.(vehicle.id, st.id, raw === "" ? undefined : n);
                                               }}
                                               className="w-11 px-1 py-0.5 rounded text-[9px] bg-black/50 border text-white text-center font-mono"
-                                              style={{ borderColor: "rgba(148,163,184,0.35)" }}
+                                              style={{ borderColor: st.cupoFijo ? `${GOLD}55` : "rgba(148,163,184,0.35)" }}
+                                              title={st.cupoFijo ? "Fijado: el sobrante se reparte entre las demás filas" : "Fija minutos; el resto se reparte automáticamente"}
                                               data-testid={`input-subtarea-cupo-cron-${st.id}`}
                                             />
                                             {onExtendSituacionCupo && (
@@ -8583,14 +8702,27 @@ function DepositoEnergeticoSection({ vehicles, planilla }: { vehicles: Vehicle[]
 }
 
 function CierreJornadaModal({
-  vehicles, todayPoints, onClose, onSeal, userId
+  vehicles, segmentos, dayStartMs, todayPoints, onClose, onSeal, userId
 }: {
   vehicles: Vehicle[];
+  segmentos: SegmentoV5[];
+  dayStartMs: number;
   todayPoints: number;
   onClose: () => void;
   onSeal: (cierre: CierreJornadaLog) => void;
   userId: string;
 }) {
+  const balance = useMemo(
+    () =>
+      calcularBalanceConquistaJornada({
+        segmentos,
+        vehiculos: vehicles,
+        now: Date.now(),
+        dayStartMs,
+      }),
+    [segmentos, vehicles, dayStartMs]
+  );
+
   const totalVehicles = vehicles.length;
   const completedVehicles = vehicles.filter(v => v.status === "cumplido").length;
   const porcentajeDiaIdeal = totalVehicles > 0 ? Math.round((completedVehicles / totalVehicles) * 100) : 0;
@@ -8634,6 +8766,10 @@ function CierreJornadaModal({
     (cierre as any).energiaOscuraDetectada = energiaOscuraVehicles.length;
     (cierre as any).selloTexto = selloTexto;
     (cierre as any).cierreAt = Date.now();
+    (cierre as any).conquistaMin = balance.conquistaMin;
+    (cierre as any).entropiaMin = balance.entropiaMin;
+    (cierre as any).vacioMin = balance.vacioMin;
+    (cierre as any).jornadaPlanMin = balance.jornadaMin;
     onSeal(cierre);
   };
 
@@ -8644,6 +8780,8 @@ function CierreJornadaModal({
           <h2 className="text-base font-black uppercase tracking-wider" style={{ color: GOLD, fontFamily: "'Playfair Display', Georgia, serif" }}>Cierre de Jornada</h2>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/5"><X size={18} className="text-slate-500" /></button>
         </div>
+
+        <BalanceConquistaPanel balance={balance} />
 
         <div>
           <p className="text-[9px] font-bold uppercase tracking-widest mb-3" style={{ color: BLOOD }}>Balance de Voltaje</p>
