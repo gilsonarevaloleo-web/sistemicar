@@ -305,26 +305,6 @@ export function formatMinutosJornada(min: number): string {
   return r > 0 ? `${h}h ${r}m` : `${h}h`;
 }
 
-export const getJuicioMensaje = (segundos: number): string => {
-  if (segundos < 150)
-    return 'A. CONEXIÓN NIÑO: El tiempo es el lienzo de tu destino. ¿Cómo eliges pintar tu historia hoy?';
-  if (segundos < 300)
-    return 'B. IDENTIDAD SOCIAL: En cómo usas tu tiempo se decide si eres como los demás o superior. ¿Quién eres?';
-  if (segundos < 450)
-    return 'C. RESISTENCIA: Conoce tu límite de hoy para decidir dónde estar mañana. ¿Quieres montar un peldaño más?';
-  return 'D. IDENTIDAD DE JUEZ: Tienes dos caminos: a) La excusa y debilidad, b) El valor y la dignidad. ¿Cuál eliges?';
-};
-
-export const calcularVoltajeResistencia = (segundos: number): number => {
-  return segundos >= 300 ? 15 : 10;
-};
-
-export const getResistenciaColor = (segundos: number): string => {
-  const progreso = (segundos % 300) / 300;
-  const hue = 120 - progreso * 120;
-  return `hsl(${hue}, 100%, 50%)`;
-};
-
 export const debeEstarAbierto = (horaInicio: number): boolean => {
   const horaActual = new Date().getHours();
   return horaActual === horaInicio;

@@ -108,13 +108,11 @@ export default function AnilloConciencia({
     if (endDeg <= startDeg) continue;
 
     const color =
-      s.estado === "cerrado_manual" ? GOLD
-      : s.estado === "entropia" ? BLOOD
+      s.estado === "cerrado_manual" || s.estado === "entropia" ? GOLD
       : s.estado === "activo" ? CYAN
       : "rgba(255,255,255,0.12)";
     const glow =
-      s.estado === "cerrado_manual" ? `${GOLD}80`
-      : s.estado === "entropia" ? `${BLOOD}70`
+      s.estado === "cerrado_manual" || s.estado === "entropia" ? `${GOLD}80`
       : s.estado === "activo" ? `${CYAN}90`
       : "transparent";
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Moon, 
@@ -71,6 +72,8 @@ interface CierreData {
 
 export function CierreJornadaModal() {
   const { user } = useAuthContext();
+  const [location] = useLocation();
+  const isPlanificacion = location === "/planeacion" || location.startsWith("/planeacion?");
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [cierreData, setCierreData] = useState<CierreData | null>(null);
@@ -189,6 +192,7 @@ export function CierreJornadaModal() {
   );
 
   useEffect(() => {
+    if (isPlanificacion) return;
     const checkTime = () => {
       const now = new Date();
       const hours = now.getHours();
@@ -204,7 +208,7 @@ export function CierreJornadaModal() {
     checkTime();
     const interval = setInterval(checkTime, 60000);
     return () => clearInterval(interval);
-  }, [hasClosed, user]);
+  }, [hasClosed, user, isPlanificacion]);
 
   const fetchCierreData = async () => {
     if (!user) return;
@@ -271,6 +275,8 @@ export function CierreJornadaModal() {
 
   const EjeIcon = cierreData?.ejeDebil ? AXIS_ICONS[cierreData.ejeDebil] || Target : Target;
   const ejeColor = cierreData?.ejeDebil ? AXIS_COLORS[cierreData.ejeDebil] || GOLD : GOLD;
+
+  if (isPlanificacion) return null;
 
   return (
     <AnimatePresence>
