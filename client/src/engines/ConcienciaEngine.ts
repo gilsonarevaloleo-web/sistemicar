@@ -1,3 +1,5 @@
+import { getJournalDayStartMs } from "@/lib/segmentTime";
+
 export type NivelFatiga = 'Optimo' | 'Distraccion' | 'Confusion' | 'Aburrimiento' | 'Cansancio';
 
 export interface MetricasAnillo {
@@ -78,15 +80,101 @@ function sumMinutosPlaneados(segmentos: SegmentoAnilloLite[]): number {
   }, 0);
 }
 
-function minutosVehiculoConsciente(v: VehiculoAnilloLite, now: number): number {
-  if (v.status === "activo" && v.aperturaAt) {
-    return Math.max(0, (now - v.aperturaAt) / 60000);
+
+function overlapMinutes(
+  sessionStart: number,
+  sessionEnd: number,
+  winStart: number,
+  winEnd: number
+): number {
+  const start = Math.max(sessionStart, winStart);
+  const end = Math.min(sessionEnd, winEnd);
+  return Math.max(0, (end - start) / 60000);
+}
+
+function vehicleSessionRange(
+  v: VehiculoAnilloLite,
+  now: number
+): { start: number; end: number } | null {
+  const start = v.aperturaAt;
+  if (!start) return null;
+  let end: number;
+  if (v.status === "activo") {
+    end = now;
+  } else if (v.cierreAt) {
+    end = v.cierreAt;
+  } else if (v.duracionFinal != null) {
+    end = start + v.duracionFinal * 60000;
+  } else {
+    return null;
   }
-  if (v.duracionFinal != null) return v.duracionFinal;
-  if (v.cierreAt && v.aperturaAt) {
-    return Math.max(0, (v.cierreAt - v.aperturaAt) / 60000);
+  return end > start ? { start, end } : null;
+}
+
+function sessionMinutesInWindow(
+  session: { start: number; end: number },
+  winStart: number,
+  winEnd: number
+): number {
+  return overlapMinutes(session.start, session.end, winStart, winEnd);
+}
+
+/** Minutos de sesión dentro del día-jornada (desde 05:00 Lima). */
+export function sessionMinutesInJournalDay(
+  v: VehiculoAnilloLite,
+  now: number = Date.now()
+): number {
+  const session = vehicleSessionRange(v, now);
+  if (!session) return 0;
+  const journalStart = getJournalDayStartMs(now);
+  return sessionMinutesInWindow(session, journalStart, now);
+}
+
+/** Vehículos con sesión que intersecta el día-jornada actual. */
+export function filterVehiculosJornadaActual(
+  vehiculos: VehiculoAnilloLite[],
+  now: number = Date.now()
+): VehiculoAnilloLite[] {
+  const journalStart = getJournalDayStartMs(now);
+  return vehiculos.filter(v => {
+    const session = vehicleSessionRange(v, now);
+    if (!session) return false;
+    return session.end >= journalStart && session.start <= now;
+  });
+}
+
+function computeConquistaEntropiaMinutos(params: {
+  vehiculos: VehiculoAnilloLite[];
+  now: number;
+}): { conquistaMin: number; entropiaMin: number } {
+  const { vehiculos, now } = params;
+  const journalStart = getJournalDayStartMs(now);
+
+  const consciousSessions = vehiculos
+    .filter(v => !v.autoVerdad)
+    .map(v => vehicleSessionRange(v, now))
+    .filter((s): s is { start: number; end: number } => s != null);
+
+  const centinelaSessions = vehiculos
+    .filter(v => v.autoVerdad)
+    .map(v => vehicleSessionRange(v, now))
+    .filter((s): s is { start: number; end: number } => s != null);
+
+  let conquistaMin = 0;
+  for (const s of consciousSessions) {
+    conquistaMin += sessionMinutesInWindow(s, journalStart, now);
   }
-  return 0;
+
+  let entropiaMin = 0;
+  for (const cs of centinelaSessions) {
+    let mins = sessionMinutesInWindow(cs, journalStart, now);
+    for (const qs of consciousSessions) {
+      mins -= overlapMinutes(cs.start, cs.end, qs.start, qs.end);
+    }
+    entropiaMin += Math.max(0, mins);
+  }
+
+  return { conquistaMin, entropiaMin };
 }
 
 /** Conquista vs entropía comparten el mismo presupuesto de jornada (arcos complementarios). */
@@ -96,34 +184,16 @@ export function calcularMetricasAnilloConciencia(params: {
   now?: number;
 }): MetricasAnilloConciencia {
   const now = params.now ?? Date.now();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-  const todayStartMs = todayStart.getTime();
 
   const minutosPlaneados = sumMinutosPlaneados(params.segmentos);
   const jornadaMin = minutosPlaneados || 1440;
   const planificacionPct = Math.min(100, (minutosPlaneados / 1440) * 100);
 
-  const todayConscious = params.vehiculos.filter(
-    v =>
-      !v.autoVerdad &&
-      (v.status === "activo" ||
-        ((v.status === "cumplido" || v.status === "archivado") &&
-          (v.cierreAt || v.aperturaAt || 0) >= todayStartMs))
-  );
-
-  const conquistaMin = todayConscious.reduce(
-    (acc, v) => acc + minutosVehiculoConsciente(v, now),
-    0
-  );
-
-  const centinelaActivo = params.vehiculos.find(v => v.autoVerdad && v.status === "activo");
-  const centinelaMinActivo = centinelaActivo?.aperturaAt
-    ? Math.max(0, (now - centinelaActivo.aperturaAt) / 60000)
-    : 0;
-  const centinelasCerrados = params.vehiculos.filter(v => v.autoVerdad && v.status !== "activo");
-  const entropiaMin =
-    centinelasCerrados.reduce((s, v) => s + (v.duracionFinal || 0), 0) + centinelaMinActivo;
+  const jornadaVehiculos = filterVehiculosJornadaActual(params.vehiculos, now);
+  const { conquistaMin, entropiaMin } = computeConquistaEntropiaMinutos({
+    vehiculos: jornadaVehiculos,
+    now,
+  });
 
   const totalMin = conquistaMin + entropiaMin;
   const fillPct = Math.min(100, (totalMin / jornadaMin) * 100);
@@ -188,36 +258,6 @@ function segmentWindowMs(
   return { start: start.getTime(), end: end.getTime() };
 }
 
-function overlapMinutes(
-  sessionStart: number,
-  sessionEnd: number,
-  winStart: number,
-  winEnd: number
-): number {
-  const start = Math.max(sessionStart, winStart);
-  const end = Math.min(sessionEnd, winEnd);
-  return Math.max(0, (end - start) / 60000);
-}
-
-function vehicleSessionRange(
-  v: VehiculoAnilloLite,
-  now: number
-): { start: number; end: number } | null {
-  const start = v.aperturaAt;
-  if (!start) return null;
-  let end: number;
-  if (v.status === "activo") {
-    end = now;
-  } else if (v.cierreAt) {
-    end = v.cierreAt;
-  } else if (v.duracionFinal != null) {
-    end = start + v.duracionFinal * 60000;
-  } else {
-    return null;
-  }
-  return end > start ? { start, end } : null;
-}
-
 /** Balance del día: tiempo conquistado vs centinela vs vacío, desglosado por segmento. */
 export function calcularBalanceConquistaJornada(params: {
   segmentos: Array<SegmentoAnilloLite & { nombre?: string; estado?: string }>;
@@ -226,24 +266,17 @@ export function calcularBalanceConquistaJornada(params: {
   dayStartMs?: number;
 }): BalanceConquistaJornada {
   const now = params.now ?? Date.now();
-  const dayStart = new Date(now);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayStartMs = params.dayStartMs ?? dayStart.getTime();
+  const dayStartMs = params.dayStartMs ?? getJournalDayStartMs(now);
 
+  const jornadaVehiculos = filterVehiculosJornadaActual(params.vehiculos, now);
   const metricas = calcularMetricasAnilloConciencia({
     segmentos: params.segmentos,
-    vehiculos: params.vehiculos,
+    vehiculos: jornadaVehiculos,
     now,
   });
 
-  const consciousToday = params.vehiculos.filter(
-    v =>
-      !v.autoVerdad &&
-      (v.status === "activo" ||
-        ((v.status === "cumplido" || v.status === "archivado") &&
-          (v.cierreAt || v.aperturaAt || 0) >= dayStartMs))
-  );
-  const centinelas = params.vehiculos.filter(v => v.autoVerdad);
+  const consciousToday = jornadaVehiculos.filter(v => !v.autoVerdad);
+  const centinelas = jornadaVehiculos.filter(v => v.autoVerdad);
 
   const segmentosBalance: SegmentoConquistaBalance[] = params.segmentos.map(seg => {
     const duracionMin = Math.max(0, segmentDurationMin(seg.horaInicio || "", seg.horaFin || ""));
@@ -260,9 +293,17 @@ export function calcularBalanceConquistaJornada(params: {
     }
 
     let entropiaMin = 0;
+    const consciousSessions = consciousToday
+      .map(v => vehicleSessionRange(v, now))
+      .filter((s): s is { start: number; end: number } => s != null);
     for (const v of centinelas) {
       const session = vehicleSessionRange(v, now);
-      if (session) entropiaMin += overlapMinutes(session.start, session.end, winStart, winEnd);
+      if (!session) continue;
+      let mins = overlapMinutes(session.start, session.end, winStart, winEnd);
+      for (const qs of consciousSessions) {
+        mins -= overlapMinutes(session.start, session.end, qs.start, qs.end);
+      }
+      entropiaMin += Math.max(0, mins);
     }
 
     const vacioMin = Math.max(0, duracionMin - conquistaMin - entropiaMin);

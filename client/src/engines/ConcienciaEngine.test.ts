@@ -4,11 +4,10 @@ import {
   calcularMetricasAnilloConciencia,
   calcularBalanceConquistaJornada,
 } from "./ConcienciaEngine";
+import { getJournalDayStartMs } from "../lib/segmentTime";
 
-const DAY = 24 * 60 * 60 * 1000;
 const now = new Date("2026-05-18T14:00:00").getTime();
-const todayStart = new Date(now);
-todayStart.setHours(0, 0, 0, 0);
+const journalStart = getJournalDayStartMs(now);
 
 const segmentos = [{ horaInicio: "9:00", horaFin: "11:00" }]; // 120 min jornada
 
@@ -29,8 +28,8 @@ describe("calcularMetricasAnilloConciencia", () => {
         {
           autoVerdad: false,
           status: "cumplido",
-          aperturaAt: todayStart.getTime() + 3600000,
-          cierreAt: todayStart.getTime() + 7200000,
+          aperturaAt: journalStart + 3600000,
+          cierreAt: journalStart + 7200000,
           duracionFinal: 60,
         },
       ],
@@ -62,8 +61,8 @@ describe("calcularMetricasAnilloConciencia", () => {
         {
           autoVerdad: false,
           status: "cumplido",
-          aperturaAt: todayStart.getTime(),
-          cierreAt: todayStart.getTime() + 3600000,
+          aperturaAt: journalStart + 3600000,
+          cierreAt: journalStart + 7200000,
           duracionFinal: 60,
         },
         {
@@ -79,15 +78,30 @@ describe("calcularMetricasAnilloConciencia", () => {
     assert.ok(Math.abs(m.conquistaArcPct + m.entropiaArcPct - m.fillPct) < 0.01);
     assert.ok(m.fillPct <= 100);
   });
+
+  it("centinela solapado con conquista no cuenta entropia doble", () => {
+    const apertura = now - 60 * 60000;
+    const m = calcularMetricasAnilloConciencia({
+      segmentos,
+      vehiculos: [
+        { autoVerdad: false, status: "activo", aperturaAt: apertura },
+        { autoVerdad: true, status: "activo", aperturaAt: apertura },
+      ],
+      now,
+    });
+    assert.ok(m.conquistaMin >= 59);
+    assert.equal(m.entropiaMin, 0);
+    assert.equal(m.entropiaArcPct, 0);
+  });
 });
 
 describe("calcularBalanceConquistaJornada", () => {
-  it("segmento sin actividad: todo vacío", () => {
+  it("segmento sin actividad: todo vaco", () => {
     const b = calcularBalanceConquistaJornada({
-      segmentos: [{ nombre: "Mañana", horaInicio: "9:00", horaFin: "11:00" }],
+      segmentos: [{ nombre: "Maana", horaInicio: "9:00", horaFin: "11:00" }],
       vehiculos: [],
       now,
-      dayStartMs: todayStart.getTime(),
+      dayStartMs: journalStart,
     });
     assert.equal(b.jornadaMin, 120);
     assert.equal(b.conquistaMin, 0);
@@ -97,29 +111,27 @@ describe("calcularBalanceConquistaJornada", () => {
   });
 
   it("atribuye conquista y centinela al segmento correcto", () => {
-    const dayMs = todayStart.getTime();
-    const segStart = new Date(dayMs);
-    segStart.setHours(9, 0, 0, 0);
+    const segStart = journalStart + 4 * 3600000;
     const b = calcularBalanceConquistaJornada({
       segmentos: [{ nombre: "Bloque", horaInicio: "9:00", horaFin: "11:00" }],
       vehiculos: [
         {
           autoVerdad: false,
           status: "cumplido",
-          aperturaAt: segStart.getTime(),
-          cierreAt: segStart.getTime() + 45 * 60000,
+          aperturaAt: segStart,
+          cierreAt: segStart + 45 * 60000,
           duracionFinal: 45,
         },
         {
           autoVerdad: true,
           status: "cumplido",
-          aperturaAt: segStart.getTime() + 50 * 60000,
-          cierreAt: segStart.getTime() + 70 * 60000,
+          aperturaAt: segStart + 50 * 60000,
+          cierreAt: segStart + 70 * 60000,
           duracionFinal: 20,
         },
       ],
-      now: segStart.getTime() + 120 * 60000,
-      dayStartMs: dayMs,
+      now: segStart + 120 * 60000,
+      dayStartMs: journalStart,
     });
     assert.ok(b.conquistaMin >= 45);
     assert.ok(b.entropiaMin >= 20);

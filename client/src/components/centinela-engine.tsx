@@ -13,6 +13,7 @@ import {
 import { getJournalDateString, getJournalDayStartMs } from "@/lib/segmentTime";
 import {
   activateCentinelaVehicle,
+  archiveActiveCentinelasWhenBlocked,
   CENTINELA_DELAY_MS,
   computeCentinelaUiState,
   emitCentinelaUi,
@@ -24,7 +25,7 @@ import {
 
 const CENTINELA_MAX_AGE_MS = 8 * 3600 * 1000;
 
-/** Motor global del Centinela  corre en toda la app, no solo en Planificacin. */
+/** Motor global del Centinela ? corre en toda la app, no solo en Planificaci?n. */
 export function CentinelaEngine() {
   const { user } = useAuthContext();
   const [planillaFecha, setPlanillaFecha] = useState(() => getJournalDateString());
@@ -90,13 +91,13 @@ export function CentinelaEngine() {
             });
             await updateVehicleStatus(user.uid, activeCentinela.id, "archivado");
             if ("Notification" in window && Notification.permission === "granted") {
-              new Notification("? SISTEMICAR  Centinela Cerrado", {
-                body: `Sesin anterior cerrada automticamente. Duracin registrada: ${dur} min.`,
+              new Notification("? SISTEMICAR ? Centinela Cerrado", {
+                body: `Sesi?n anterior cerrada autom?ticamente. Duraci?n registrada: ${dur} min.`,
                 icon: "/favicon.ico",
                 silent: false,
               });
             }
-            console.log("[Centinela] Auto-cerrado. Duracin:", dur, "min");
+            console.log("[Centinela] Auto-cerrado. Duraci?n:", dur, "min");
           } catch (e) {
             console.error("[Centinela autoclose]", e);
           }
@@ -105,11 +106,15 @@ export function CentinelaEngine() {
       await reconcileStaleCentinelaInFirestore(user.uid);
     };
 
-    const tickUi = () => {
+    const tickUi = async () => {
       const now = Date.now();
       const vehicles = vehiclesRef.current;
 
       if (isCentinelaBlockedByVehicles(vehicles)) {
+        const closed = await archiveActiveCentinelasWhenBlocked(user.uid, vehicles);
+        if (closed.length > 0) {
+          console.log("[Centinela] Archivados por trabajo consciente:", closed.join(", "));
+        }
         resetTimer();
       }
 
@@ -138,6 +143,7 @@ export function CentinelaEngine() {
       }
 
       if (isCentinelaBlockedByVehicles(vehicles)) {
+        await archiveActiveCentinelasWhenBlocked(user.uid, vehicles);
         resetTimer();
         return;
       }
@@ -149,7 +155,7 @@ export function CentinelaEngine() {
         console.log("[Centinela] Limpiados obsoletos:", closedIds.join(", "));
       }
       if (hasActiveRemote) {
-        console.log("[Centinela] Ya hay uno activo en la nube  esperando sync local");
+        console.log("[Centinela] Ya hay uno activo en la nube ? esperando sync local");
         return;
       }
 
@@ -168,7 +174,7 @@ export function CentinelaEngine() {
       if (isCentinelaBlockedByVehicles(vehiclesRef.current)) return;
 
       const centinelaAperturaAt = since;
-      console.log("[Centinela] Activando tras", Math.round(elapsedWait / 1000), "s sin vehculos");
+      console.log("[Centinela] Activando tras", Math.round(elapsedWait / 1000), "s sin veh?culos");
       await activateCentinelaVehicle(user.uid, centinelaAperturaAt);
       resetTimer();
     };
@@ -184,16 +190,16 @@ export function CentinelaEngine() {
     }
 
     void checkExpiredCentinela();
-    tickUi();
+    void tickUi();
 
-    const uiInterval = setInterval(tickUi, 1000);
+    const uiInterval = setInterval(() => { void tickUi(); }, 1000);
     const activateInterval = setInterval(() => {
       void checkActivate();
     }, 5000);
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      console.log("[Centinela] App visible  reevaluando");
+      console.log("[Centinela] App visible ? reevaluando");
       void checkExpiredCentinela();
       lastCheck.current = 0;
       setTimeout(() => forceCheckRef.current?.(), 3000);

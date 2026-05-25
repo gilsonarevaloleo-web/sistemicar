@@ -26,7 +26,7 @@ export {
   mergeSubTareasById,
 } from "./situacionSessionMerge";
 import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
-import { getJournalDateString, getNextLimaMidnightMs } from "./segmentTime";
+import { getJournalDateString, getJournalDayStartMs, getNextLimaMidnightMs } from "./segmentTime";
 import {
   type ModuleAccessInput,
   type ModuleId,
@@ -828,10 +828,8 @@ export function subscribeToVehicles(
         } as Vehicle;
       });
 
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayStartMs = todayStart.getTime();
-      const thirtyDaysAgoMs = todayStartMs - 30 * 24 * 60 * 60 * 1000;
+      const journalStartMs = getJournalDayStartMs();
+      const thirtyDaysAgoMs = journalStartMs - 30 * 24 * 60 * 60 * 1000;
 
       const activos = data.filter(v => v.status === "activo" && !wasVehicleRecentlyClosed(v.id));
 
@@ -851,7 +849,7 @@ export function subscribeToVehicles(
         if (!v.autoVerdad) return false;
         if (v.status === "activo") return false;
         const cierreMs = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
-        return cierreMs >= todayStartMs;
+        return cierreMs >= journalStartMs;
       });
 
       const merged = [...activos, ...completadosRecientes, ...centinelasCerradosHoy];

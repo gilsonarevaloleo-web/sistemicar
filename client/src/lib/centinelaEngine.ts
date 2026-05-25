@@ -125,6 +125,33 @@ export function isCentinelaBlockedByVehicles(vehicles: Vehicle[]): boolean {
   return vehicles.some(v => v.status === "activo" && !v.autoVerdad);
 }
 
+/** Cierra centinelas activos cuando hay trabajo consciente (evita entropía fantasma en el anillo). */
+export async function archiveActiveCentinelasWhenBlocked(
+  userId: string,
+  vehicles: Vehicle[]
+): Promise<string[]> {
+  if (!isCentinelaBlockedByVehicles(vehicles)) return [];
+  const active = vehicles.filter(v => v.autoVerdad && v.status === "activo");
+  if (active.length === 0) return [];
+
+  const { updateVehicle, updateVehicleStatus } = await import("./persistence.ts");
+  const now = Date.now();
+  const closedIds: string[] = [];
+
+  for (const av of active) {
+    const dur = Math.max(0, Math.round((now - (av.aperturaAt || now)) / 60000));
+    try {
+      await updateVehicle(userId, av.id, { cierreAt: now, duracionFinal: dur });
+      await updateVehicleStatus(userId, av.id, "archivado");
+      closedIds.push(av.id);
+      console.log(`[Centinela] Cerrado por vehículo consciente activo: ${av.id} (${dur} min)`);
+    } catch (e) {
+      console.warn("[Centinela] archiveActiveCentinelasWhenBlocked:", av.id, e);
+    }
+  }
+  return closedIds;
+}
+
 export function resetCentinelaTimerState(): void {
   localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
 }
