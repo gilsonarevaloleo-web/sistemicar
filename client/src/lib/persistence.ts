@@ -460,6 +460,8 @@ export interface DetalleSubTarea {
   texto: string;
   entregado: boolean;
   creadaAt: number;
+  /** Idea o acción repetitiva (Casa situacional), sin cupo de tiempo. */
+  casa?: boolean;
 }
 
 export interface SubTarea {

@@ -5,6 +5,7 @@ import {
   aplicarTiempoGanadoAlCumplir,
   applyCupoManualYRedistribuir,
   computeSituacionCronometroHorarios,
+  descontarMinutosDeFlexiblesPosteriores,
   redistribuirMinutosSituacionCronometro,
   situacionRelojDebeMostrarse,
   situacionTargetMsReloj,
@@ -58,6 +59,38 @@ describe("redistribuirMinutosSituacionCronometro", () => {
     assert.equal(a.cupoFijo, undefined);
     assert.equal(sumMinutosCronometroPendientes(out), 30);
     assert.ok((a.minutosCupo ?? 0) >= 1);
+  });
+});
+
+describe("descontarMinutosDeFlexiblesPosteriores", () => {
+  it("descuenta de filas flexibles posteriores en orden", () => {
+    const subs = [st("a", 10, true), st("b", 15), st("c", 10)];
+    const r = descontarMinutosDeFlexiblesPosteriores(subs, "a", 8);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.descontado, 8);
+    assert.equal(r.subTareas.find(s => s.id === "a")!.minutosCupo, 10);
+    assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 7);
+    assert.equal(r.subTareas.find(s => s.id === "c")!.minutosCupo, 10);
+    assert.equal(sumMinutosCronometroPendientes(r.subTareas), 27);
+  });
+
+  it("no toca filas con cupo fijo", () => {
+    const subs = [st("a", 10), st("b", 20, true), st("c", 10)];
+    const r = descontarMinutosDeFlexiblesPosteriores(subs, "a", 5);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 20);
+    assert.equal(r.subTareas.find(s => s.id === "c")!.minutosCupo, 5);
+  });
+
+  it("falla si no hay minutos flexibles suficientes", () => {
+    const subs = [st("a", 10), st("b", 3, true), st("c", 2)];
+    const r = descontarMinutosDeFlexiblesPosteriores(subs, "a", 5);
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.reason, "insuficiente");
+    assert.equal(r.disponible, 2);
   });
 });
 

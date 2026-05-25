@@ -124,6 +124,55 @@ function agregarMinutosProporcionalAFlexibles(
   return next;
 }
 
+export type DescontarFlexiblesResult =
+  | { ok: true; subTareas: SubTarea[]; descontado: number }
+  | { ok: false; reason: "sin_flexibles" | "insuficiente"; disponible: number };
+
+/** Resta minutos solo de filas posteriores pendientes en cronómetro sin cupo fijo. */
+export function descontarMinutosDeFlexiblesPosteriores(
+  subTareas: SubTarea[],
+  subTareaId: string,
+  delta: number
+): DescontarFlexiblesResult {
+  if (delta <= 0) return { ok: false, reason: "insuficiente", disponible: 0 };
+  const idx = subTareas.findIndex(st => st.id === subTareaId);
+  if (idx === -1) return { ok: false, reason: "sin_flexibles", disponible: 0 };
+
+  const flexTargets = subTareas
+    .map((st, i) => ({ st, i }))
+    .filter(
+      ({ st, i }) =>
+        i > idx &&
+        situacionFilaCronometroPendiente(st) &&
+        !isCupoFijo(st) &&
+        (st.minutosCupo ?? 0) > 0
+    );
+
+  const disponible = flexTargets.reduce((a, { st }) => a + (st.minutosCupo ?? 0), 0);
+  if (flexTargets.length === 0) return { ok: false, reason: "sin_flexibles", disponible: 0 };
+  if (disponible < delta) return { ok: false, reason: "insuficiente", disponible };
+
+  let remaining = delta;
+  const next = [...subTareas];
+  for (const { st, i } of flexTargets) {
+    if (remaining <= 0) break;
+    const cur = st.minutosCupo ?? 0;
+    const take = Math.min(cur, remaining);
+    const newMin = cur - take;
+    if (newMin <= 0) {
+      const row = { ...next[i] };
+      delete (row as { minutosCupo?: number }).minutosCupo;
+      delete (row as { cupoFijo?: boolean }).cupoFijo;
+      next[i] = row;
+    } else {
+      next[i] = { ...st, minutosCupo: newMin };
+    }
+    remaining -= take;
+  }
+
+  return { ok: true, subTareas: next, descontado: delta };
+}
+
 /** Copia de cupos con bono virtual de tiempo ganado en la fila foco (solo proyecci�n UI). */
 function aplicarPreviewTiempoGanado(
   subTareas: SubTarea[],

@@ -34,7 +34,8 @@ function mergeDetallesLists(
   for (const d of listA) byId.set(d.id, d);
   for (const d of listB) {
     const prev = byId.get(d.id);
-    if (!prev || (d.entregado && !prev.entregado)) byId.set(d.id, d);
+    if (!prev) byId.set(d.id, d);
+    else byId.set(d.id, { ...prev, ...d, entregado: prev.entregado || d.entregado });
   }
   return [...byId.values()].sort((x, y) => x.creadaAt - y.creadaAt);
 }
