@@ -53,13 +53,81 @@ export function maxBanda(a: FocusBandId, b: FocusBandId): FocusBandId {
   return BANDA_RANK[a] >= BANDA_RANK[b] ? a : b;
 }
 
+const FOCUS_BANDS: FocusBandId[] = ["fluido", "concentrado", "limite"];
+
+/** Tramos de ruta recorridos en un sub cumplido (declarados al cierre o detectados en cruzado). */
+export function bandasRecoridasSub(sub: SubVehiculo): FocusBandId[] {
+  if (sub.status !== "cumplido") return [];
+
+  const decl = sub.rutaDeclarada?.filter((b): b is FocusBandId =>
+    FOCUS_BANDS.includes(b as FocusBandId)
+  );
+  if (decl && decl.length > 0) return [...new Set(decl)];
+
+  const cruzado = sub.rutaEnfoque?.cruzado;
+  if (sub.rutaEnfoque?.activa && cruzado) {
+    const bands: FocusBandId[] = [];
+    if (cruzado.fluido) bands.push("fluido");
+    if (cruzado.concentrado) bands.push("concentrado");
+    if (cruzado.limite) bands.push("limite");
+    if (bands.length > 0) return bands;
+  }
+
+  return ["fluido"];
+}
+
+/** Profundidad máxima alcanzada en un bloque (p. ej. cierre / ledger). */
 export function inferBandaBloque(sub: SubVehiculo): FocusBandId {
-  const decl = sub.rutaDeclarada || [];
-  if (decl.includes("limite")) return "limite";
-  if (decl.includes("concentrado")) return "concentrado";
-  if (sub.rutaEnfoque?.cruzado.limite) return "limite";
-  if (sub.rutaEnfoque?.cruzado.concentrado) return "concentrado";
+  const bands = bandasRecoridasSub(sub);
+  if (bands.includes("limite")) return "limite";
+  if (bands.includes("concentrado")) return "concentrado";
   return "fluido";
+}
+
+function addSubBandasToEspectro(counts: EspectroBloques, sub: SubVehiculo): void {
+  for (const banda of bandasRecoridasSub(sub)) {
+    counts[banda]++;
+  }
+}
+
+/** Cruces de umbral en vivo (ledger) — respaldo si el sub perdió cruzado al sincronizar. */
+export function espectroFromRutaCruceEvents(
+  events: FocusBandEvent[],
+  dayStartMs: number
+): Pick<EspectroBloques, "concentrado" | "limite"> {
+  const seenConc = new Set<string>();
+  const seenLim = new Set<string>();
+  let concentrado = 0;
+  let limite = 0;
+
+  for (const e of events) {
+    if (e.timestamp < dayStartMs || e.source !== "ruta_cruce") continue;
+    const key = `${e.subVehicleId ?? e.vehicleId ?? e.id}-${e.banda}`;
+    if (e.banda === "concentrado" && !seenConc.has(key)) {
+      seenConc.add(key);
+      concentrado++;
+    }
+    if (e.banda === "limite" && !seenLim.has(key)) {
+      seenLim.add(key);
+      limite++;
+    }
+  }
+
+  return { concentrado, limite };
+}
+
+function mergeEspectroWithEvents(
+  espectro: EspectroBloques,
+  events: FocusBandEvent[],
+  dayStartMs: number
+): EspectroBloques {
+  if (events.length === 0) return espectro;
+  const fromEvents = espectroFromRutaCruceEvents(events, dayStartMs);
+  return {
+    ...espectro,
+    concentrado: Math.max(espectro.concentrado, fromEvents.concentrado),
+    limite: Math.max(espectro.limite, fromEvents.limite),
+  };
 }
 
 export function inferBandaVehiculo(v: Vehicle): FocusBandId | null {
@@ -137,7 +205,7 @@ export function computeEspectroBloques(
   const inDay = (ts?: number) => (ts ?? 0) >= dayStartMs;
 
   for (const v of vehicles) {
-    const cierre = v.cierreAt || v.updatedAt?.getTime?.() || 0;
+    const cierre = v.cierreAt || v.aperturaAt || 0;
     if (!inDay(cierre) && v.status !== "activo") continue;
 
     if (v.tipoFlota === "descanso" && (v.status === "cumplido" || v.status === "archivado")) {
@@ -148,8 +216,9 @@ export function computeEspectroBloques(
     if (v.tipoReloj === "desglosador") {
       for (const sub of v.subVehiculos || []) {
         if (sub.status !== "cumplido") continue;
-        const banda = inferBandaBloque(sub);
-        counts[banda]++;
+        const subTs = sub.cierreAt || cierre;
+        if (v.status !== "activo" && !inDay(subTs)) continue;
+        addSubBandasToEspectro(counts, sub);
       }
       continue;
     }
@@ -161,6 +230,35 @@ export function computeEspectroBloques(
   }
 
   return counts;
+}
+
+/** Bloques únicos cumplidos (no suma tramos de ruta — un sub = un bloque). */
+export function countBloquesCompletados(vehicles: Vehicle[], dayStartMs: number): number {
+  let total = 0;
+  const inDay = (ts?: number) => (ts ?? 0) >= dayStartMs;
+
+  for (const v of vehicles) {
+    const cierre = v.cierreAt || v.aperturaAt || 0;
+    if (!inDay(cierre) && v.status !== "activo") continue;
+
+    if (v.tipoReloj === "desglosador") {
+      for (const sub of v.subVehiculos || []) {
+        if (sub.status !== "cumplido") continue;
+        const subTs = sub.cierreAt || cierre;
+        if (v.status !== "activo" && !inDay(subTs)) continue;
+        total++;
+      }
+      continue;
+    }
+
+    if (v.tipoFlota === "descanso") continue;
+
+    if (v.status === "cumplido" || v.status === "archivado") {
+      total++;
+    }
+  }
+
+  return total;
 }
 
 export function profundidadFromEspectro(espectro: EspectroBloques): FocusBandId {
@@ -203,7 +301,11 @@ export function buildDailySnapshot(params: {
     vacioMin = 0,
   } = params;
 
-  const espectroBloques = computeEspectroBloques(vehicles, dayStartMs);
+  const espectroBloques = mergeEspectroWithEvents(
+    computeEspectroBloques(vehicles, dayStartMs),
+    events,
+    dayStartMs
+  );
   const profundidadMaxima = maxBanda(
     profundidadFromEvents(events),
     profundidadFromEspectro(espectroBloques)
@@ -217,8 +319,7 @@ export function buildDailySnapshot(params: {
   const ratioConquista =
     jornadaMin > 0 ? conquistaMin / jornadaMin : cerradosManual / Math.max(totalSeg, 1);
 
-  const bloquesCompletados =
-    espectroBloques.fluido + espectroBloques.concentrado + espectroBloques.limite;
+  const bloquesCompletados = countBloquesCompletados(vehicles, dayStartMs);
 
   return {
     id: `snap_${fecha}_${Date.now()}`,

@@ -155,6 +155,23 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
   }
 
   if (firebaseV.status !== "activo" || localV.status !== "activo") {
+    if (
+      firebaseV.tipoReloj === "desglosador" &&
+      localV.subVehiculos &&
+      localV.subVehiculos.length > 0
+    ) {
+      const rutaRichness = (subs: typeof localV.subVehiculos) =>
+        (subs ?? []).filter(
+          s =>
+            s.status === "cumplido" &&
+            ((s.rutaDeclarada?.length ?? 0) > 0 ||
+              s.rutaEnfoque?.cruzado?.concentrado ||
+              s.rutaEnfoque?.cruzado?.limite)
+        ).length;
+      if (rutaRichness(localV.subVehiculos) > rutaRichness(firebaseV.subVehiculos)) {
+        return { ...firebaseV, subVehiculos: localV.subVehiculos };
+      }
+    }
     return firebaseV;
   }
 

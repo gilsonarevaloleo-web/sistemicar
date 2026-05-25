@@ -198,7 +198,8 @@ import {
   type ReorderDirection,
 } from "@/lib/desglosadorReorder";
 import { computeDailyPsBarModel } from "@/lib/dailyPsBar";
-import { recordFocusBandEvent, getFocusBandEventsRecent } from "@/lib/focusBandLedger";
+import { recordFocusBandEvent, getFocusBandEventsRecent, getFocusBandEventsForRange } from "@/lib/focusBandLedger";
+import type { FocusBandEvent } from "@/lib/focusBandLedger";
 import {
   buildDailySnapshot,
   savePlanillaDailySnapshot,
@@ -1218,6 +1219,24 @@ export default function Planeacion() {
   );
 
   const [yesterdayTermoSnapshot, setYesterdayTermoSnapshot] = useState<PlanillaDailySnapshot | null>(null);
+  const [focusEventsToday, setFocusEventsToday] = useState<FocusBandEvent[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const loadEvents = () => {
+      const fecha = getJournalDateString();
+      getFocusBandEventsForRange(user.uid, fecha, fecha)
+        .then(setFocusEventsToday)
+        .catch(() => setFocusEventsToday([]));
+    };
+    loadEvents();
+    window.addEventListener("focus-band-events-updated", loadEvents);
+    window.addEventListener("journal-day-changed", loadEvents);
+    return () => {
+      window.removeEventListener("focus-band-events-updated", loadEvents);
+      window.removeEventListener("journal-day-changed", loadEvents);
+    };
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -1228,7 +1247,7 @@ export default function Planeacion() {
   }, [user, planillaFecha, dailyPS, vehicles]);
 
   const todayTermoLive = useMemo(() => {
-    const dayStartMs = getLimaDayStart().getTime();
+    const dayStartMs = getJournalDayStartMs();
     const jornadaVehicles = vehicles.filter(v => {
       const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
       return ts >= dayStartMs;
@@ -1240,16 +1259,17 @@ export default function Planeacion() {
       dayStartMs,
     });
     return buildDailySnapshot({
-      fecha: getLimaDateString(),
+      fecha: getJournalDateString(),
       segmentos: planilla?.segmentos || [],
       vehicles: jornadaVehicles,
       dayStartMs,
       logs: [],
+      events: focusEventsToday,
       conquistaMin: balance.conquistaMin,
       entropiaMin: balance.entropiaMin,
       vacioMin: balance.vacioMin,
     });
-  }, [planilla, vehicles]);
+  }, [planilla, vehicles, focusEventsToday]);
 
   const termoCompare = useMemo(
     () => computeTermodinamicaCompare(yesterdayTermoSnapshot, todayTermoLive),
@@ -6017,6 +6037,21 @@ function VehicleCard({
   }>(null);
   const [subRutaSel, setSubRutaSel] = useState<Set<RutaBandaId>>(new Set());
   const [subRutaSinUso, setSubRutaSinUso] = useState(false);
+
+  useEffect(() => {
+    if (!subRutaModal) return;
+    const sub = (vehicle.subVehiculos || []).find(s => s.id === subRutaModal.subId);
+    const cruzada = sub?.rutaEnfoque?.cruzado;
+    if (cruzada) {
+      const pre = (["fluido", "concentrado", "limite"] as const).filter(b => cruzada[b]);
+      setSubRutaSel(new Set(pre));
+      setSubRutaSinUso(pre.length === 0);
+    } else {
+      setSubRutaSel(new Set(["fluido"]));
+      setSubRutaSinUso(false);
+    }
+  }, [subRutaModal, vehicle.subVehiculos]);
+
   const [showPausaForm, setShowPausaForm] = useState(false);
   const [pausaTitulo, setPausaTitulo] = useState("");
   const [pausaEnviando, setPausaEnviando] = useState(false);
@@ -6407,7 +6442,16 @@ function VehicleCard({
       cierreAt: now,
       duracionFinal: duracionCompletado,
       ...(status === "cumplido" && allSubs[idx].cantidadObjetivo ? { cantidadLograda: cantidad } : {}),
-      ...(allSubs[idx].rutaEnfoque?.activa ? { rutaDeclarada: rutaDeclarada ?? [] } : {}),
+      ...(allSubs[idx].rutaEnfoque?.activa
+        ? {
+            rutaDeclarada:
+              rutaDeclarada && rutaDeclarada.length > 0
+                ? rutaDeclarada
+                : (["fluido", "concentrado", "limite"] as const).filter(
+                    b => allSubs[idx].rutaEnfoque!.cruzado[b]
+                  ),
+          }
+        : {}),
     };
     onBloqueCierre?.({ vehicleId: vehicle.id, sub: allSubs[idx], status });
     const nextPending = allSubs.findIndex((s, i) => i > idx && s.status === "pendiente");

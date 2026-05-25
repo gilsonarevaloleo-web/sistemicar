@@ -23,7 +23,7 @@ describe("termodinamicaAtencional", () => {
     assert.equal(inferBandaBloque(sub), "limite");
   });
 
-  it("computeEspectroBloques cuenta bloques cumplidos del desglosador", () => {
+  it("computeEspectroBloques cuenta cada tramo de ruta por bloque cumplido", () => {
     const dayStart = Date.now() - 3600_000;
     const vehicles: Vehicle[] = [
       {
@@ -37,15 +37,39 @@ describe("termodinamicaAtencional", () => {
         tipoReloj: "desglosador",
         cierreAt: Date.now(),
         subVehiculos: [
-          { id: "s1", titulo: "Bloque peque�o", status: "cumplido", rutaDeclarada: ["fluido"] },
+          { id: "s1", titulo: "Bloque pequeño", status: "cumplido", rutaDeclarada: ["fluido"] },
           { id: "s2", titulo: "Bloque grande", status: "cumplido", rutaDeclarada: ["concentrado", "limite"] },
         ],
       } as Vehicle,
     ];
     const espectro = computeEspectroBloques(vehicles, dayStart);
     assert.equal(espectro.fluido, 1);
+    assert.equal(espectro.concentrado, 1);
     assert.equal(espectro.limite, 1);
-    assert.equal(espectro.concentrado, 0);
+  });
+
+  it("computeEspectroBloques usa cruzado cuando no hay rutaDeclarada", () => {
+    const dayStart = Date.now() - 3600_000;
+    const ruta = createRutaEnfoqueState(8);
+    ruta.cruzado = { fluido: true, concentrado: true, limite: true };
+    const vehicles: Vehicle[] = [
+      {
+        id: "v1",
+        titulo: "Pieza",
+        criterioFin: "cantidad",
+        criterioDetalle: "",
+        tiempoInicio: new Date(),
+        ejes: { enfoque: { texto: "", trifecta: "blando" }, conflicto: { texto: "", trifecta: "blando" }, pasos: { texto: "", trifecta: "blando" }, alcance: { texto: "", trifecta: "blando" } },
+        status: "activo",
+        tipoReloj: "desglosador",
+        aperturaAt: dayStart + 1000,
+        subVehiculos: [{ id: "s1", titulo: "Sub", status: "cumplido", cierreAt: Date.now(), rutaEnfoque: ruta }],
+      } as Vehicle,
+    ];
+    const espectro = computeEspectroBloques(vehicles, dayStart);
+    assert.equal(espectro.fluido, 1);
+    assert.equal(espectro.concentrado, 1);
+    assert.equal(espectro.limite, 1);
   });
 
   it("classifyPsSource separa panor�mico y veh�culos", () => {

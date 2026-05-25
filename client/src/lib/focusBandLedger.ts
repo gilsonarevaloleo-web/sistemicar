@@ -55,6 +55,10 @@ export async function recordFocusBandEvent(
   locals.push(entry);
   saveLocalEvents(userId, locals);
 
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("focus-band-events-updated"));
+  }
+
   if (isFirebaseConfigured() && db) {
     try {
       const { addDoc, collection } = await import("firebase/firestore");
