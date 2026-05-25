@@ -3,7 +3,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { Layout } from "./components/layout";
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { subscribeToProgression, UserProgression, verificarAccesoProspecto, registrarActividadProspecto } from "@/lib/persistence";
+import { subscribeToProgression, UserProgression, verificarAccesoProspecto, registrarActividadProspecto, hasPlanificacionBaseAccess, hasSoberaniaDiaAccess } from "@/lib/persistence";
+import type { ModuleId } from "@shared/moduleAccess";
 
 interface AppUser {
   uid: string;
@@ -34,6 +35,7 @@ import CamaraInmunidad from "@/pages/camara-inmunidad";
 import ComoFunciona from "@/pages/como-funciona";
 import Umbral from "@/pages/umbral";
 import Proyector from "@/pages/proyector";
+import Proyectos from "@/pages/proyectos";
 import TerminosCondiciones from "@/pages/terminos-condiciones";
 import LibroReclamaciones from "@/pages/libro-reclamaciones";
 import EmbudoSistemicar from "@/pages/embudo-sistemicar";
@@ -47,6 +49,8 @@ import UmbralLeads from "@/pages/umbral-leads";
 import VentasEspejo from "@/pages/ventas-espejo";
 import MetricasDocumento from "@/pages/metricas-documento";
 import MapaSistemicar from "@/pages/mapa-sistemicar";
+import VendedoresPlanificacion from "@/pages/vendedores-planificacion";
+import { SellerRefCapture } from "./components/seller-ref-capture";
 import Manuales from "@/pages/manuales";
 import AdminSemillas from "@/pages/admin-semillas";
 import Registros from "@/pages/registros";
@@ -111,7 +115,80 @@ const isOwnerEmail = (email: string | null | undefined): boolean => {
   return email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
 };
 
-// Ruta protegida para nivel ARQUITECTO ($24.99)
+// Ruta protegida por módulo activo (Planificación modular)
+function ModuleRoute({
+  component: Component,
+  requiredModule,
+}: {
+  component: React.ComponentType;
+  requiredModule: ModuleId;
+}) {
+  const { user, loading } = useAuthContext();
+  const [, navigate] = useLocation();
+  const [progression, setProgression] = useState<UserProgression | null>(null);
+  const [checkingTier, setCheckingTier] = useState(true);
+
+  const ownerBypass = isOwnerEmail(user?.email);
+
+  const hasAccess = (prog: UserProgression | null): boolean => {
+    if (ownerBypass) return true;
+    const args = [prog?.subscriptionPlan, user?.email, prog?.rank, prog?.activeModules] as const;
+    if (requiredModule === "planificacion_base") return hasPlanificacionBaseAccess(...args);
+    if (requiredModule === "soberania_dia") return hasSoberaniaDiaAccess(...args);
+    return false;
+  };
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate("/bienvenida");
+      return;
+    }
+
+    if (ownerBypass) {
+      setCheckingTier(false);
+      return;
+    }
+
+    if (user?.uid) {
+      const unsub = subscribeToProgression(
+        user.uid,
+        (prog) => {
+          setProgression(prog);
+          setCheckingTier(false);
+          if (!hasAccess(prog)) {
+            navigate("/pagos");
+          }
+        },
+        () => {
+          setCheckingTier(false);
+          if (!ownerBypass) navigate("/pagos");
+        }
+      );
+      return () => unsub();
+    }
+  }, [user, loading, navigate, ownerBypass, requiredModule]);
+
+  if (ownerBypass && !loading) {
+    return <Component />;
+  }
+
+  if (loading || checkingTier) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "#020202" }}>
+        <div className="text-center">
+          <div className="w-12 h-12 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 text-sm">Verificando acceso...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !hasAccess(progression)) return null;
+
+  return <Component />;
+}
+
+/** @deprecated Usar ModuleRoute con módulo específico */
 function ArquitectoRoute({ component: Component }: { component: React.ComponentType }) {
   const { user, loading } = useAuthContext();
   const [, navigate] = useLocation();
@@ -185,6 +262,7 @@ function ArquitectoRoute({ component: Component }: { component: React.ComponentT
 function Router() {
   return (
     <Layout>
+      <SellerRefCapture />
       <Switch>
         <Route path="/menu">
           <ProtectedRoute component={MenuPrincipal} />
@@ -196,10 +274,13 @@ function Router() {
           {() => { window.location.replace("/espejo"); return null; }}
         </Route>
         <Route path="/planeacion">
-          <ArquitectoRoute component={Planeacion} />
+          <ModuleRoute component={Planeacion} requiredModule="planificacion_base" />
+        </Route>
+        <Route path="/proyectos">
+          <ModuleRoute component={Proyectos} requiredModule="soberania_dia" />
         </Route>
         <Route path="/esperanza">
-          <ArquitectoRoute component={Esperanza} />
+          <ProtectedRoute component={Esperanza} />
         </Route>
         <Route path="/rewards">
           <ProtectedRoute component={Rewards} />
@@ -212,7 +293,7 @@ function Router() {
         </Route>
         <Route path="/pagos" component={Pagos} />
         <Route path="/socios">
-          <ArquitectoRoute component={Socios} />
+          <ProtectedRoute component={Socios} />
         </Route>
         <Route path="/admin-gilson">
           <ProtectedRoute component={AdminGilson} />
@@ -225,22 +306,22 @@ function Router() {
         </Route>
         <Route path="/historial" component={Historial} />
         <Route path="/alquimia">
-          <ArquitectoRoute component={Alquimia} />
+          <ProtectedRoute component={Alquimia} />
         </Route>
         <Route path="/radar">
-          <ArquitectoRoute component={Radar} />
+          <ProtectedRoute component={Radar} />
         </Route>
         <Route path="/historia">
-          <ArquitectoRoute component={Historia} />
+          <ProtectedRoute component={Historia} />
         </Route>
         <Route path="/codice">
-          <ArquitectoRoute component={Codice} />
+          <ProtectedRoute component={Codice} />
         </Route>
         <Route path="/escaner">
-          <ArquitectoRoute component={Escaner} />
+          <ProtectedRoute component={Escaner} />
         </Route>
         <Route path="/inmunidad">
-          <ArquitectoRoute component={CamaraInmunidad} />
+          <ProtectedRoute component={CamaraInmunidad} />
         </Route>
         <Route path="/como-funciona">
           <ProtectedRoute component={ComoFunciona} />
@@ -249,10 +330,10 @@ function Router() {
           <ProtectedRoute component={Manuales} />
         </Route>
         <Route path="/umbral">
-          <ArquitectoRoute component={Umbral} />
+          <ProtectedRoute component={Umbral} />
         </Route>
         <Route path="/proyector">
-          <ArquitectoRoute component={Proyector} />
+          <ProtectedRoute component={Proyector} />
         </Route>
         <Route path="/bienvenida" component={Bienvenida} />
         <Route path="/acceso" component={Acceso} />
@@ -260,6 +341,7 @@ function Router() {
         <Route path="/libro-reclamaciones" component={LibroReclamaciones} />
         <Route path="/embudo" component={EmbudoSistemicar} />
         <Route path="/documentos" component={Documentos} />
+        <Route path="/vendedores-planificacion" component={VendedoresPlanificacion} />
         <Route path="/espejo" component={Espejo} />
         <Route path="/espejo/expedientes/:id" component={EspejoExpedienteDetalle} />
         <Route path="/espejo/expedientes" component={EspejoExpedientes} />

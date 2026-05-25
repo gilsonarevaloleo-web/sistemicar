@@ -30,10 +30,12 @@ import {
   Map,
   Zap,
   Rocket,
+  Layers,
   Scale,
   FileText,
   LogIn,
   Sprout,
+  Radio,
 } from "lucide-react";
 import { Link } from "wouter";
 import { DataStatusPanel } from "@/components/data-status";
@@ -41,7 +43,8 @@ import { StatusAlianza } from "@/components/status-alianza";
 import { ResumenDiario } from "@/components/resumen-diario";
 import { TooltipOrientacion } from "@/components/tooltip-orientacion";
 import { Onboarding } from "@/components/onboarding";
-import { clearAllLocalData, subscribeToProgression, UserProgression, updateProgression, subscribeToCodices, SavedCodice, migrateDataToNewUid, saveMigrationPending, getMigrationPending, clearMigrationPending, subscribeToManualProgress, UserCertification, CERTIFICATION_LEVELS } from "@/lib/persistence";
+import { clearAllLocalData, subscribeToProgression, UserProgression, updateProgression, subscribeToCodices, SavedCodice, migrateDataToNewUid, saveMigrationPending, getMigrationPending, clearMigrationPending, subscribeToManualProgress, UserCertification, CERTIFICATION_LEVELS, hasPlanificacionBaseAccess, hasSoberaniaDiaAccess } from "@/lib/persistence";
+import { MODULOS_EN_CAMINO, BADGE_EN_CAMINO } from "@shared/moduleCatalog";
 import { toast } from "sonner";
 import {
   auth,
@@ -69,122 +72,79 @@ const SPECTRUM = {
 
 const GOLD = "#D4AF37";
 
-// Menú BASE (Espejo $17) - Solo acceso al Espejo
-const baseMenuItems = [
-  { 
-    id: "espejo", 
-    title: "ESPEJO", 
-    subtitle: "Vaciado mental",
-    icon: Eye,
-    route: "/espejo",
-    color: SPECTRUM.ROJO
-  },
-];
+interface MenuItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; style?: React.CSSProperties }>;
+  route: string;
+  color: string;
+  enCamino?: boolean;
+}
 
-const lockedMenuItems = [
-  { 
-    id: "alquimia", 
-    title: "ALQUIMIA", 
-    subtitle: "Requiere Arquitecto",
-    icon: Wand2,
-    route: "/pagos",
-    color: SPECTRUM.AMARILLO
-  },
-  { 
-    id: "umbral", 
-    title: "UMBRAL", 
-    subtitle: "Requiere Arquitecto",
-    icon: Zap,
-    route: "/pagos",
-    color: SPECTRUM.AZUL
-  },
-  { 
-    id: "deposito", 
-    title: "DEPÓSITO", 
-    subtitle: "Requiere Arquitecto",
-    icon: Sunrise,
-    route: "/pagos",
-    color: SPECTRUM.NARANJA
-  },
-];
+const MODULO_ICONS: Record<string, MenuItem["icon"]> = {
+  alquimia: Wand2,
+  umbral: Zap,
+  deposito: Sunrise,
+  proyector: Rocket,
+  mentor: MessageCircle,
+  alianza: Crown,
+  radar: Radio,
+  manuales: BookOpen,
+  proximo: Sparkles,
+};
 
-// Menú ARQUITECTO ($24.99) - Espectro Total
-const architectMenuItems = [
-  { 
-    id: "espejo", 
-    title: "ESPEJO", 
-    subtitle: "Vaciado mental",
-    icon: Eye,
-    route: "/espejo",
-    color: SPECTRUM.ROJO
-  },
-  { 
-    id: "alquimia", 
-    title: "ALQUIMIA", 
-    subtitle: "Sabiduría de experiencia",
-    icon: Wand2,
-    route: "/alquimia",
-    color: SPECTRUM.AMARILLO
-  },
-  { 
-    id: "umbral", 
-    title: "UMBRAL", 
-    subtitle: "Expansión de límites",
-    icon: Zap,
-    route: "/umbral",
-    color: SPECTRUM.AZUL
-  },
-  { 
-    id: "deposito", 
-    title: "DEPÓSITO", 
-    subtitle: "Batería de Certeza",
-    icon: Sunrise,
-    route: "/esperanza",
-    color: SPECTRUM.NARANJA
-  },
-  { 
-    id: "planificacion", 
-    title: "PLANIFICACIÓN", 
-    subtitle: "Motor de 4 Ejes",
-    icon: Heart,
-    route: "/planeacion",
-    color: SPECTRUM.VERDE
-  },
-  { 
-    id: "mentor", 
-    title: "MENTOR IA", 
-    subtitle: "Diagnóstico avanzado",
-    icon: MessageCircle,
-    route: "/mentor",
-    color: SPECTRUM.AZUL
-  },
-  { 
-    id: "alianza", 
-    title: "ALIANZA", 
-    subtitle: "Tu red de poder",
-    icon: Crown,
-    route: "/socios",
-    color: SPECTRUM.VIOLETA
-  },
-  { 
-    id: "proyector", 
-    title: "PROYECTOR", 
-    subtitle: "Arquitectura de Realidad",
-    icon: Rocket,
-    route: "/proyector",
-    color: "#6366F1"
-  },
-  { 
-    id: "manuales", 
-    title: "MANUALES", 
-    subtitle: "Biblioteca de guías",
-    icon: BookOpen,
-    route: "/manuales",
-    color: GOLD
-  },
-];
+function buildMenuItems(progression: UserProgression | null, email: string | null): MenuItem[] {
+  const accessArgs = [progression?.subscriptionPlan, email, progression?.rank, progression?.activeModules] as const;
+  const items: MenuItem[] = [
+    {
+      id: "espejo",
+      title: "ESPEJO",
+      subtitle: "Vaciado mental · $17 pago único",
+      icon: Eye,
+      route: "/espejo",
+      color: SPECTRUM.ROJO,
+    },
+  ];
 
-// Items secundarios solo para Arquitectos
+  if (hasPlanificacionBaseAccess(...accessArgs)) {
+    items.push({
+      id: "planificacion",
+      title: "PLANIFICACIÓN",
+      subtitle: "La Flota y segmentos",
+      icon: Heart,
+      route: "/planeacion",
+      color: SPECTRUM.VERDE,
+    });
+  }
+
+  if (hasSoberaniaDiaAccess(...accessArgs)) {
+    items.push({
+      id: "proyectos",
+      title: "PROYECTOS",
+      subtitle: "Escalera de peldaños",
+      icon: Layers,
+      route: "/proyectos",
+      color: "#38BDF8",
+    });
+  }
+
+  for (const mod of MODULOS_EN_CAMINO) {
+    items.push({
+      id: mod.id,
+      title: mod.nombre.toUpperCase(),
+      subtitle: BADGE_EN_CAMINO,
+      icon: MODULO_ICONS[mod.id] ?? Sparkles,
+      route: mod.route ?? "/pagos",
+      color: mod.color ?? "#64748b",
+      enCamino: true,
+    });
+  }
+
+  return items;
+}
+
+// Items secundarios
 const secondaryItems = [
   { id: "historia", title: "Historia", icon: History, route: "/historial", color: "#64748b" },
   { id: "registros", title: "Registros", icon: Database, route: "/registros", color: "#64748b" },
@@ -193,14 +153,8 @@ const secondaryItems = [
   { id: "mapa", title: "Mapa del Sistema", icon: Map, route: "/mapa", color: "#D4AF37" },
 ];
 
-// Email del propietario - siempre tiene acceso Arquitecto
+// Email del propietario - siempre tiene acceso completo
 const OWNER_EMAIL = "gilsonarevalo.leo@gmail.com";
-
-// Helper para verificar si es Arquitecto (o propietario)
-const isArquitecto = (rank: string | undefined, email: string | null = null): boolean => {
-  if (email && email.toLowerCase() === OWNER_EMAIL.toLowerCase()) return true;
-  return rank === "arquitecto";
-};
 
 export default function MenuPrincipal() {
   const [, navigate] = useLocation();
@@ -711,27 +665,38 @@ export default function MenuPrincipal() {
           <div>
         {/* Grid principal del espectro - filtrado por tier */}
         {(() => {
-          const esArquitecto = isArquitecto(progression?.rank, userEmail);
-          const menuItems = esArquitecto ? architectMenuItems : baseMenuItems;
+          const menuItems = buildMenuItems(progression, userEmail);
+          const tienePlanificacion = hasPlanificacionBaseAccess(
+            progression?.subscriptionPlan,
+            userEmail,
+            progression?.rank,
+            progression?.activeModules
+          );
           
           return (
             <>
-              <div className={`grid ${esArquitecto ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-4" : "grid-cols-2"} gap-3`}>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {menuItems.map((item, i) => (
                   <motion.button
                     key={item.id}
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.04 }}
-                    onClick={() => navigate(item.route)}
-                    className="group relative p-4 rounded-xl border text-center transition-all duration-300 hover:scale-[1.03] active:scale-[0.97]"
+                    onClick={() => item.id !== "proximo" && navigate(item.route)}
+                    className={`group relative p-4 rounded-xl border text-center transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] ${item.enCamino ? "opacity-80" : ""}`}
                     style={{ 
                       backgroundColor: "#0a0a0a",
                       borderColor: `${item.color}25`,
-                      boxShadow: `0 0 20px ${item.color}15`
+                      boxShadow: `0 0 20px ${item.color}15`,
+                      cursor: item.id === "proximo" ? "default" : "pointer",
                     }}
                     data-testid={`menu-${item.id}`}
                   >
+                    {item.enCamino && (
+                      <span className="absolute top-1.5 right-1.5 text-[6px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full z-20" style={{ backgroundColor: "rgba(100,116,139,0.3)", color: "#94a3b8" }}>
+                        En camino
+                      </span>
+                    )}
                     <div 
                       className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
                       style={{ 
@@ -760,38 +725,14 @@ export default function MenuPrincipal() {
                 ))}
               </div>
 
-              {!esArquitecto && (
-                <div className="mt-4">
-                  <p className="text-[10px] text-slate-600 uppercase tracking-wider mb-2 text-center">Desbloquea con Arquitecto</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {lockedMenuItems.map((item, i) => (
-                      <motion.button
-                        key={item.id}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.2 + i * 0.04 }}
-                        onClick={() => navigate(item.route)}
-                        className="relative p-3 rounded-xl border text-center opacity-50 hover:opacity-70 transition-all"
-                        style={{ 
-                          backgroundColor: "#0a0a0a",
-                          borderColor: "rgba(255,255,255,0.06)",
-                        }}
-                        data-testid={`menu-locked-${item.id}`}
-                      >
-                        <div className="absolute top-1.5 right-1.5">
-                          <Lock size={10} className="text-slate-600" />
-                        </div>
-                        <item.icon 
-                          size={18} 
-                          strokeWidth={1.2}
-                          className="mx-auto mb-1 text-slate-600"
-                        />
-                        <h3 className="text-[10px] font-bold tracking-wide text-slate-600">
-                          {item.title}
-                        </h3>
-                      </motion.button>
-                    ))}
-                  </div>
+              {!tienePlanificacion && (
+                <div className="mt-4 text-center">
+                  <Link href="/pagos">
+                    <span className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider border transition-all hover:scale-[1.02]" style={{ borderColor: `${GOLD}40`, color: GOLD }}>
+                      <CreditCard size={12} />
+                      Ver módulos y precios
+                    </span>
+                  </Link>
                 </div>
               )}
             </>
@@ -816,8 +757,8 @@ export default function MenuPrincipal() {
           </button>
         </motion.div>
 
-        {/* Items secundarios - Solo Arquitectos */}
-        {isArquitecto(progression?.rank, userEmail) && (
+        {/* Items secundarios */}
+        {user && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1018,19 +959,16 @@ export default function MenuPrincipal() {
           }}
         >
           {(() => {
-            const esArquitecto = isArquitecto(progression?.rank, userEmail);
-            const navItems = esArquitecto
-              ? [
-                  { icon: Eye, color: SPECTRUM.ROJO, route: "/console", label: "Espejo" },
-                  { icon: Wand2, color: SPECTRUM.AMARILLO, route: "/alquimia", label: "Alquimia" },
-                  { icon: Sunrise, color: SPECTRUM.NARANJA, route: "/esperanza", label: "Depósito" },
-                  { icon: Heart, color: SPECTRUM.VERDE, route: "/planeacion", label: "Plan" },
-                  { icon: Crown, color: SPECTRUM.VIOLETA, route: "/socios", label: "Alianza" },
-                ]
-              : [
-                  { icon: Eye, color: SPECTRUM.ROJO, route: "/console", label: "Espejo" },
-                  { icon: CreditCard, color: GOLD, route: "/pagos", label: "Upgrade" },
-                ];
+            const accessArgs = [progression?.subscriptionPlan, userEmail, progression?.rank, progression?.activeModules] as const;
+            const navItems = [
+              { icon: Eye, color: SPECTRUM.ROJO, route: "/espejo", label: "Espejo" },
+              ...(hasPlanificacionBaseAccess(...accessArgs)
+                ? [{ icon: Heart, color: SPECTRUM.VERDE, route: "/planeacion", label: "Plan" }]
+                : [{ icon: CreditCard, color: GOLD, route: "/pagos", label: "Módulos" }]),
+              ...(hasSoberaniaDiaAccess(...accessArgs)
+                ? [{ icon: Layers, color: "#38BDF8", route: "/proyectos", label: "Proyectos" }]
+                : []),
+            ];
 
             return navItems.map((item) => (
               <button

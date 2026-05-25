@@ -1,10 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { auth } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
-import { CreditCard, ArrowLeft, Shield, Check, Sparkles, Crown, Zap, Star, Lock, Smartphone, ExternalLink, MessageCircle, Heart, Eye, Brain, ListTodo } from "lucide-react";
+import { CreditCard, ArrowLeft, Shield, Check, Sparkles, Smartphone, ExternalLink, MessageCircle, Heart, Eye, Brain, Compass, Map, Layers, Clock, Zap, TrendingUp } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { PLANIFICACION_CHECKOUT_PLANS } from "@shared/mercadopagoPlans";
+import { MODULOS_EN_CAMINO, BADGE_EN_CAMINO } from "@shared/moduleCatalog";
+import { modulesGrantedByPlan } from "@shared/moduleAccess";
+import { captureSellerRefFromUrl, getSellerRef } from "@/lib/sellerRef";
 import yapeQrImage from "@assets/yape_qr_2026-02-17T22-11-48_1771384383841.png";
 
 const GOLD = "#D4AF37";
@@ -31,79 +35,105 @@ interface Plan {
   color: string;
   popular?: boolean;
   badge?: string;
+  forWho?: string;
+  anchorCopy?: string;
+  roiCopy?: string;
 }
 
-const plans: Plan[] = [
-  { 
-    id: "corazon-sabio", 
-    name: "El Corazón Sabio™", 
-    price: 17,
-    pricePEN: 58.08,
-    isOneTime: true,
+const espejoPlan: Plan = {
+  id: "corazon-sabio",
+  name: "El Corazón Sabio™",
+  price: 17,
+  pricePEN: 58.08,
+  isOneTime: true,
+  forWho: "Entrada al sistema",
+  roiCopy: "Diagnóstico antes de invertir en módulos mensuales.",
+  features: [
+    { name: "Doctor IA que lee tu historial de conducta", locked: false },
+    { name: "Detección de tu Interfaz de Dolor activa (M01–M10)", locked: false },
+    { name: "Patrón de boicot identificado con datos reales", locked: false },
+    { name: "Radiografía de tu brecha percepción/realidad", locked: false },
+    { name: "10 créditos · ~2 diagnósticos completos", locked: false },
+    { name: "7 días gratis — sin tarjeta", locked: false },
+  ],
+  icon: Heart,
+  color: "#E8567F",
+};
+
+const planificacionPlans: Plan[] = [
+  {
+    id: "planificacion_base",
+    name: "Planificación Base",
+    price: 19.99,
+    pricePEN: 74,
+    forWho: "Todos — obligatorio para add-ons",
+    anchorCopy: "La Flota y tus segmentos — el motor del día.",
+    roiCopy: "Organiza el día sin pagar por desglosadores premium.",
     features: [
-      { name: "Doctor IA que lee tu historial de conducta", locked: false },
-      { name: "Detección de tu Interfaz de Dolor activa (M01–M10)", locked: false },
-      { name: "Patrón de boicot identificado con datos reales", locked: false },
-      { name: "Radiografía de tu brecha percepción/realidad", locked: false },
-      { name: "10 créditos · ~2 diagnósticos completos", locked: false },
-      { name: "7 días gratis — sin tarjeta", locked: false }
+      { name: "La Flota y segmentos del día", locked: false },
+      { name: "Vehículos tiempo, situación y descanso", locked: false },
+      { name: "Motor de 4 ejes", locked: false },
+      { name: "Suscripción mensual independiente", locked: false },
     ],
-    icon: Heart,
-    color: "#E8567F"
-  },
-  { 
-    id: "arquitecto", 
-    name: "Arquitecto", 
-    price: 24.99,
-    pricePEN: 92.00,
-    features: [
-      { name: "Todo de Soberanía Mental", locked: false },
-      { name: "Umbral completo", locked: false },
-      { name: "Planificación avanzada", locked: false },
-      { name: "Radar IA completo", locked: false },
-      { name: "Alquimia Mental", locked: false },
-      { name: "Cierre de Jornada IA", locked: false }
-    ],
-    icon: Star,
+    icon: Compass,
     color: GOLD,
-    popular: true
+    popular: true,
   },
-  { 
-    id: "soberano_operativo", 
-    name: "Soberano Operativo", 
-    price: 34.99,
-    pricePEN: 129.00,
+  {
+    id: "soberania_dia",
+    name: "Soberanía del día",
+    price: 29.99,
+    pricePEN: 111,
+    forWho: "Estudiantes · procrastinación · ideas sueltas",
+    anchorCopy: "3 ideas, cierras bloque. Para mañana, noche e ideas — cuando nadie te obliga.",
+    roiCopy: "Cierra bloques en tiempo libre sin calendario rígido.",
     features: [
-      { name: "Todo de Arquitecto", locked: false },
-      { name: "Reloj Desglosador ⚡", locked: false, highlight: true },
+      { name: "Desglosador Situacional (bloques 3+3)", locked: false, highlight: true },
+      { name: "Hub Proyectos y peldaños", locked: false, highlight: true },
+      { name: "Para mañana, noche e ideas — sin calendario", locked: false },
+      { name: "Requiere Planificación Base", locked: false },
+    ],
+    icon: Layers,
+    color: "#38BDF8",
+    badge: "ESTRELLA",
+  },
+  {
+    id: "operativo",
+    name: "Operativo",
+    price: 39.99,
+    pricePEN: 148,
+    forWho: "Producción · unidades · trabajo repetitivo",
+    anchorCopy: "Unidades, ritmo, récord. Para producción repetitiva.",
+    roiCopy: "Si pierdes un día de producción al mes por mal ritmo, esto ya se pagó solo.",
+    features: [
+      { name: "Desglosador Tiempo (unidades y ritmo)", locked: false, highlight: true },
       { name: "Ciclos secuenciales de misión", locked: false },
       { name: "Auto-regulación de tiempo heredado", locked: false },
-      { name: "Proyección de cierre en tiempo real", locked: false },
-      { name: "Generador de dopamina para el trabajo", locked: false }
+      { name: "Requiere Planificación Base", locked: false },
     ],
-    icon: ListTodo,
+    icon: Clock,
     color: "#00C851",
-    badge: "NUEVO"
-  },
-  { 
-    id: "soberano", 
-    name: "Soberano", 
-    price: 49.99,
-    pricePEN: 185.00,
-    features: [
-      { name: "Todo de Soberano Operativo", locked: false },
-      { name: "Proyector de Realidad", locked: false },
-      { name: "Manuales de Maestría", locked: false },
-      { name: "Sistema de Alianzas", locked: false },
-      { name: "Escáner de Creencias", locked: false },
-      { name: "Soporte prioritario", locked: false }
-    ],
-    icon: Crown,
-    color: PURPLE
   },
 ];
 
-const LOCKED_MESSAGE = "El Umbral solo se abre para quienes deciden dejar de ser observadores. Sube al nivel Arquitecto para transmutar tu realidad.";
+const STACKS = [
+  {
+    id: "estudiante",
+    title: "Estudiante / tiempo libre",
+    modules: "Base + Soberanía del día",
+    totalUsd: 49.98,
+    addOnId: "soberania_dia" as const,
+    color: "#38BDF8",
+  },
+  {
+    id: "produccion",
+    title: "Producción",
+    modules: "Base + Operativo",
+    totalUsd: 59.98,
+    addOnId: "operativo" as const,
+    color: "#00C851",
+  },
+];
 
 type PaymentMethod = "mercadopago" | "paypal" | "yape" | null;
 
@@ -119,14 +149,48 @@ const ESPEJO_BENEFITS = [
 ];
 
 export default function Pagos() {
-  const [selectedPlan, setSelectedPlan] = useState(plans[1]);
+  const [location, navigate] = useLocation();
+  const [selectedPlan, setSelectedPlan] = useState<Plan>(planificacionPlans[0]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
   const [loading, setLoading] = useState(false);
   const [userEmail, setUserEmail] = useState("");
-  const [location] = useLocation();
   const [isEspejoProduct, setIsEspejoProduct] = useState(false);
+  const [activeSellerRef, setActiveSellerRef] = useState<string | null>(null);
   const paymentSectionRef = useRef<HTMLDivElement>(null);
+
+  const selectStack = (addOnId: "soberania_dia" | "operativo") => {
+    const plan = planificacionPlans.find((p) => p.id === addOnId);
+    if (plan) {
+      setSelectedPlan(plan);
+      setTimeout(() => {
+        paymentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 150);
+    }
+  };
   
+  const claimModule = useCallback(async (planId: string) => {
+    const user = auth?.currentUser;
+    if (!user || !modulesGrantedByPlan(planId).length) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/planificacion/claim-module", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ planId }),
+      });
+      const data = await res.json();
+      if (data.activated) {
+        toast.success(data.message || "Módulo activado.");
+        window.dispatchEvent(new CustomEvent("progression-updated"));
+      }
+    } catch {
+      // webhook puede haber activado ya
+    }
+  }, []);
+
   const claimEspejoCredits = useCallback(async () => {
     const user = auth?.currentUser;
     if (!user) return;
@@ -148,18 +212,25 @@ export default function Pagos() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const captured = captureSellerRefFromUrl(window.location.search);
+    setActiveSellerRef(captured ?? getSellerRef());
     const producto = params.get("producto");
     if (producto === "espejo") {
       setIsEspejoProduct(true);
     }
-    
+
     const status = params.get("status");
     const planParam = params.get("plan");
-    
+
     if (planParam === "corazon-sabio") {
-      const corazonPlan = plans.find(p => p.id === "corazon-sabio");
-      if (corazonPlan) {
-        setSelectedPlan(corazonPlan);
+      setSelectedPlan(espejoPlan);
+      setTimeout(() => {
+        paymentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 300);
+    } else if (planParam && PLANIFICACION_CHECKOUT_PLANS.includes(planParam as typeof PLANIFICACION_CHECKOUT_PLANS[number])) {
+      const p = planificacionPlans.find(x => x.id === planParam);
+      if (p) {
+        setSelectedPlan(p);
         setTimeout(() => {
           paymentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
         }, 300);
@@ -173,15 +244,21 @@ export default function Pagos() {
         if (!auth?.currentUser) {
           toast.info("Inicia sesión con el mismo correo del pago para ver tus créditos en /espejo.");
         }
+      } else if (planParam && modulesGrantedByPlan(planParam).length > 0) {
+        toast.success("¡Pago confirmado! Activando tu módulo…");
+        void claimModule(planParam);
+        if (!auth?.currentUser) {
+          toast.info("Inicia sesión con el mismo correo del pago para acceder al módulo.");
+        }
       } else {
-        toast.success(`¡Pago exitoso! Bienvenido al Plan ${planParam || "Premium"}`);
+        toast.success(`¡Pago exitoso! Plan ${planParam || ""}`);
       }
     } else if (status === "failure") {
       toast.error("El pago no se pudo completar. Intenta de nuevo.");
     } else if (status === "pending") {
       toast.info("Tu pago está pendiente de confirmación.");
     }
-  }, [location, claimEspejoCredits]);
+  }, [location, claimEspejoCredits, claimModule]);
 
   const handleMercadoPago = async () => {
     setLoading(true);
@@ -192,7 +269,8 @@ export default function Pagos() {
         body: JSON.stringify({
           planId: selectedPlan.id,
           email: userEmail || localStorage.getItem("userEmail") || undefined,
-          userName: localStorage.getItem("userName") || undefined
+          userName: localStorage.getItem("userName") || undefined,
+          sellerRef: getSellerRef() || undefined,
         })
       });
 
@@ -227,7 +305,8 @@ export default function Pagos() {
       `📧 Mi correo es: ${userEmail}\n` +
       `📦 Plan: ${selectedPlan.name}\n` +
       `💰 Monto: ${amount}\n` +
-      `💳 Método: ${method}`
+      `💳 Método: ${method}` +
+      (getSellerRef() ? `\n🏷️ Ref vendedor: ${getSellerRef()}` : "")
     );
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${message}`, "_blank");
   };
@@ -261,14 +340,20 @@ export default function Pagos() {
           ) : (
             <>
               <h1 className="text-3xl md:text-4xl font-black tracking-tighter text-white mb-2">
-                ELIGE TU <span className="text-primary">PLAN</span>
+                MÓDULOS <span className="text-primary">SISTEMICAR</span>
               </h1>
               <p className="text-slate-400 text-sm">
-                Desbloquea todo el poder de SISTEMICAR
+                No es un calendario. Pagas el módulo que evita lo que pierdes.
               </p>
             </>
           )}
         </header>
+
+        {activeSellerRef && !isEspejoProduct && (
+          <div className="mb-6 p-3 rounded-xl border text-center text-[10px]" style={{ borderColor: `${GOLD}30`, backgroundColor: `${GOLD}08`, color: GOLD }}>
+            Referido por vendedor: <span className="font-black">{activeSellerRef}</span>
+          </div>
+        )}
 
         {isEspejoProduct && (
           <div className="mb-8">
@@ -362,7 +447,7 @@ export default function Pagos() {
                     const response = await fetch("/api/mercadopago/create-preference", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ planId: "corazon-sabio", email: localStorage.getItem("userEmail") || undefined })
+                      body: JSON.stringify({ planId: "corazon-sabio", email: localStorage.getItem("userEmail") || undefined, sellerRef: getSellerRef() || undefined })
                     });
                     const data = await response.json();
                     if (data.initPoint) {
@@ -406,8 +491,85 @@ export default function Pagos() {
         )}
 
         {!isEspejoProduct && (<>
-        <div className="grid md:grid-cols-3 gap-4 mb-8">
-          {plans.map((plan) => {
+        {/* Espejo — pago único */}
+        <section className="mb-10">
+          <div className="flex items-center gap-2 mb-4">
+            <Heart size={16} style={{ color: WARM_ROSE }} />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Espejo</h2>
+          </div>
+          <motion.button
+            onClick={() => navigate("/pagos?producto=espejo")}
+            whileHover={{ scale: 1.01 }}
+            className="w-full p-5 rounded-2xl border-2 text-left transition-all"
+            style={{ borderColor: `${WARM_ROSE}40`, backgroundColor: `${WARM_ROSE}08` }}
+            data-testid="section-espejo"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl" style={{ background: `${WARM_ROSE}20` }}>
+                  <Heart size={22} style={{ color: WARM_ROSE }} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">El Corazón Sabio™</h3>
+                  <p className="text-[11px] text-slate-400">Doctor IA · 10 créditos · Pago único</p>
+                  {espejoPlan.roiCopy && (
+                    <p className="text-[10px] text-slate-500 mt-1 italic">{espejoPlan.roiCopy}</p>
+                  )}
+                </div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <span className="text-2xl font-black text-white">$17</span>
+                <p className="text-[10px] text-slate-500">S/ 58.08</p>
+              </div>
+            </div>
+          </motion.button>
+        </section>
+
+        {/* Planificación mensual */}
+        <section className="mb-10">
+          <div className="flex items-center gap-2 mb-4">
+            <Compass size={16} style={{ color: GOLD }} />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Planificación · Mensual</h2>
+          </div>
+
+          {/* Stacks orientación */}
+          <div className="mb-6">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 text-center">
+              ¿Qué stack necesitas?
+            </p>
+            <div className="grid md:grid-cols-2 gap-3">
+              {STACKS.map((stack) => (
+                <div
+                  key={stack.id}
+                  className="p-4 rounded-xl border border-white/10 bg-card/50 flex flex-col gap-2"
+                  data-testid={`stack-${stack.id}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-bold text-white">{stack.title}</h3>
+                      <p className="text-[10px] text-slate-500">{stack.modules}</p>
+                    </div>
+                    <span className="text-lg font-black flex-shrink-0" style={{ color: stack.color }}>
+                      ~${stack.totalUsd.toFixed(2)}
+                      <span className="text-[10px] font-normal text-slate-500">/mes</span>
+                    </span>
+                  </div>
+                  <p className="text-[9px] text-slate-600">Empieza por Base ($19.99), luego añade el add-on.</p>
+                  <button
+                    type="button"
+                    onClick={() => selectStack(stack.addOnId)}
+                    className="w-full py-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all hover:opacity-90"
+                    style={{ backgroundColor: `${stack.color}20`, color: stack.color, border: `1px solid ${stack.color}40` }}
+                  >
+                    Seleccionar este stack
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        <div className="grid md:grid-cols-3 gap-4 mb-4">
+          {planificacionPlans.map((plan) => {
             const Icon = plan.icon;
             const isSelected = selectedPlan.id === plan.id;
             
@@ -445,47 +607,55 @@ export default function Pagos() {
                   </div>
                 )}
                 
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex items-center gap-3 mb-3">
                   <div 
                     className="p-2 rounded-xl"
                     style={{ background: `${plan.color}20` }}
                   >
                     <Icon size={24} style={{ color: plan.color }} />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <h3 className="font-bold text-white text-lg">{plan.name}</h3>
+                    {plan.forWho && (
+                      <span
+                        className="inline-block mt-1 text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: `${plan.color}20`, color: plan.color }}
+                      >
+                        {plan.forWho}
+                      </span>
+                    )}
                   </div>
                 </div>
+
+                {plan.anchorCopy && (
+                  <p className="text-[11px] text-slate-400 italic mb-2 leading-relaxed">{plan.anchorCopy}</p>
+                )}
+
+                {plan.roiCopy && (
+                  <div
+                    className="flex items-start gap-2 p-2 rounded-lg mb-3"
+                    style={{ backgroundColor: `${plan.color}08`, border: `1px solid ${plan.color}20` }}
+                  >
+                    <TrendingUp size={12} className="flex-shrink-0 mt-0.5" style={{ color: plan.color }} />
+                    <p className="text-[10px] leading-relaxed" style={{ color: plan.color }}>{plan.roiCopy}</p>
+                  </div>
+                )}
                 
                 <div className="mb-4">
                   <span className="text-3xl font-black text-white">${plan.price}</span>
                   <span className="text-slate-500 text-sm">{plan.isOneTime ? " pago único" : "/mes"}</span>
+                  {!plan.isOneTime && (
+                    <p className="text-[10px] text-slate-600 mt-0.5">S/ {plan.pricePEN.toFixed(0)} soles</p>
+                  )}
                 </div>
                 
                 <ul className="space-y-2">
                   {plan.features.map((feature, idx) => (
                     <li key={idx} className="flex items-center gap-2 text-sm">
-                      {feature.locked ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="flex items-center gap-2 text-slate-500 cursor-help">
-                              <Lock size={14} className="text-slate-600" />
-                              <span className="line-through">{feature.name}</span>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent 
-                            side="top" 
-                            className="max-w-xs bg-black/95 border border-amber-500/30 text-amber-200 p-4"
-                          >
-                            <p className="text-xs leading-relaxed">{LOCKED_MESSAGE}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <span className="flex items-center gap-2" style={{ color: feature.highlight ? plan.color : "#cbd5e1", fontWeight: feature.highlight ? 700 : 400 }}>
-                          <Check size={14} style={{ color: plan.color }} />
-                          {feature.name}
-                        </span>
-                      )}
+                      <span className="flex items-center gap-2" style={{ color: feature.highlight ? plan.color : "#cbd5e1", fontWeight: feature.highlight ? 700 : 400 }}>
+                        <Check size={14} style={{ color: plan.color }} />
+                        {feature.name}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -501,6 +671,36 @@ export default function Pagos() {
             );
           })}
         </div>
+
+        <p className="text-[10px] text-slate-600 text-center mb-8 leading-relaxed px-2">
+          Comparado con apps de notas (~$10/mes): aquí pagas por unidades, ritmo y cierre de bloque — no por listas.
+        </p>
+        </section>
+
+        {/* Ecosistema — en camino */}
+        <section className="mb-10">
+          <div className="flex items-center gap-2 mb-4">
+            <Map size={16} className="text-slate-500" />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Ecosistema Sistemicar</h2>
+          </div>
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
+            {MODULOS_EN_CAMINO.map((mod) => (
+              <div
+                key={mod.id}
+                className="p-4 rounded-xl border border-white/10 bg-card/50"
+                data-testid={`modulo-en-camino-${mod.id}`}
+              >
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <h3 className="text-sm font-bold text-white">{mod.nombre}</h3>
+                  <span className="text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: "rgba(100,116,139,0.2)", color: "#94a3b8" }}>
+                    {BADGE_EN_CAMINO}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">{mod.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {/* Payment Method Selection */}
         <div ref={paymentSectionRef} className="p-6 rounded-2xl bg-card border border-white/10 mb-6">
@@ -734,7 +934,7 @@ export default function Pagos() {
           )}
         </AnimatePresence>
 
-        {/* Manifiesto del Arquitecto */}
+        {/* Manifiesto Sistemicar */}
         <motion.section
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -753,7 +953,7 @@ export default function Pagos() {
                 color: GOLD
               }}
             >
-              El Manifiesto del Arquitecto
+              Manifiesto Sistemicar
             </h2>
             <p className="text-center text-slate-500 text-sm mb-8 tracking-widest uppercase">
               El Fin de la Mente de Pato
@@ -791,7 +991,7 @@ export default function Pagos() {
                     color: GOLD
                   }}
                 >
-                  "Eres el Arquitecto de tu Alba."
+                  "Eres el arquitecto de tu alba."
                 </p>
               </div>
             </div>

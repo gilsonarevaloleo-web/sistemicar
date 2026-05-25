@@ -110,9 +110,11 @@ import {
   getLastCierreJornada,
   getTodayCierreJornada,
   getDailyPoints,
+  getYesterdayDailyPointsTotal,
   subscribeToDailyPoints,
   getLimaDateString,
   getLimaDayStart,
+  getIntrospectionPsForDay,
   saveVehicleHistoryFirebase,
   loadVehicleHistoryFromFirebase,
   mergeVehicleHistories,
@@ -124,7 +126,7 @@ import {
   deletePlantillaRutina,
   applyPlantillaToday,
   hasDesglosadorAccess,
-  hasArquitectoAccess,
+  hasSoberaniaDiaAccess,
   hasPuntoCeroAccess,
   subscribeToRadiografiaTokens,
   checkAndAwardRadiografiaMilestones,
@@ -134,7 +136,7 @@ import {
   RadiografiaTokenData,
   getExpedientesRecientes,
   ExpedienteClinico,
-  hasActiveCentinelaInFirestore,
+  reconcileStaleCentinelaInFirestore,
   notifyVehicleClosed,
   wasVehicleRecentlyClosed,
   mergeActiveVehicleSessionState,
@@ -142,6 +144,7 @@ import {
 import {
   createRutaEnfoqueState,
   applyRutaThresholdCrossing,
+  repairRutaCruzadoAheadOfRestantes,
   computeRutaEnfoquePS,
   formatRutaPreview,
   getRutaBandaActual,
@@ -156,6 +159,7 @@ import { playSituacionCumplidoChimes } from "@/lib/situacionAlertSounds";
 import {
   fireSituacion2MinAlert,
   fireSituacionCupoAlert,
+  speakSituacionFilaEnFoco,
   SITUACION_CUPO_ESCALATION_MS,
   SITUACION_CUPO_ESCALATION_MAX,
 } from "@/lib/situacionAlerts";
@@ -167,9 +171,14 @@ import {
   suggestedSec,
 } from "@/lib/desglosadorClock";
 import {
+  aplicarTiempoGanadoAlCumplir,
   applyCupoManualYRedistribuir,
+  computeSituacionCronometroHorarios,
   redistribuirMinutosSituacionCronometro,
+  registrarCierreFalladoCronometro,
   situacionFilaCronometroPendiente,
+  situacionRelojDebeMostrarse,
+  situacionTargetMsReloj,
   sumMinutosCronometroPendientes,
   totalBudgetMinFromCronometro,
 } from "@/lib/situacionCupoDistrib";
@@ -185,6 +194,31 @@ import {
   reorderSubVehiculos,
   type ReorderDirection,
 } from "@/lib/desglosadorReorder";
+import { computeDailyPsBarModel } from "@/lib/dailyPsBar";
+import { recordFocusBandEvent, getFocusBandEventsRecent } from "@/lib/focusBandLedger";
+import {
+  buildDailySnapshot,
+  savePlanillaDailySnapshot,
+  inferBandaBloque,
+  psEspectroBloque,
+  computeTermodinamicaCompare,
+  getPlanillaDailySnapshotForDate,
+} from "@/lib/termodinamicaAtencional";
+import type { PlanillaDailySnapshot } from "@/lib/termodinamicaAtencional";
+import {
+  getProyectoById,
+  getPeldanosByProyecto,
+  markPeldanoEnCurso,
+  markPeldanoConquistadoTiempo,
+  markPeldanoConquistadoSituacion,
+} from "@/lib/proyectos";
+import {
+  isPastSegmentAutoStart,
+  isPastSegmentEnd,
+  isWithinSegmentTimeMargin,
+  segmentDurationMinutes,
+  validateSegmentTimes,
+} from "@/lib/segmentTime";
 import { scheduleSegmentNotifications, cancelAllNotifications, requestNotificationPermission, getNotificationPermission } from "@/lib/notifications";
 import { auth } from "@/lib/firebase";
 import { setActiveSegmento, registrarEvento, COMPONENTES } from "@/lib/evento-universal";
@@ -195,6 +229,29 @@ import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada } from "@/engines/ConcienciaEngine";
 
 const CENTINELA_DELAY_MS = 120_000;
+
+type CentinelaGate = { allowed: true; segActivo?: SegmentoV5 } | { allowed: false; reason: string };
+
+function getCentinelaSegmentGate(planilla: Planilla | null): CentinelaGate {
+  if (!planilla || planilla.segmentos.length === 0) {
+    return { allowed: true };
+  }
+  const segActivo = planilla.segmentos.find(s => s.estado === "activo");
+  if (!segActivo) {
+    return { allowed: false, reason: "Sin segmento activo — inicia uno en Segmentos del Día" };
+  }
+  if (segActivo.centinelaEnabled === false) {
+    return { allowed: false, reason: `Centinela desactivado en «${segActivo.nombre}»` };
+  }
+  return { allowed: true, segActivo };
+}
+
+function isCentinelaBlockedByVehicles(vehicles: Vehicle[], optimistic: Vehicle[]): boolean {
+  return (
+    vehicles.some(v => v.status === "activo" && !v.autoVerdad) ||
+    optimistic.some(v => v.status === "activo" && !v.autoVerdad)
+  );
+}
 
 const GOLD = "#D4AF37";
 const AZURE = "#1E90FF";
@@ -845,6 +902,13 @@ export default function Planeacion() {
     try { return getLocalVehicles(); } catch { return []; }
   });
   const optimisticVehiclesRef = useRef<Vehicle[]>([]);
+  const proyectoLaunchRef = useRef<{
+    proyectoId: string;
+    peldanoId: string;
+    launch: "desglosador_tiempo" | "desglosador_situacion";
+    plantillaSubTareas?: string[];
+  } | null>(null);
+  const proyectoLaunchHandledRef = useRef(false);
   const [isCreating, setIsCreating] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
@@ -856,19 +920,24 @@ export default function Planeacion() {
 
   const desglosadorUnlocked = hasDesglosadorAccess(
     progression?.subscriptionPlan,
-    user?.email
+    user?.email,
+    progression?.rank,
+    progression?.activeModules
   );
-  const arquitectoUnlocked = hasArquitectoAccess(
+  const soberaniaDiaUnlocked = hasSoberaniaDiaAccess(
     progression?.subscriptionPlan,
     user?.email,
-    progression?.rank
+    progression?.rank,
+    progression?.activeModules
   );
   const puntoCeroUnlocked = hasPuntoCeroAccess(
     progression?.subscriptionPlan,
     user?.email
   );
   const [dailyPS, setDailyPS] = useState(0);
+  const [yesterdayPS, setYesterdayPS] = useState<number | null>(null);
   const [centinelaEsperaSec, setCentinelaEsperaSec] = useState(0);
+  const [centinelaBlockReason, setCentinelaBlockReason] = useState<string | null>(null);
   const [showDesglosadorCTA, setShowDesglosadorCTA] = useState(false);
 
   const [titulo, setTitulo] = useState("");
@@ -924,6 +993,53 @@ export default function Planeacion() {
     conquistaPulseTimerRef.current = setTimeout(() => setConquistaPulse(false), 800);
   }, []);
 
+  const recordRutaBandCross = useCallback((payload: {
+    vehicleId: string;
+    subId: string;
+    subTitulo: string;
+    banda: RutaBandaId;
+  }) => {
+    if (!user) return;
+    void recordFocusBandEvent(user.uid, {
+      source: "ruta_cruce",
+      banda: payload.banda,
+      vehicleId: payload.vehicleId,
+      subVehicleId: payload.subId,
+      subTitulo: payload.subTitulo,
+    });
+  }, [user]);
+
+  const recordBloqueCierre = useCallback((payload: {
+    vehicleId: string;
+    sub: SubVehiculo;
+    status: string;
+  }) => {
+    if (!user || payload.status !== "cumplido") return;
+    void recordFocusBandEvent(user.uid, {
+      source: "bloque_cierre",
+      banda: inferBandaBloque(payload.sub),
+      vehicleId: payload.vehicleId,
+      subVehicleId: payload.sub.id,
+      subTitulo: payload.sub.titulo,
+      psEspectro: psEspectroBloque(payload.sub),
+    });
+  }, [user]);
+
+  const recordVehiculoInicio = useCallback((vehicleId: string, banda?: "fluido" | "concentrado" | "limite") => {
+    if (!user || !banda) return;
+    void recordFocusBandEvent(user.uid, { source: "vehiculo_inicio", banda, vehicleId });
+  }, [user]);
+
+  const recordVehiculoCierre = useCallback((vehicleId: string, banda?: "fluido" | "concentrado" | "limite") => {
+    if (!user || !banda) return;
+    void recordFocusBandEvent(user.uid, { source: "vehiculo_cierre", banda, vehicleId });
+  }, [user]);
+
+  const recordDescansoCuerpo = useCallback((vehicleId: string) => {
+    if (!user) return;
+    void recordFocusBandEvent(user.uid, { source: "descanso_cuerpo", banda: "fluido", vehicleId });
+  }, [user]);
+
   // ── RADIOGRAFÍA DEL OPERADOR ──
   const [radiografiaTokens, setRadiografiaTokens] = useState<RadiografiaTokenData>({ tokens: 0, milestonesCrossed: [], lastSubscriptionRefresh: "" });
   const [showRadiografia, setShowRadiografia] = useState(false);
@@ -932,6 +1048,7 @@ export default function Planeacion() {
   const [gordaHistory, setGordaHistory] = useState<VehicleHistoryEntry[]>([]);
 
   const [planilla, setPlanilla] = useState<Planilla | null>(null);
+  const [planillaFecha, setPlanillaFecha] = useState(() => getLimaDateString());
   const [showCrearSegmento, setShowCrearSegmento] = useState(false);
   const [segmentoProgramando, setSegmentoProgramando] = useState(false);
   const segmentosListEndRef = useRef<HTMLDivElement | null>(null);
@@ -1092,7 +1209,7 @@ export default function Planeacion() {
     }
     if (segmentoActivo && segmentoActivo.activadoAt) {
       const elapsed = (Date.now() - segmentoActivo.activadoAt) / 60000;
-      const scheduled = timeStringToMinutes(segmentoActivo.horaFin) - timeStringToMinutes(segmentoActivo.horaInicio);
+      const scheduled = segmentDurationMinutes(segmentoActivo.horaInicio, segmentoActivo.horaFin);
       if (scheduled > 0 && elapsed > scheduled * 1.5) return "PESO_TIEMPO";
     }
     return null;
@@ -1160,6 +1277,63 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
+    if (!user) return;
+    const loadYesterday = () => {
+      getYesterdayDailyPointsTotal(user.uid)
+        .then(setYesterdayPS)
+        .catch(() => setYesterdayPS(0));
+    };
+    loadYesterday();
+    const onPoints = () => loadYesterday();
+    window.addEventListener("sovereignty-points-awarded", onPoints);
+    return () => window.removeEventListener("sovereignty-points-awarded", onPoints);
+  }, [user, dailyPS]);
+
+  const dailyPsBar = useMemo(
+    () => computeDailyPsBarModel(dailyPS, yesterdayPS ?? 0),
+    [dailyPS, yesterdayPS]
+  );
+
+  const [yesterdayTermoSnapshot, setYesterdayTermoSnapshot] = useState<PlanillaDailySnapshot | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    const yesterdayFecha = getLimaDateString(getLimaDayStart().getTime() - 86400000);
+    getPlanillaDailySnapshotForDate(user.uid, yesterdayFecha)
+      .then(setYesterdayTermoSnapshot)
+      .catch(() => setYesterdayTermoSnapshot(null));
+  }, [user, planillaFecha, dailyPS, vehicles]);
+
+  const todayTermoLive = useMemo(() => {
+    const dayStartMs = getLimaDayStart().getTime();
+    const jornadaVehicles = vehicles.filter(v => {
+      const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
+      return ts >= dayStartMs;
+    });
+    const balance = calcularBalanceConquistaJornada({
+      segmentos: planilla?.segmentos || [],
+      vehiculos: jornadaVehicles,
+      now: Date.now(),
+      dayStartMs,
+    });
+    return buildDailySnapshot({
+      fecha: getLimaDateString(),
+      segmentos: planilla?.segmentos || [],
+      vehicles: jornadaVehicles,
+      dayStartMs,
+      logs: [],
+      conquistaMin: balance.conquistaMin,
+      entropiaMin: balance.entropiaMin,
+      vacioMin: balance.vacioMin,
+    });
+  }, [planilla, vehicles]);
+
+  const termoCompare = useMemo(
+    () => computeTermodinamicaCompare(yesterdayTermoSnapshot, todayTermoLive),
+    [yesterdayTermoSnapshot, todayTermoLive]
+  );
+
+  useEffect(() => {
     const onAward = () => {
       setGoldenFlash(true);
       setTimeout(() => setGoldenFlash(false), 2500);
@@ -1179,11 +1353,10 @@ export default function Planeacion() {
 
   useEffect(() => {
     if (!user) return;
-    const fecha = getLimaDateString();
     getPlanillaHoy(user.uid).then(p => setPlanilla(p));
-    const unsub = subscribeToPlanilla(user.uid, fecha, (p) => setPlanilla(p), (e) => console.error(e));
+    const unsub = subscribeToPlanilla(user.uid, planillaFecha, (p) => setPlanilla(p), (e) => console.error(e));
     return unsub;
-  }, [user]);
+  }, [user, planillaFecha]);
 
   useEffect(() => {
     if (planilla?.segmentos?.length && !segmentosAutoExpandRef.current) {
@@ -1247,44 +1420,64 @@ export default function Planeacion() {
     if (!user || !planilla) return;
 
     const checkPuertaAtencion = () => {
-      const now = getCurrentTimeMinutes();
-      let changed = false;
+      const nowMs = Date.now();
+      const fechaHoy = getLimaDateString();
 
-      planilla.segmentos.forEach(seg => {
+      if (planilla.fecha !== fechaHoy) {
+        const hadActive = planilla.segmentos.some(s => s.estado === "activo");
+        const finalized: Planilla = {
+          ...planilla,
+          segmentos: planilla.segmentos.map(seg =>
+            seg.estado === "activo"
+              ? { ...seg, estado: "entropia" as const, cerradoAt: nowMs, psGanados: 0 }
+              : seg
+          ),
+        };
+        if (hadActive) {
+          savePlanilla(user.uid, finalized);
+          toast.error("Jornada cerrada", {
+            description: "Segmentos activos pasaron a entropía al cambiar el día (máx. 24 h por segmento).",
+            style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
+            duration: 6000,
+          });
+        }
+        setPlanillaFecha(fechaHoy);
+        return;
+      }
+
+      let changed = false;
+      const nextSegmentos = planilla.segmentos.map(seg => {
         if (seg.estado === "pendiente") {
-          const inicio = timeStringToMinutes(seg.horaInicio);
-          if (now >= inicio + 6) {
-            seg.estado = "activo";
-            seg.activadoAt = Date.now();
+          if (isPastSegmentAutoStart(nowMs, seg.horaInicio, seg.horaFin)) {
             changed = true;
             toast.info(`Segmento iniciado: ${seg.nombre}`, {
               description: "Activado automáticamente — sin PS. La ventana ±5 min ya cerró.",
-              style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}40`, color: EMERALD }
+              style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}40`, color: EMERALD },
             });
+            return { ...seg, estado: "activo" as const, activadoAt: nowMs };
           }
         }
 
         if (seg.estado === "activo" && seg.horaFin) {
-          const fin = timeStringToMinutes(seg.horaFin);
-          if (now >= fin + 5) {
-            seg.estado = "entropia";
-            seg.cerradoAt = Date.now();
-            seg.psGanados = 0;
+          if (isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin)) {
             changed = true;
             toast.error(`ENTROPÍA: ${seg.nombre}`, {
               description: "0 PS. No cerraste a tiempo. El sistema no perdona la omisión.",
               style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
-              duration: 6000
+              duration: 6000,
             });
+            return { ...seg, estado: "entropia" as const, cerradoAt: nowMs, psGanados: 0 };
           }
         }
+
+        return seg;
       });
 
       if (changed) {
-        savePlanilla(user.uid, { ...planilla });
-        setPlanilla({ ...planilla });
+        const updated = { ...planilla, segmentos: nextSegmentos };
+        savePlanilla(user.uid, updated);
+        setPlanilla(updated);
       }
-      // Always tick so the close-window button updates reactively every 30s
       setSegmentTick(t => t + 1);
     };
 
@@ -1333,25 +1526,32 @@ export default function Planeacion() {
     if (!user || !planilla) return;
 
     const tickCountdown = () => {
-      const segActivo = planilla.segmentos.find(s => s.estado === "activo");
-      if (!segActivo || segActivo.centinelaEnabled === false) {
-        resetCentinelaTimer();
-        return;
-      }
-
-      const hasActiveVehicles =
-        vehiclesRef.current.some(v => v.status === "activo" && !v.autoVerdad) ||
-        optimisticVehiclesRef.current.some(v => v.status === "activo" && !v.autoVerdad);
-      if (hasActiveVehicles) {
-        resetCentinelaTimer();
+      if (sentinelSuppressed.current) {
+        setCentinelaEsperaSec(0);
+        setCentinelaBlockReason("Preparando lanzamiento…");
         return;
       }
 
       if (vehiclesRef.current.some(v => v.autoVerdad && v.status === "activo")) {
         resetCentinelaTimer();
+        setCentinelaBlockReason(null);
         return;
       }
 
+      const gate = getCentinelaSegmentGate(planilla);
+      if (!gate.allowed) {
+        resetCentinelaTimer();
+        setCentinelaBlockReason(gate.reason);
+        return;
+      }
+
+      if (isCentinelaBlockedByVehicles(vehiclesRef.current, optimisticVehiclesRef.current)) {
+        resetCentinelaTimer();
+        setCentinelaBlockReason(null);
+        return;
+      }
+
+      setCentinelaBlockReason(null);
       const now = Date.now();
       const sinceMoment = ensureCentinelaTimerStarted(now);
       const elapsedWait = now - sinceMoment;
@@ -1377,24 +1577,13 @@ export default function Planeacion() {
       lastAutoVerdadCheck.current = now;
 
       const currentVehicles = vehiclesRef.current;
-      const segActivo = planilla.segmentos.find(s => s.estado === "activo");
-
-      if (!segActivo) {
+      const gate = getCentinelaSegmentGate(planilla);
+      if (!gate.allowed) {
         resetCentinelaTimer();
         return;
       }
 
-      if (segActivo.centinelaEnabled === false) {
-        resetCentinelaTimer();
-        console.log("[Centinela] Desactivado para segmento:", segActivo.nombre);
-        return;
-      }
-
-      const hasActiveVehicles =
-        currentVehicles.some(v => v.status === "activo" && !v.autoVerdad) ||
-        optimisticVehiclesRef.current.some(v => v.status === "activo" && !v.autoVerdad);
-
-      if (hasActiveVehicles) {
+      if (isCentinelaBlockedByVehicles(currentVehicles, optimisticVehiclesRef.current)) {
         resetCentinelaTimer();
         return;
       }
@@ -1402,9 +1591,12 @@ export default function Planeacion() {
       const localCentinela = currentVehicles.find(v => v.autoVerdad && v.status === "activo");
       if (localCentinela) return;
 
-      const remoteCentinela = await hasActiveCentinelaInFirestore(user.uid);
-      if (remoteCentinela) {
-        // Centinela remoto pendiente de snapshot — no resetear timer ni bloquear creación local
+      const { closedIds, hasActiveRemote } = await reconcileStaleCentinelaInFirestore(user.uid);
+      if (closedIds.length > 0) {
+        console.log("[Centinela] Limpiados obsoletos:", closedIds.join(", "));
+      }
+      if (hasActiveRemote) {
+        console.log("[Centinela] Ya hay uno activo en la nube — esperando sync local");
         return;
       }
 
@@ -1413,8 +1605,10 @@ export default function Planeacion() {
       if (elapsedWait < CENTINELA_DELAY_MS) return;
 
       if (sentinelSuppressed.current) return;
+      if (isCentinelaBlockedByVehicles(vehiclesRef.current, optimisticVehiclesRef.current)) return;
 
       const centinelaAperturaAt = sinceMoment;
+      console.log("[Centinela] Activando tras", Math.round(elapsedWait / 1000), "s sin vehículos");
       await addVehicle(user.uid, {
         titulo: "Modo Centinela",
         criterioFin: "circunstancia",
@@ -1503,27 +1697,32 @@ export default function Planeacion() {
     }
 
     const checkExpiredCentinela = async () => {
-      const todaySt = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
       const activeCentinela = vehiclesRef.current.find(v => v.autoVerdad && v.status === "activo");
-      if (!activeCentinela || !activeCentinela.aperturaAt) return;
-      const age = Date.now() - activeCentinela.aperturaAt;
-      const isExpired = activeCentinela.aperturaAt < todaySt || age > 8 * 3600 * 1000;
-      if (!isExpired) return;
-      const dur = Math.round(age / 60000);
-      try {
-        await updateVehicle(user.uid, activeCentinela.id, { cierreAt: Date.now(), duracionFinal: dur });
-        await updateVehicleStatus(user.uid, activeCentinela.id, "archivado");
-        if ("Notification" in window && Notification.permission === "granted") {
-          new Notification("⚡ SISTEMICAR — Centinela Cerrado", {
-            body: `Sesión anterior cerrada automáticamente. Duración registrada: ${dur} min.`,
-            icon: "/favicon.ico",
-            silent: false
-          });
+      if (activeCentinela?.aperturaAt) {
+        const { getLimaDayStartMs } = await import("@/lib/segmentTime");
+        const dayStartMs = getLimaDayStartMs();
+        const age = Date.now() - activeCentinela.aperturaAt;
+        const isExpired =
+          activeCentinela.aperturaAt < dayStartMs || age > 8 * 3600 * 1000;
+        if (isExpired) {
+          const dur = Math.round(age / 60000);
+          try {
+            await updateVehicle(user.uid, activeCentinela.id, { cierreAt: Date.now(), duracionFinal: dur });
+            await updateVehicleStatus(user.uid, activeCentinela.id, "archivado");
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification("⚡ SISTEMICAR — Centinela Cerrado", {
+                body: `Sesión anterior cerrada automáticamente. Duración registrada: ${dur} min.`,
+                icon: "/favicon.ico",
+                silent: false,
+              });
+            }
+            console.log("[Centinela] Auto-cerrado local. Duración:", dur, "min");
+          } catch (e) {
+            console.error("[Centinela autoclose]", e);
+          }
         }
-        console.log("[Centinela] Auto-cerrado. Duración:", dur, "min");
-      } catch (e) {
-        console.error("[Centinela autoclose]", e);
       }
+      await reconcileStaleCentinelaInFirestore(user.uid);
     };
 
     checkExpiredCentinela();
@@ -1552,6 +1751,72 @@ export default function Planeacion() {
     const subs = getDesglosadorHistorico(titulo.trim());
     setHistorialSubs(subs);
   }, [titulo, relojTiempo]);
+
+  useEffect(() => {
+    if (!user || proyectoLaunchHandledRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const proyectoId = params.get("proyectoId");
+    const peldanoId = params.get("peldanoId") ?? params.get("peldañoId");
+    const launch = params.get("launch");
+    if (!proyectoId || !peldanoId || !launch) return;
+    if (launch !== "desglosador_tiempo" && launch !== "desglosador_situacion") return;
+
+    proyectoLaunchHandledRef.current = true;
+
+    void (async () => {
+      try {
+        const proyecto = await getProyectoById(user.uid, proyectoId);
+        const allPeldanos = await getPeldanosByProyecto(user.uid, proyectoId);
+        const peldano = allPeldanos.find(p => p.id === peldanoId);
+        if (!proyecto || !peldano) {
+          toast.error("Proyecto o peldaño no encontrado");
+          return;
+        }
+
+        const tituloLaunch = `${proyecto.titulo} → ${peldano.titulo}`;
+        proyectoLaunchRef.current = {
+          proyectoId,
+          peldanoId,
+          launch,
+          plantillaSubTareas: peldano.plantillaSubTareas,
+        };
+
+        setIsCreating(true);
+        setVehicleMode("flota");
+        setTitulo(tituloLaunch);
+
+        if (launch === "desglosador_tiempo") {
+          setTipoFlotaSeleccionado("tiempo");
+          setRelojTiempo("desglosador");
+          let subs: Array<{ tempId: string; titulo: string; cantidadObjetivo: string; tiempoRecordMinPerUnit?: number; rutaEnfoqueActiva?: boolean }>;
+          if (peldano.plantillaSubs && peldano.plantillaSubs.length > 0) {
+            subs = peldano.plantillaSubs.map((s, i) => ({
+              tempId: `sub_${i}`,
+              titulo: s.titulo,
+              cantidadObjetivo: s.cantidadObjetivo != null ? String(s.cantidadObjetivo) : "",
+            }));
+          } else {
+            const hist = getDesglosadorHistorico(tituloLaunch);
+            subs = hist.length > 0
+              ? hist.map((t, i) => ({ tempId: `sub_${i}`, titulo: t, cantidadObjetivo: "" }))
+              : [{ tempId: "sub_0", titulo: "", cantidadObjetivo: "" }];
+          }
+          setDesglosadorSubs(subs);
+        } else {
+          setTipoFlotaSeleccionado("situacion");
+          setTerminoDetalle("Al cerrar bloque de desglose");
+        }
+
+        navigate("/planeacion", { replace: true });
+        toast.info(`Proyecto: ${proyecto.titulo}`, {
+          description: `Peldaño «${peldano.titulo}» listo para lanzar`,
+          duration: 3500,
+        });
+      } catch {
+        toast.error("No se pudo preparar el lanzamiento desde proyecto");
+      }
+    })();
+  }, [user, navigate]);
 
   const resetForm = () => {
     setTitulo("");
@@ -1586,6 +1851,7 @@ export default function Planeacion() {
     setDuracionDescansoH("");
     setDuracionDescansoM("");
     setTipoDescanso(null);
+    proyectoLaunchRef.current = null;
   };
 
   const isNearDescanso = (): boolean => {
@@ -1606,7 +1872,7 @@ export default function Planeacion() {
       .map(seg => ({
         horaInicio: seg.horaInicio,
         horaFin: seg.horaFin,
-        duracionMin: timeStringToMinutes(seg.horaFin) - timeStringToMinutes(seg.horaInicio)
+        duracionMin: segmentDurationMinutes(seg.horaInicio, seg.horaFin),
       }));
   };
 
@@ -1707,6 +1973,18 @@ export default function Planeacion() {
       }
 
       const segActualNombre = segmentoActivo?.nombre || undefined;
+      const launchCtx = proyectoLaunchRef.current;
+      const subTareasPrefill =
+        tipoFlotaSeleccionado === "situacion" && launchCtx?.plantillaSubTareas?.length
+          ? launchCtx.plantillaSubTareas
+              .filter(t => t.trim())
+              .map((texto, i) => ({
+                id: `st_${Date.now()}_${i}`,
+                texto: texto.trim(),
+                completada: false,
+                creadaAt: Date.now(),
+              }))
+          : undefined;
 
       console.log(`[handleFlotaSave] Creando vehículo en Firebase...`);
       const newVehicleId = await addVehicle(user.uid, {
@@ -1729,6 +2007,10 @@ export default function Planeacion() {
         subVehiculos: relojTiempo === "desglosador"
           ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => buildDesglosadorSubFromForm(s, idx, Date.now()))
           : undefined,
+        subTareas: subTareasPrefill,
+        ...(launchCtx
+          ? { proyectoId: launchCtx.proyectoId, proyectoPeldanoId: launchCtx.peldanoId }
+          : {}),
         estadoEnergia,
         energiaDiffPct,
         segmentoOrigen: segActualNombre,
@@ -1742,6 +2024,16 @@ export default function Planeacion() {
         etapasPuntoCero: tipoFlotaSeleccionado === "descanso" && tipoDescanso === "punto_cero" ? { etapa1: false, etapa2: false, etapa3: false, etapa4: false } : undefined,
       });
       console.log(`[handleFlotaSave] addVehicle retornó id: ${newVehicleId}`);
+
+      if (launchCtx) {
+        const tipoOrigen = launchCtx.launch === "desglosador_tiempo" ? "tiempo" : "situacion";
+        void markPeldanoEnCurso(user.uid, launchCtx.peldanoId, newVehicleId, tipoOrigen);
+        proyectoLaunchRef.current = null;
+      }
+
+      if (intensidadEnergetica) {
+        recordVehiculoInicio(newVehicleId, intensidadEnergetica);
+      }
 
       if (relojTiempo === "desglosador" && user) {
         const filteredSubs = desglosadorSubs.filter(s => s.titulo.trim());
@@ -1790,6 +2082,10 @@ export default function Planeacion() {
         subVehiculos: relojTiempo === "desglosador"
           ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => buildDesglosadorSubFromForm(s, idx, Date.now()))
           : undefined,
+        subTareas: subTareasPrefill,
+        ...(launchCtx
+          ? { proyectoId: launchCtx.proyectoId, proyectoPeldanoId: launchCtx.peldanoId }
+          : {}),
         energiaDiffPct,
         segmentoOrigen: segActualNombre,
         segmentosCruzados: 0,
@@ -1807,6 +2103,9 @@ export default function Planeacion() {
         console.log(`[handleFlotaSave] OPTIMISTIC UPDATE: Agregando "${titulo}" al estado. Antes: ${withoutDupe.length}, Después: ${withoutDupe.length + 1}`);
         return [optimisticVehicle, ...withoutDupe];
       });
+      if (tipoFlotaSeleccionado === "situacion") {
+        setExpandedId(newVehicleId);
+      }
 
       toast.success(`"${titulo}" lanzado · ${flotaConfig.label}`, {
         description: flotaConfig.psCierre,
@@ -1832,6 +2131,16 @@ export default function Planeacion() {
 
   const addSegmento = async () => {
     if (!user || !nuevoSegNombre.trim() || !nuevoSegHoraInicio || !nuevoSegHoraFin || segmentoProgramando) return;
+
+    const validation = validateSegmentTimes(nuevoSegHoraInicio, nuevoSegHoraFin);
+    if (!validation.ok) {
+      toast.error("Horario de segmento inválido", {
+        description: validation.error,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
+      return;
+    }
+
     setSegmentoProgramando(true);
 
     const nombreCapturado = nuevoSegNombre.trim();
@@ -1984,9 +2293,7 @@ export default function Planeacion() {
 
     let psCierre = 2;
     if (seg.horaFin && !opts?.forceOutsideWindow) {
-      const nowMin = getCurrentTimeMinutes();
-      const finMin = timeStringToMinutes(seg.horaFin);
-      const dentroVentana = nowMin >= finMin - 5 && nowMin <= finMin + 5;
+      const dentroVentana = isWithinSegmentTimeMargin(Date.now(), seg.horaInicio, seg.horaFin, "fin", 5);
       if (!dentroVentana) {
         toast.warning("La puerta está sellada", {
           description: `El cierre con intención (+2 PS) está disponible entre 5 min antes y 5 min después de ${seg.horaFin}. Puedes usar «Forzar cierre» si necesitas registrar ya.`,
@@ -2209,6 +2516,7 @@ export default function Planeacion() {
       await safeFb("updateEnergiaFin", () => updateVehicle(user.uid, vehicleId, { intensidadEnergeticaFin }));
       setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, intensidadEnergeticaFin } : v));
       vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, intensidadEnergeticaFin } : v);
+      recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
     }
     if (currentLayer >= 3 || status === "archivado") {
       try {
@@ -2350,6 +2658,7 @@ export default function Planeacion() {
     } finally {
       closingInProgressRef.current.delete(vehicleId);
     }
+    recordDescansoCuerpo(vehicleId);
     awardSovereigntyPoints(user.uid, psTotal, `Descanso cerrado (${ETIQUETA_LABELS[etiqueta]}): ${vehicle.titulo}`).catch(() => {});
     incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
     const esPuntoCero = vehicle.tipoDescanso === "punto_cero";
@@ -2415,6 +2724,7 @@ export default function Planeacion() {
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
     saveLocalVehicles(vehiclesRef.current);
     if (!vehicle.autoVerdad) triggerConquistaPulse();
+    if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
 
     // Helper: fire-and-forget (no await) — no bloqueamos la UI
     const safeFire = (fn: () => Promise<any>) => { fn().catch(() => {}); };
@@ -2541,11 +2851,8 @@ export default function Planeacion() {
         await handleStatusChange(vehicleId, status, intensidadEnergeticaFin);
       }
 
-      const isWithin5Min = segmentoActivo && segmentoActivo.horaFin && (() => {
-        const finMin = timeStringToMinutes(segmentoActivo.horaFin);
-        const nowMin = getCurrentTimeMinutes();
-        return finMin - nowMin >= 0 && finMin - nowMin <= 5;
-      })();
+      const isWithin5Min = segmentoActivo && segmentoActivo.horaFin &&
+        isWithinSegmentTimeMargin(Date.now(), segmentoActivo.horaInicio, segmentoActivo.horaFin, "fin", 5);
 
       if (isCierreManual && isWithin5Min) {
         toast.success("Puerta sellada. Voltaje recuperado.", { style: { backgroundColor: PIZARRA, border: `2px solid ${GOLD}`, color: GOLD }, duration: 5000 });
@@ -2672,6 +2979,7 @@ export default function Planeacion() {
         await resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
       }
       registrarEvento(COMPONENTES.PLANIFICACION);
+      if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
       toast.success(cumplido ? "+10 PS Medición Válida" : "+10 PS Registro Honesto", {
         description: cumplido
           ? `Dato registrado. ${cantidadRealizada > 0 && duracionFinal > 0 ? `${(duracionFinal / cantidadRealizada).toFixed(1)} min/unidad guardado en Bóveda.` : "Guardado para sugerencias futuras."}`
@@ -2722,6 +3030,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === parentId ? { ...v, ...patch } : v);
     saveLocalVehicles(vehiclesRef.current);
     await updateVehicle(user.uid, parentId, patch).catch(e => console.warn("[desglosador] resume:", e));
+    sentinelSuppressed.current = false;
     toast.info("Desglosador reanudado", {
       description: "Tiempo restante recuperado tras la interrupción.",
       style: { backgroundColor: PIZARRA, border: `1px solid ${VIOLET}`, color: VIOLET },
@@ -2841,6 +3150,7 @@ export default function Planeacion() {
       });
     } finally {
       pausaInterrupcionLockRef.current = null;
+      sentinelSuppressed.current = false;
     }
   };
 
@@ -3022,6 +3332,15 @@ export default function Planeacion() {
         ...(rutaCruzada ? { rutaCruzada } : {}),
       });
       await awardSovereigntyPoints(user.uid, totalPS, `Ciclo Desglosador completado: ${vehicle.titulo}`);
+      if (vehicle.proyectoId && vehicle.proyectoPeldanoId) {
+        void markPeldanoConquistadoTiempo(
+          user.uid,
+          { ...vehicle, ...closePatch, duracionFinal, subVehiculos: subsConRuta, ...(rutaCruzada ? { rutaCruzada } : {}) },
+          subsConRuta,
+          totalPS
+        );
+      }
+      if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
       registrarEvento(COMPONENTES.PLANIFICACION);
       toast.success(`+${totalPS} PS — Ciclo cerrado`, {
@@ -3313,6 +3632,13 @@ export default function Planeacion() {
       registrarEvento(COMPONENTES.PLANIFICACION);
       const summary = computeSituacionDesgloseSummary(updatedVehicle);
       setSituacionDesgloseCelebration({ vehicleId, titulo: vehicleSnapshot.titulo, summary });
+      if (vehicleSnapshot.proyectoId && vehicleSnapshot.proyectoPeldanoId) {
+        void markPeldanoConquistadoSituacion(user.uid, updatedVehicle, {
+          duracionMin: summary.minutosBloque,
+          psGanados: summary.psTotal,
+          subTareas,
+        });
+      }
       void playSituacionChimes(3);
       setGoldenFlash(true);
       setTimeout(() => setGoldenFlash(false), 3000);
@@ -3353,10 +3679,33 @@ export default function Planeacion() {
       horaFinMs: bloqueInicioAt + sum * 60000,
       depthBlockPsGranted: prevSc?.depthBlockPsGranted ?? 0,
     };
-    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
-    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
+    const firstCron = subTareas.find(st => situacionFilaCronometroPendiente(st) && (st.minutosCupo ?? 0) > 0);
+    let situacionCupoAnchor = vehicle.situacionCupoAnchor ?? undefined;
+    if (firstCron) {
+      const curAnchor = vehicle.situacionCupoAnchor;
+      const curSub = curAnchor ? subTareas.find(s => s.id === curAnchor.subTareaId) : undefined;
+      const anchorStillValid =
+        !!curSub &&
+        situacionFilaCronometroPendiente(curSub) &&
+        (curSub.minutosCupo ?? 0) > 0;
+      if (firstActivation || !anchorStillValid) {
+        situacionCupoAnchor = {
+          subTareaId: firstCron.id,
+          startedAt: firstActivation ? bloqueInicioAt : Date.now(),
+        };
+      }
+    }
+    setVehicles(prev =>
+      prev.map(v =>
+        v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v
+      )
+    );
+    vehiclesRef.current = vehiclesRef.current.map(v =>
+      v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v
+    );
+    setExpandedId(vehicleId);
     try {
-      await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
+      await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor: situacionCupoAnchor ?? null });
       if (firstActivation) void requestNotificationPermission();
       void handleSyncSituacionCupoAnchor(vehicleId);
       toast.success("Desglose con tiempo", {
@@ -3435,28 +3784,42 @@ export default function Planeacion() {
     const listCronOrder = list.filter(st => st.enDesgloseCronometro);
     const idx = listCronOrder.findIndex(st => st.id === subTareaId);
     const chimesOnComplete = idx >= 0 ? Math.max(1, listCronOrder.length - idx) : 1;
-    const subTareas = list.map(st =>
-      st.id === subTareaId ? { ...st, completada: true, resultadoSituacion: "cumplido" as const } : st
+    const now = Date.now();
+    const { subTareas, minutosGanados } = aplicarTiempoGanadoAlCumplir(
+      list,
+      subTareaId,
+      vehicle.situacionCupoAnchor,
+      now
     );
     const sc = vehicle.situacionCronometro!;
-    const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? Date.now();
-    const elapsedSec = Math.floor((Date.now() - bloqueInicio) / 1000);
+    const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? now;
+    const elapsedSec = Math.floor((now - bloqueInicio) / 1000);
     const totalDepthPs = computeBloqueDepthPS(elapsedSec);
     const prevGranted = sc.depthBlockPsGranted ?? 0;
     const deltaDepth = totalDepthPs - prevGranted;
-    const situacionCronometro = { ...sc, depthBlockPsGranted: totalDepthPs };
+    const pendingSum = sumMinutosCronometroPendientes(subTareas);
+    const situacionCronometro = {
+      ...sc,
+      depthBlockPsGranted: totalDepthPs,
+      horaFinMs: pendingSum > 0 ? now + pendingSum * 60000 : now,
+    };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void playSituacionChimes(chimesOnComplete);
-      void handleSyncSituacionCupoAnchor(vehicleId);
+      void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
       await awardSovereigntyPoints(user.uid, 4, `Sub-tarea (cronómetro): ${targetSub.texto}`);
       if (deltaDepth > 0) await awardSovereigntyPoints(user.uid, deltaDepth, `Profundidad bloque situación: ${vehicle.titulo}`);
       if (deltaDepth > 0) {
         toast.success(`+4 PS · +${deltaDepth} PS profundidad (bloque)`, {
           style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
           duration: 2800,
+        });
+      } else if (minutosGanados > 0) {
+        toast.success(`+4 PS · +${minutosGanados} min repartidos entre filas flexibles`, {
+          style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
+          duration: 2600,
         });
       } else {
         toast.success("+4 PS · Cumplido (cronómetro)", {
@@ -3477,16 +3840,26 @@ export default function Planeacion() {
     if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion" || vehicle.situacionCronometro?.activo !== true) return;
     const targetSub = vehicle.subTareas.find(st => st.id === subTareaId);
     if (!targetSub?.enDesgloseCronometro || (targetSub.resultadoSituacion ?? "pendiente") !== "pendiente") return;
-    const subTareas = vehicle.subTareas.map(st =>
-      st.id === subTareaId ? { ...st, completada: false, resultadoSituacion: "fallado" as const } : st
+    const now = Date.now();
+    const subTareas = registrarCierreFalladoCronometro(
+      vehicle.subTareas,
+      subTareaId,
+      vehicle.situacionCupoAnchor,
+      now
     );
-    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas } : v)));
-    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas } : v));
+    const sc = vehicle.situacionCronometro!;
+    const pendingSum = sumMinutosCronometroPendientes(subTareas);
+    const situacionCronometro =
+      pendingSum > 0
+        ? { ...sc, horaFinMs: now + pendingSum * 60000 }
+        : sc;
+    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
+    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
     try {
-      await updateVehicle(user.uid, vehicleId, { subTareas });
-      void handleSyncSituacionCupoAnchor(vehicleId);
+      await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
+      void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
       toast.info("Fallado (sin PS de fila)", { description: targetSub.texto, duration: 2200 });
-      const vehicleAfter: Vehicle = { ...vehicle, subTareas };
+      const vehicleAfter: Vehicle = { ...vehicle, subTareas, situacionCronometro };
       void tryFinalizeSituacionDesgloseBloque(vehicleId, subTareas, vehicleAfter);
     } catch (e) {
       console.error("[handleSituacionCronometroFallado]", e);
@@ -3698,6 +4071,62 @@ export default function Planeacion() {
   const segmentoActualIdx = planilla ? planilla.segmentos.findIndex(s => s.estado === "activo") : -1;
   const segmentoNumero = segmentoActualIdx >= 0 ? segmentoActualIdx + 1 : null;
 
+  const renderSoundToggles = (compact?: boolean) => (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          const next = !situacionAlertsEnabled;
+          setSituacionAlertsEnabledState(next);
+          setSituacionAlertsEnabled(next);
+        }}
+        className={`flex items-center gap-1 rounded-md border transition-all ${compact ? "px-2 py-1" : "px-2 py-1"}`}
+        style={{
+          borderColor: situacionAlertsEnabled ? `${GOLD}40` : "rgba(255,255,255,0.08)",
+          backgroundColor: situacionAlertsEnabled ? `${GOLD}10` : "rgba(0,0,0,0.2)",
+        }}
+        title={
+          situacionAlertsEnabled
+            ? "Silenciar alertas situacionales"
+            : "Activar alertas situacionales (sonido, vibración, notificaciones)"
+        }
+        data-testid="button-situacion-alerts-toggle"
+      >
+        {situacionAlertsEnabled ? <Bell size={10} style={{ color: GOLD }} /> : <BellOff size={10} style={{ color: "#475569" }} />}
+        <span
+          className="text-[8px] font-bold uppercase tracking-widest whitespace-nowrap"
+          style={{ color: situacionAlertsEnabled ? GOLD : "#475569" }}
+        >
+          Alertas {situacionAlertsEnabled ? "ON" : "OFF"}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const next = !tikSoundEnabled;
+          setTikSoundEnabledState(next);
+          setTikSoundEnabled(next);
+          if (!next) clearTikTapInterval();
+        }}
+        className={`flex items-center gap-1 rounded-md border transition-all ${compact ? "px-2 py-1" : "px-2 py-1"}`}
+        style={{
+          borderColor: tikSoundEnabled ? `${GOLD}40` : "rgba(255,255,255,0.08)",
+          backgroundColor: tikSoundEnabled ? `${GOLD}10` : "rgba(0,0,0,0.2)",
+        }}
+        title={tikSoundEnabled ? "Silenciar tick del reloj" : "Activar tick del reloj"}
+        data-testid="button-tik-sound-toggle"
+      >
+        {tikSoundEnabled ? <Volume2 size={10} style={{ color: GOLD }} /> : <VolumeX size={10} style={{ color: "#475569" }} />}
+        <span
+          className="text-[8px] font-bold uppercase tracking-widest whitespace-nowrap"
+          style={{ color: tikSoundEnabled ? GOLD : "#475569" }}
+        >
+          Tick {tikSoundEnabled ? "ON" : "OFF"}
+        </span>
+      </button>
+    </>
+  );
+
   const renderStepProfundo = () => {
     const step = STEPS[currentStep];
     if (step === "titulo") {
@@ -3848,18 +4277,160 @@ export default function Planeacion() {
           <div className="h-1.5 rounded-full overflow-hidden relative mb-2" style={{ backgroundColor: "rgba(255,255,255,0.08)", zIndex: 2 }}>
             <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(((progression?.sovereigntyPoints || 0) % 350) / 350 * 100, 100)}%` }} transition={{ duration: 0.8 }} className="h-full rounded-full" style={{ background: `linear-gradient(90deg, ${BLOOD} 0%, ${GOLD} 100%)` }} />
           </div>
-          <div className="flex items-center justify-between mb-1 relative" style={{ zIndex: 2 }}>
+          <div className="flex items-center justify-between mb-0.5 relative gap-2" style={{ zIndex: 2 }}>
             <span className="text-[9px] font-bold uppercase tracking-widest" style={{ color: CYAN }}>PS del día</span>
-            <span className="text-sm font-black" style={{ color: CYAN }}>{dailyPS} PS</span>
+            <span className="text-sm font-black tabular-nums" style={{ color: CYAN }}>
+              {dailyPsBar.todayPs} PS
+              <span className="text-[10px] font-bold ml-1.5 opacity-80">{dailyPsBar.pctOfReference}%</span>
+            </span>
           </div>
-          <div className="h-2 rounded-full overflow-hidden relative" style={{ backgroundColor: "rgba(0,255,195,0.08)", zIndex: 2 }}>
-            <motion.div key={dailyPS} initial={{ width: 0 }} animate={{ width: `${Math.min((dailyPS / 100) * 100, 100)}%` }} transition={{ duration: 0.6 }} className="h-full rounded-full" style={{ background: `linear-gradient(90deg, ${CYAN}88, ${CYAN})` }} />
+          <p className="text-[7px] text-slate-500 mb-1 relative leading-snug" style={{ zIndex: 2 }}>
+            {dailyPsBar.referenceLabel}
+          </p>
+          <p
+            className="text-[8px] font-bold mb-1.5 relative leading-snug"
+            style={{ zIndex: 2, color: dailyPsBar.atOrAbove100 ? GOLD : CYAN }}
+            data-testid="daily-ps-status"
+          >
+            {dailyPsBar.statusText}
+          </p>
+          <div
+            className="relative h-3 rounded-full overflow-visible mb-1"
+            style={{ backgroundColor: "rgba(0,255,195,0.08)", zIndex: 2 }}
+            data-testid="daily-ps-bar"
+          >
+            <div
+              className="absolute top-0 bottom-0 w-0.5 z-20 pointer-events-none"
+              style={{
+                left: `${dailyPsBar.marker100WidthPct}%`,
+                backgroundColor: dailyPsBar.atOrAbove100 ? `${GOLD}90` : "rgba(255,255,255,0.45)",
+                boxShadow: dailyPsBar.atOrAbove100 ? `0 0 6px ${GOLD}80` : "none",
+              }}
+              title="100% = ayer"
+            />
+            <motion.div
+              key={dailyPsBar.todayPs}
+              initial={{ width: 0 }}
+              animate={{ width: `${dailyPsBar.fillWidthPct}%` }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+              className="absolute top-0 bottom-0 left-0 rounded-full z-10"
+              style={{
+                background: dailyPsBar.atOrAbove100
+                  ? `linear-gradient(90deg, ${CYAN}99 0%, ${CYAN} 70%, ${GOLD} 100%)`
+                  : `linear-gradient(90deg, ${CYAN}55, ${CYAN})`,
+                boxShadow: dailyPsBar.atOrAbove120 ? `0 0 12px ${GOLD}60` : `0 0 8px ${CYAN}30`,
+              }}
+            />
           </div>
+          <div className="relative h-3 mb-0.5" style={{ zIndex: 2 }}>
+            <span className="absolute left-0 top-0 text-[7px] text-slate-600">0</span>
+            <span
+              className="absolute top-0 text-[7px] font-bold -translate-x-1/2"
+              style={{ left: `${dailyPsBar.marker100WidthPct}%`, color: dailyPsBar.atOrAbove100 ? GOLD : "rgba(255,255,255,0.45)" }}
+            >
+              100%
+            </span>
+            <span className="absolute right-0 top-0 text-[7px] text-slate-600">120%</span>
+          </div>
+        </motion.div>
+
+        {/* Termodinámica — frente a ayer (tu referencia) */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-3 rounded-xl border"
+          style={{ backgroundColor: PIZARRA, borderColor: "rgba(56,189,248,0.22)" }}
+          data-testid="termo-compare-card"
+        >
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#38BDF8" }}>
+                Termodinámica Atencional
+              </p>
+              <p className="text-[7px] text-slate-500 mt-0.5">Frente a ayer · tu referencia, no el reloj</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-[8px] text-slate-500 uppercase">Profundidad hoy</p>
+              <p className="text-xs font-black" style={{ color: RUTA_BANDA_META[termoCompare.profundidadHoy].color }}>
+                {RUTA_BANDA_META[termoCompare.profundidadHoy].label}
+              </p>
+              {termoCompare.profundidadAyer && (
+                <p className="text-[7px] text-slate-600">
+                  ayer: {RUTA_BANDA_META[termoCompare.profundidadAyer].label}
+                </p>
+              )}
+            </div>
+          </div>
+          <p className="text-[10px] font-bold text-white mb-1 leading-snug">{termoCompare.headline}</p>
+          <p className="text-[8px] text-slate-400 mb-2 leading-relaxed">{termoCompare.motivacion}</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {termoCompare.rows
+              .filter(r => r.key !== "descansos" || r.today > 0 || r.yesterday > 0)
+              .slice(0, 4)
+              .map(row => {
+                const up = row.betterWhenHigher ? row.delta > 0 : false;
+                const down = row.betterWhenHigher ? row.delta < 0 : false;
+                const deltaColor = row.key === "descansos"
+                  ? "#10b981"
+                  : up
+                    ? EMERALD
+                    : down
+                      ? "#94a3b8"
+                      : "rgba(255,255,255,0.5)";
+                const deltaText =
+                  row.delta === 0
+                    ? "="
+                    : row.delta > 0
+                      ? `+${row.delta}`
+                      : `${row.delta}`;
+                return (
+                  <div
+                    key={row.key}
+                    className="px-2 py-1.5 rounded-lg"
+                    style={{ backgroundColor: "rgba(255,255,255,0.04)" }}
+                  >
+                    <p className="text-[7px] text-slate-500 truncate">{row.label}</p>
+                    <div className="flex items-baseline justify-between gap-1">
+                      <span className="text-sm font-black text-white tabular-nums">{row.today}</span>
+                      <span className="text-[9px] font-bold tabular-nums" style={{ color: deltaColor }}>
+                        {termoCompare.hasYesterday ? deltaText : "—"}
+                      </span>
+                    </div>
+                    {termoCompare.hasYesterday && (
+                      <p className="text-[6px] text-slate-600">ayer {row.yesterday}</p>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex flex-col gap-2 p-2.5 rounded-xl border sm:flex-row sm:items-center sm:justify-between"
+          style={{ backgroundColor: "rgba(0,0,0,0.35)", borderColor: "rgba(255,255,255,0.08)" }}
+          data-testid="sound-controls-bar"
+        >
+          <div className="min-w-0">
+            <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · Planificación</p>
+            <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
+              Alertas = cupo situacional, voz y notificaciones · Tick = pitido del reloj en foco
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles(true)}</div>
         </motion.div>
 
         {centinelaEsperaSec > 0 && !vehicles.some(v => v.status === "activo" && !v.autoVerdad) && (
           <p className="text-[9px] text-center text-slate-500 font-mono" data-testid="centinela-espera">
             Centinela en espera… {centinelaEsperaSec}s
+          </p>
+        )}
+        {centinelaBlockReason &&
+          !vehicles.some(v => v.status === "activo" && !v.autoVerdad) &&
+          !vehicles.some(v => v.autoVerdad && v.status === "activo") && (
+          <p className="text-[9px] text-center text-amber-600/80 leading-snug px-2" data-testid="centinela-blocked">
+            Centinela pausado: {centinelaBlockReason}
           </p>
         )}
 
@@ -4435,6 +5006,7 @@ export default function Planeacion() {
                           <input type="time" value={nuevoSegHoraFin} onChange={(e) => setNuevoSegHoraFin(e.target.value)} className="w-full p-2 rounded-lg bg-black/60 border text-white text-sm focus:outline-none" style={{ borderColor: "rgba(255,255,255,0.1)" }} />
                         </div>
                       </div>
+                      <p className="text-[8px] text-slate-600">Duración máxima 24 h. Si la hora fin es anterior a inicio, el segmento cruza medianoche.</p>
                       <div>
                         <label className="text-[9px] text-slate-500 uppercase mb-1 block">Color</label>
                         <div className="flex gap-1.5">
@@ -4476,12 +5048,13 @@ export default function Planeacion() {
                         const isActive = seg.estado === "activo";
                         const isClosed = seg.estado === "cerrado_manual";
                         const isEntropia = seg.estado === "entropia";
-                        const nowMinSeg = getCurrentTimeMinutes();
-                        const inicioMinSeg = timeStringToMinutes(seg.horaInicio);
-                        const activarVentanaAbierta = nowMinSeg >= inicioMinSeg - 5 && nowMinSeg <= inicioMinSeg + 5;
-                        const finMinSeg = seg.horaFin ? timeStringToMinutes(seg.horaFin) : null;
-                        const cierreVentanaAbierta =
-                          finMinSeg == null ? true : nowMinSeg >= finMinSeg - 5 && nowMinSeg <= finMinSeg + 5;
+                        const nowMsSeg = Date.now();
+                        const activarVentanaAbierta = isWithinSegmentTimeMargin(
+                          nowMsSeg, seg.horaInicio, seg.horaFin, "inicio", 5
+                        );
+                        const cierreVentanaAbierta = seg.horaFin
+                          ? isWithinSegmentTimeMargin(nowMsSeg, seg.horaInicio, seg.horaFin, "fin", 5)
+                          : true;
                         return (
                           <div key={seg.id} className="p-3 rounded-xl border transition-all" style={{
                             backgroundColor: isActive ? `${EMERALD}08` : isEntropia ? `${BLOOD}08` : isClosed ? "rgba(100,116,139,0.05)" : "rgba(107,114,128,0.03)",
@@ -4658,43 +5231,9 @@ export default function Planeacion() {
         {!isCreating ? (
           <>
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] text-slate-600 uppercase tracking-widest">La Flota</p>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => {
-                      const next = !situacionAlertsEnabled;
-                      setSituacionAlertsEnabledState(next);
-                      setSituacionAlertsEnabled(next);
-                    }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md border transition-all"
-                    style={{ borderColor: situacionAlertsEnabled ? `${GOLD}40` : "rgba(255,255,255,0.08)", backgroundColor: situacionAlertsEnabled ? `${GOLD}10` : "rgba(0,0,0,0.2)" }}
-                    title={situacionAlertsEnabled ? "Silenciar alertas situacionales" : "Activar alertas situacionales (sonido, vibración, notificaciones)"}
-                    data-testid="button-situacion-alerts-toggle"
-                  >
-                    {situacionAlertsEnabled ? <Bell size={10} style={{ color: GOLD }} /> : <BellOff size={10} style={{ color: "#475569" }} />}
-                    <span className="text-[8px] font-bold uppercase tracking-widest" style={{ color: situacionAlertsEnabled ? GOLD : "#475569" }}>
-                      Alertas {situacionAlertsEnabled ? "ON" : "OFF"}
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      const next = !tikSoundEnabled;
-                      setTikSoundEnabledState(next);
-                      setTikSoundEnabled(next);
-                      if (!next) clearTikTapInterval();
-                    }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md border transition-all"
-                    style={{ borderColor: tikSoundEnabled ? `${GOLD}40` : "rgba(255,255,255,0.08)", backgroundColor: tikSoundEnabled ? `${GOLD}10` : "rgba(0,0,0,0.2)" }}
-                    title={tikSoundEnabled ? "Silenciar tick del reloj" : "Activar tick del reloj"}
-                    data-testid="button-tik-sound-toggle"
-                  >
-                    {tikSoundEnabled ? <Volume2 size={10} style={{ color: GOLD }} /> : <VolumeX size={10} style={{ color: "#475569" }} />}
-                    <span className="text-[8px] font-bold uppercase tracking-widest" style={{ color: tikSoundEnabled ? GOLD : "#475569" }}>
-                      Tick {tikSoundEnabled ? "ON" : "OFF"}
-                    </span>
-                  </button>
-                </div>
+              <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-[10px] text-slate-600 uppercase tracking-widest flex-shrink-0">La Flota</p>
+                <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles()}</div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {(Object.entries(FLOTA_CONFIG) as [TipoFlota, typeof FLOTA_CONFIG["tiempo"]][]).map(([tipo, cfg]) => {
@@ -4718,7 +5257,7 @@ export default function Planeacion() {
             {activeVehicles.length > 0 ? (
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length}>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSubTareaDeCronometro={handleQuitarSubTareaDeCronometro} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={arquitectoUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} onQuickEditEje={(ejeKey, newText, newTrifecta) => handleQuickEditEje(v.id, ejeKey, newText, newTrifecta)} onDetail={() => handleEdit(v)} fatigueLayer={currentLayer} transmutationText={transmutationText} onTransmutationChange={setTransmutationText} showTransmutation={currentLayer >= 3} recentSituacionCount={recentSituacionCount} segmentoActivoMinutes={segmentoActivoMinutes} segmentoNumero={segmentoNumero} planilla={planilla} monitorState={monitorState} onJustificar={handleJustificar} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSubTareaDeCronometro={handleQuitarSubTareaDeCronometro} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
                 ))}
               </AccordionSection>
             ) : (
@@ -4907,17 +5446,20 @@ export default function Planeacion() {
                                     </button>
                                     {showDesglosadorCTA && (
                                       <div
-                                        className="absolute z-30 left-1/2 -translate-x-1/2 bottom-full mb-2 w-48 rounded-xl border p-3 shadow-xl text-center"
+                                        className="absolute z-30 left-1/2 -translate-x-1/2 bottom-full mb-2 w-56 rounded-xl border p-3 shadow-xl text-center"
                                         style={{ backgroundColor: "#0A0A0A", borderColor: `${GOLD}60` }}
                                       >
-                                        <p className="text-[9px] text-slate-400 mb-2">Requiere Plan<br /><span className="font-black" style={{ color: GOLD }}>Soberano Operativo</span></p>
+                                        <p className="text-[10px] font-black mb-1" style={{ color: GOLD }}>Operativo — unidades y ritmo</p>
+                                        <p className="text-[9px] text-slate-400 mb-2 leading-relaxed">
+                                          Para producción repetitiva. Un día mal contabilizado al mes cuesta más que la suscripción.
+                                        </p>
                                         <button
-                                          onClick={() => { setShowDesglosadorCTA(false); navigate("/pagos"); }}
+                                          onClick={() => { setShowDesglosadorCTA(false); navigate("/pagos?plan=operativo"); }}
                                           className="w-full py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider text-black transition-all"
                                           style={{ background: GOLD }}
                                           data-testid="button-desglosador-unlock-cta"
                                         >
-                                          Desbloquear → Ver planes
+                                          Ver módulo Operativo →
                                         </button>
                                         <button
                                           onClick={() => setShowDesglosadorCTA(false)}
@@ -5843,10 +6385,49 @@ export default function Planeacion() {
             onSeal={async (cierre) => {
               if (user) {
                 const fresh = await getDailyPoints(user.uid);
-                const sealed = { ...cierre, totalPS: fresh.total, fecha: getLimaDateString() };
+                const fecha = getLimaDateString();
+                const dayStartMs = getLimaDayStart().getTime();
+                const jornadaVehicles = vehicles.filter(v => {
+                  const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
+                  return ts >= dayStartMs;
+                });
+                const balance = calcularBalanceConquistaJornada({
+                  segmentos: planilla?.segmentos || [],
+                  vehiculos: jornadaVehicles,
+                  now: Date.now(),
+                  dayStartMs,
+                });
+                const introPs = await getIntrospectionPsForDay(user.uid, fecha);
+                const events = await getFocusBandEventsRecent(user.uid, 1);
+                const todayEvents = events.filter(e => e.fecha === fecha);
+                const snapshot = buildDailySnapshot({
+                  fecha,
+                  segmentos: planilla?.segmentos || [],
+                  vehicles: jornadaVehicles,
+                  dayStartMs,
+                  logs: fresh.logs,
+                  introspeccionPs: introPs,
+                  events: todayEvents,
+                  conquistaMin: balance.conquistaMin,
+                  entropiaMin: balance.entropiaMin,
+                  vacioMin: balance.vacioMin,
+                });
+                await savePlanillaDailySnapshot(user.uid, snapshot);
+                const sealed: CierreJornadaLog = {
+                  ...cierre,
+                  totalPS: fresh.total,
+                  fecha,
+                  psPanoramico: snapshot.psDesglose.panoramico,
+                  psEspectro: snapshot.psDesglose.espectro,
+                  psVehiculos: snapshot.psDesglose.vehiculos,
+                  psIntrospeccion: snapshot.psDesglose.introspeccion,
+                  profundidadMaxima: snapshot.profundidadMaxima,
+                  bloquesCompletados: snapshot.bloquesCompletados,
+                  descansosCuerpo: snapshot.espectroBloques.descansosCuerpo,
+                };
                 await saveCierreJornada(user.uid, sealed);
                 toast.success("Jornada Sellada", {
-                  description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${sealed.totalPS} PS`,
+                  description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${sealed.totalPS} PS · ${snapshot.bloquesCompletados} bloques`,
                   style: { backgroundColor: PIZARRA, border: `2px solid ${GOLD}`, color: GOLD }
                 });
               }
@@ -5925,7 +6506,8 @@ function VehicleCard({
   onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onQuitarSubTareaDeCronometro, onCerrarSituacionDesgloseBloque,
   onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose, onDesglosadorDepthTick, onDesglosadorPausaInterrupcion, onResumeDesglosador, onDesglosadorReorderSubs,
   onReorderSubTareasCronometro,
-  onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle, onOpenCierreEnergia
+  onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle, onOpenCierreEnergia,
+  onRutaBandCross, onBloqueCierre
 }: {
   vehicle: Vehicle; expanded: boolean; onToggle: () => void; onComplete?: () => void; onArchive?: () => void;
   onArchiveWithReflection?: (reflections: Record<string, string>) => void; onQuickEditEje?: (ejeKey: string, newText: string, newTrifecta: TrifectaState) => void;
@@ -5959,6 +6541,8 @@ function VehicleCard({
   onMicroPasoToggle?: (vehicleId: string, paso: "hidratacion" | "respiracion" | "pantallaZero") => void;
   onEtapaPuntoCeroToggle?: (vehicleId: string, etapa: "etapa1" | "etapa2" | "etapa3" | "etapa4") => void;
   onOpenCierreEnergia?: (payload: CierreEnergiaModalPayload) => void;
+  onRutaBandCross?: (payload: { vehicleId: string; subId: string; subTitulo: string; banda: RutaBandaId }) => void;
+  onBloqueCierre?: (payload: { vehicleId: string; sub: SubVehiculo; status: string }) => void;
 }) {
   const [showReflectionMode, setShowReflectionMode] = useState(false);
   const [reflections, setReflections] = useState<Record<string, string>>({});
@@ -6021,6 +6605,7 @@ function VehicleCard({
   const prevTimerExpiredRef = useRef<boolean>(false);
   const situacionCupoFireKeyRef = useRef<string | null>(null);
   const situacion2MinWarnKeyRef = useRef<string | null>(null);
+  const situacionFilaVoiceKeysRef = useRef<Set<string>>(new Set());
   const situacionCupoEscalationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const subTareasRef = useRef(vehicle.subTareas);
   subTareasRef.current = vehicle.subTareas;
@@ -6255,6 +6840,33 @@ function VehicleCard({
   }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.titulo, vehicle.id, situacionCupoUiTick]);
 
   useEffect(() => {
+    if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    if (vehicle.situacionCronometro?.activo !== true) return;
+    const anchor = vehicle.situacionCupoAnchor;
+    if (!anchor?.subTareaId) return;
+    const sub = (vehicle.subTareas || []).find(s => s.id === anchor.subTareaId);
+    if (!sub || !(sub.minutosCupo && sub.minutosCupo > 0)) return;
+    if (sub.enDesgloseCronometro && (sub.resultadoSituacion ?? "pendiente") !== "pendiente") return;
+
+    const voiceKey = `${anchor.subTareaId}-${anchor.startedAt}`;
+    if (situacionFilaVoiceKeysRef.current.has(voiceKey)) return;
+    situacionFilaVoiceKeysRef.current.add(voiceKey);
+    situacion2MinWarnKeyRef.current = null;
+    situacionCupoFireKeyRef.current = null;
+
+    const isFirstFila =
+      anchor.startedAt === vehicle.situacionCronometro?.bloqueInicioAt;
+    speakSituacionFilaEnFoco(sub.texto, { intro: isFirstFila });
+  }, [
+    vehicle.tipoFlota,
+    vehicle.status,
+    vehicle.situacionCronometro?.activo,
+    vehicle.situacionCronometro?.bloqueInicioAt,
+    vehicle.situacionCupoAnchor,
+    vehicle.subTareas,
+  ]);
+
+  useEffect(() => {
     const wasExpired = prevTimerExpiredRef.current;
     prevTimerExpiredRef.current = timerExpired;
     if (!wasExpired && timerExpired && vehicle.status === "activo") {
@@ -6304,12 +6916,34 @@ function VehicleCard({
       prevSubRestanteRutaRef.current = null;
       return;
     }
+
     if (activeSubIdForRutaRef.current !== activeSub.id) {
       activeSubIdForRutaRef.current = activeSub.id;
       rutaUmbralAlertKeysRef.current = new Set();
       prevSubRestanteRutaRef.current = null;
+      const { ruta: repaired, changed } = repairRutaCruzadoAheadOfRestantes(
+        activeSub.rutaEnfoque,
+        subVehicleRestante
+      );
+      if (changed) {
+        const updated = (vehicle.subVehiculos || []).map(s =>
+          s.id === activeSub.id ? { ...s, rutaEnfoque: repaired } : s
+        );
+        onDesglosadorUpdate(vehicle.id, updated);
+      }
+      return;
     }
+
     const prev = prevSubRestanteRutaRef.current;
+    if (prev === null) {
+      prevSubRestanteRutaRef.current = subVehicleRestante;
+      return;
+    }
+    if (subVehicleRestante > prev) {
+      prevSubRestanteRutaRef.current = subVehicleRestante;
+      return;
+    }
+
     prevSubRestanteRutaRef.current = subVehicleRestante;
     const { ruta: nextRuta, alerts } = applyRutaThresholdCrossing(
       activeSub.rutaEnfoque,
@@ -6320,9 +6954,19 @@ function VehicleCard({
       const key = `${activeSub.id}-${alert}`;
       if (rutaUmbralAlertKeysRef.current.has(key)) continue;
       rutaUmbralAlertKeysRef.current.add(key);
-      void playSituacionChimes(alert === "concentrado" ? 1 : 2);
+      onRutaBandCross?.({
+        vehicleId: vehicle.id,
+        subId: activeSub.id,
+        subTitulo: activeSub.titulo,
+        banda: alert,
+      });
+      if (isSituacionAlertsEnabled()) {
+        void playSituacionChimes(alert === "concentrado" ? 1 : 2);
+      } else {
+        playChime();
+      }
       const msg = alert === "concentrado" ? "Entrando en concentrado" : "Último tramo: al límite";
-      speakUbicacionSingle(msg);
+      speakUbicacionSingle(msg, "desglosador");
     }
     const cruzadoChanged =
       nextRuta.cruzado.concentrado !== activeSub.rutaEnfoque.cruzado.concentrado ||
@@ -6333,7 +6977,7 @@ function VehicleCard({
       );
       onDesglosadorUpdate(vehicle.id, updated);
     }
-  }, [subVehicleRestante, vehicle.tipoReloj, vehicle.status, vehicle.subVehiculos, vehicle.id, onDesglosadorUpdate]);
+  }, [subVehicleRestante, vehicle.tipoReloj, vehicle.status, vehicle.subVehiculos, vehicle.id, onDesglosadorUpdate, playChime]);
 
   useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo") return;
@@ -6344,7 +6988,8 @@ function VehicleCard({
     subStartVoiceRef.current.add(key);
     speakUbicacionQueue(
       [cleanSubTitulo(activeSub.titulo), "Entrando en modo fluido"],
-      true
+      true,
+      "desglosador"
     );
   }, [vehicle.subVehiculos, vehicle.status, vehicle.tipoReloj]);
 
@@ -6368,6 +7013,7 @@ function VehicleCard({
       ...(status === "cumplido" && allSubs[idx].cantidadObjetivo ? { cantidadLograda: cantidad } : {}),
       ...(allSubs[idx].rutaEnfoque?.activa ? { rutaDeclarada: rutaDeclarada ?? [] } : {}),
     };
+    onBloqueCierre?.({ vehicleId: vehicle.id, sub: allSubs[idx], status });
     const nextPending = allSubs.findIndex((s, i) => i > idx && s.status === "pendiente");
     if (nextPending !== -1) {
       allSubs[nextPending] = { ...allSubs[nextPending], status: "activo", aperturaAt: now };
@@ -6439,12 +7085,9 @@ function VehicleCard({
       }
     }
 
-    if (tipoFlota === "situacion" && vehicle.situacionCronometro?.activo) {
-      const sc = vehicle.situacionCronometro;
-      const subs = vehicle.subTareas || [];
-      const sumMin = sumMinutosCronometroPendientes(subs);
-      if (sumMin > 0 && sc) {
-        const tMs = sc.horaFinMs ?? (sc.bloqueInicioAt ?? aperturaMs) + sumMin * 60000;
+    if (tipoFlota === "situacion") {
+      const tMs = situacionTargetMsReloj(vehicle, Date.now());
+      if (tMs != null) {
         targetMs = tMs;
         setTargetTimeLabel(fmtHHMM(new Date(tMs)));
       }
@@ -6495,14 +7138,16 @@ function VehicleCard({
     const onFocus = () => computeTimer();
     document.addEventListener("visibilitychange", onFocus);
 
-    if (!expanded) return () => document.removeEventListener("visibilitychange", onFocus);
+    if (!expanded && !(tipoFlota === "situacion" && situacionRelojDebeMostrarse(vehicle))) {
+      return () => document.removeEventListener("visibilitychange", onFocus);
+    }
 
     const interval = setInterval(computeTimer, 1000);
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [expanded, vehicle.status, vehicle.tipoTerminoRapido, vehicle.criterioDetalle, vehicle.tiempoInicio, tipoFlota, vehicle.aperturaAt, vehicle.parentesisRecarga, vehicle.tipoReloj, vehicle.cantidadObjetivo, vehicle.titulo, vehicle.situacionCronometro, vehicle.subTareas]);
+  }, [expanded, vehicle.status, vehicle.tipoTerminoRapido, vehicle.criterioDetalle, vehicle.tiempoInicio, tipoFlota, vehicle.aperturaAt, vehicle.parentesisRecarga, vehicle.tipoReloj, vehicle.cantidadObjetivo, vehicle.titulo, vehicle.situacionCronometro, vehicle.situacionCupoAnchor, vehicle.subTareas]);
 
   // Timer for active sub-vehicle in desglosador mode — fuente única: computeDesglosadorClocks
   useEffect(() => {
@@ -6719,6 +7364,19 @@ function VehicleCard({
                   <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full tracking-widest" style={{ backgroundColor: "rgba(139,92,246,0.15)", color: VIOLET, border: "1px solid rgba(139,92,246,0.35)" }}>EN PAUSA</span>
                 )}
                 {segmentoNumero != null && vehicle.status === "activo" && <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${EMERALD}20`, color: EMERALD }}>S{segmentoNumero}</span>}
+                {isSituacionFlota && vehicle.status === "activo" && situacionRelojDebeMostrarse(vehicle) && timerDisplay && (
+                  <span
+                    className="text-[9px] font-black px-1.5 py-0.5 rounded font-mono tracking-wider"
+                    style={{
+                      backgroundColor: timerExpired ? "rgba(153,27,27,0.25)" : "rgba(212,175,55,0.15)",
+                      color: timerExpired ? "#ef4444" : GOLD,
+                      border: `1px solid ${timerExpired ? "rgba(153,27,27,0.45)" : "rgba(212,175,55,0.35)"}`,
+                    }}
+                    data-testid={`situacion-header-timer-${vehicle.id}`}
+                  >
+                    {timerDisplay}
+                  </span>
+                )}
               </div>
               <p className="text-[10px] text-slate-500">
                 {vehicle.tipoReloj === "manual" ? "Reloj de Juicio — abierto sin límite" : vehicle.criterioDetalle}
@@ -7386,7 +8044,7 @@ function VehicleCard({
                 );
               })()}
 
-              {vehicle.status === "activo" && timerDisplay && vehicle.tipoReloj !== "desglosador" && tipoFlota !== "verdad" && (tipoFlota !== "descanso" || showDescansoReloj) && vehicle.tipoReloj !== "manual" && (tipoFlota !== "situacion" || (vehicle.situacionCronometro?.activo === true && sumMinutosCronometroPendientes(vehicle.subTareas || []) > 0)) && (
+              {vehicle.status === "activo" && timerDisplay && vehicle.tipoReloj !== "desglosador" && tipoFlota !== "verdad" && (tipoFlota !== "descanso" || showDescansoReloj) && vehicle.tipoReloj !== "manual" && (tipoFlota !== "situacion" || situacionRelojDebeMostrarse(vehicle)) && (
                 <div className="pt-3">
                   <div className="p-3 rounded-xl border text-center" style={{
                     backgroundColor: timerExpired ? "rgba(153,27,27,0.15)" : `${VERDE}08`,
@@ -7396,7 +8054,7 @@ function VehicleCard({
                     <div className="flex items-center justify-center gap-2 mb-1">
                       <Timer size={12} style={{ color: timerExpired ? "#ef4444" : VERDE }} />
                       <span className="text-[8px] font-bold uppercase tracking-widest" style={{ color: timerExpired ? "#ef4444" : VERDE }}>
-                        {vehicle.tipoReloj === "investigador" ? "CRONÓMETRO LIBRE" : timerExpired ? (tipoFlota === "descanso" ? "DESCANSO EN DEUDA" : "TIEMPO EN DEUDA") : "CUENTA REGRESIVA"}
+                        {vehicle.tipoReloj === "investigador" ? "CRONÓMETRO LIBRE" : timerExpired ? (tipoFlota === "descanso" ? "DESCANSO EN DEUDA" : "TIEMPO EN DEUDA") : tipoFlota === "situacion" ? "FILA EN FOCO" : "CUENTA REGRESIVA"}
                       </span>
                     </div>
                     {!timerExpired ? (
@@ -7511,7 +8169,7 @@ function VehicleCard({
                     )}
                   </div>
                   <p className="text-[7px] text-slate-600 leading-snug mb-2 px-0.5 border-l-2 pl-2" style={{ borderColor: "rgba(148,163,184,0.35)" }}>
-                    Lista libre: +2 PS al completar (sin tiempo madre). Selecciona filas y «Llevar al desglose con tiempo»: +4 PS por fila, +5′ desde la siguiente pendiente del cronómetro, 3 pitidos a 2 min del cupo de la fila en foco, timbres al marcar cumplido (orden). Minutos que fijes manualmente se conservan; el resto se reparte al ajustar hora fin.
+                    Lista libre: +2 PS al completar (sin tiempo madre). Selecciona filas y «Llevar al desglose con tiempo»: +4 PS por fila, hora fin objetivo por fila (→ HH:MM), tiempo ganado al cumplir antes del cupo se reparte entre filas flexibles, 3 pitidos a 2 min del cupo en foco. Minutos fijados manualmente se conservan.
                   </p>
                   {(() => {
                     void situacionCupoUiTick;
@@ -7604,6 +8262,20 @@ function VehicleCard({
                             const all = vehicle.subTareas || [];
                             const subsLibre = all.filter(s => !s.enDesgloseCronometro);
                             const subsCron = all.filter(s => s.enDesgloseCronometro);
+                            void situacionCupoUiTick;
+                            const horariosCron =
+                              situacionCronActivo && subsCron.length > 0
+                                ? computeSituacionCronometroHorarios(subsCron, {
+                                    bloqueInicioAt:
+                                      vehicle.situacionCronometro?.bloqueInicioAt ??
+                                      vehicle.aperturaAt ??
+                                      Date.now(),
+                                    anchor: vehicle.situacionCupoAnchor,
+                                    now: Date.now(),
+                                    previewTiempoGanado: vehicle.situacionCronometro?.activo === true,
+                                  })
+                                : [];
+                            const horarioById = new Map(horariosCron.map(h => [h.subTareaId, h]));
                             return (
                               <>
                                 {onMoveSubTareasToCronometro && subsLibre.some(s => !s.completada) && (
@@ -7769,6 +8441,10 @@ function VehicleCard({
                                   const lineDone = st.resultadoSituacion === "cumplido" || st.resultadoSituacion === "fallado";
                                   const ok = st.resultadoSituacion === "cumplido";
                                   const bad = st.resultadoSituacion === "fallado";
+                                  const horario = horarioById.get(st.id);
+                                  const finLabel =
+                                    horario?.finLabel ??
+                                    (st.cerradaAt != null ? formatHHMM(st.cerradaAt) : null);
                                   return (
                                     <div key={st.id} className="rounded-lg overflow-hidden" style={{ backgroundColor: bad ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.02)", border: bad ? "1px solid rgba(239,68,68,0.2)" : undefined }}>
                                       <div className="flex flex-col gap-1 p-1.5">
@@ -7802,6 +8478,15 @@ function VehicleCard({
                                             <span className="text-[8px] mr-1" style={{ color: PLATA }}>{stIdx + 1}.</span>
                                             {st.texto}
                                           </span>
+                                          {!pend && finLabel && (
+                                            <span
+                                              className="text-[7px] font-mono font-bold flex-shrink-0"
+                                              style={{ color: ok ? "rgba(148,163,184,0.85)" : "#f87171" }}
+                                              data-testid={`situacion-cron-fin-${st.id}`}
+                                            >
+                                              {ok ? "✓" : "✗"} {finLabel}
+                                            </span>
+                                          )}
                                           {pend && (
                                             <div className="flex gap-1 flex-shrink-0 flex-wrap">
                                               <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroCumplido?.(vehicle.id, st.id); }} className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(0,200,81,0.15)", color: VERDE, border: "1px solid rgba(0,200,81,0.4)" }}>Cumplido</button>
@@ -7850,6 +8535,16 @@ function VehicleCard({
                                               title={st.cupoFijo ? "Fijado: el sobrante se reparte entre las demás filas" : "Fija minutos; el resto se reparte automáticamente"}
                                               data-testid={`input-subtarea-cupo-cron-${st.id}`}
                                             />
+                                            {finLabel && (
+                                              <span
+                                                className="text-[7px] font-mono font-bold"
+                                                style={{ color: horario?.enFoco ? GOLD : "rgba(148,163,184,0.85)" }}
+                                                data-testid={`situacion-cron-objetivo-${st.id}`}
+                                                title="Hora objetivo de fin de esta fila"
+                                              >
+                                                → {finLabel}
+                                              </span>
+                                            )}
                                             {onExtendSituacionCupo && (
                                               <button
                                                 type="button"

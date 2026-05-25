@@ -2,6 +2,11 @@ import { initializeApp, cert, getApps, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getPrivatePath } from "../shared/firebasePaths";
+import {
+  type ModuleId,
+  mergeModuleIds,
+  modulesGrantedByPlan,
+} from "../shared/moduleAccess";
 
 let app: App | null = null;
 
@@ -125,4 +130,70 @@ export async function setEspejoCreditsForUser(
     });
   }
   return true;
+}
+
+async function getLatestProgressionRef(
+  db: ReturnType<typeof getFirestore>,
+  userId: string
+) {
+  const path = getPrivatePath(userId, "progression");
+  const snap = await db.collection(path).get();
+  if (snap.empty) return null;
+  const sorted = [...snap.docs].sort((a, b) => {
+    const ta = (a.data().updatedAt as { toMillis?: () => number })?.toMillis?.() ?? 0;
+    const tb = (b.data().updatedAt as { toMillis?: () => number })?.toMillis?.() ?? 0;
+    return tb - ta;
+  });
+  const doc = sorted[0];
+  return { ref: doc.ref, data: doc.data() as Record<string, unknown> };
+}
+
+export async function activateModulesForUserById(
+  userId: string,
+  planId: string
+): Promise<boolean> {
+  const adminApp = getAdminApp();
+  if (!adminApp) return false;
+  const grants = modulesGrantedByPlan(planId);
+  if (grants.length === 0) return false;
+
+  const db = getFirestore(adminApp);
+  const existing = await getLatestProgressionRef(db, userId);
+  const path = getPrivatePath(userId, "progression");
+
+  if (!existing) {
+    await db.collection(path).add({
+      userId,
+      rank: "iniciado",
+      points: 0,
+      activeModules: grants,
+      subscriptionPlan: planId,
+      sovereigntyPoints: 0,
+      ptsEspejo: 0,
+      ptsPlanificacion: 0,
+      ptsDeposito: 0,
+      totalCP: 0,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return true;
+  }
+
+  const prevModules = (existing.data.activeModules as string[] | undefined) ?? [];
+  const merged = mergeModuleIds(prevModules, grants as ModuleId[]);
+  await existing.ref.update({
+    activeModules: merged,
+    subscriptionPlan: planId,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  return true;
+}
+
+export async function activateModulesForEmail(email: string, planId: string): Promise<boolean> {
+  const uid = await lookupUidByEmail(email);
+  if (!uid) {
+    console.warn(`[activateModules] Sin UID para ${email} plan ${planId}`);
+    return false;
+  }
+  return activateModulesForUserById(uid, planId);
 }

@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
-import { ArrowLeft, Map, Shield, Brain, Zap, Heart, BookOpen, BarChart3, Settings, Users, FileText, Eye, Compass, Clock, Star, Target, Radio, Scroll, Lock, HelpCircle, Home, Sparkles, ShoppingCart, ExternalLink, Flame } from "lucide-react";
+import { ArrowLeft, Map, Shield, Brain, Zap, Heart, BookOpen, BarChart3, Settings, Users, FileText, Eye, Compass, Clock, Star, Target, Radio, Scroll, Lock, HelpCircle, Home, Sparkles, ShoppingCart, ExternalLink, Flame, Layers } from "lucide-react";
 import { useLocation } from "wouter";
+import { BADGE_EN_CAMINO } from "@shared/moduleCatalog";
 
 const GOLD = "#D4AF37";
 const EMERALD = "#10B981";
@@ -13,9 +14,9 @@ interface Ruta {
   path: string;
   nombre: string;
   desc: string;
-  icon: any;
+  icon: React.ComponentType<{ size?: number; style?: React.CSSProperties; className?: string }>;
   color: string;
-  acceso: "libre" | "usuario" | "arquitecto";
+  acceso: "libre" | "usuario" | "planificacion_base" | "soberania_dia" | "operativo" | "en_camino";
 }
 
 const CATEGORIAS: { titulo: string; color: string; rutas: Ruta[] }[] = [
@@ -24,18 +25,19 @@ const CATEGORIAS: { titulo: string; color: string; rutas: Ruta[] }[] = [
     color: GOLD,
     rutas: [
       { path: "/menu", nombre: "Menú Principal", desc: "Panel central de navegación", icon: Home, color: GOLD, acceso: "usuario" },
-      { path: "/planeacion", nombre: "Planificación v5.5", desc: "Segmentos, vehículos, La Flota, Motor de Guerrero", icon: Zap, color: ORANGE, acceso: "arquitecto" },
-      { path: "/espejo", nombre: "Espejo Soberano", desc: "Santuario del Corazón — mapeo emocional con 4 ejes clínicos", icon: Heart, color: "#ef4444", acceso: "libre" },
-      { path: "/proyector", nombre: "Proyector", desc: "Arquitectura de realidad futura — 4 ejes × 5 niveles", icon: Target, color: VIOLET, acceso: "arquitecto" },
-      { path: "/alquimia", nombre: "Alquimia", desc: "Transformación de estados internos", icon: Sparkles, color: VIOLET, acceso: "usuario" },
-      { path: "/esperanza", nombre: "Esperanza", desc: "Registro de esperanzas y deseos futuros", icon: Star, color: EMERALD, acceso: "usuario" },
+      { path: "/planeacion", nombre: "Planificación v5.5", desc: "Segmentos, vehículos, La Flota — requiere Planificación Base", icon: Zap, color: ORANGE, acceso: "planificacion_base" },
+      { path: "/proyectos", nombre: "Proyectos y Peldaños", desc: "Hub anti-planificación — requiere Soberanía del día", icon: Layers, color: "#38BDF8", acceso: "soberania_dia" },
+      { path: "/espejo", nombre: "Espejo Soberano", desc: "El Corazón Sabio™ — $17 pago único", icon: Heart, color: "#ef4444", acceso: "libre" },
+      { path: "/proyector", nombre: "Proyector", desc: "Arquitectura de realidad futura — 4 ejes × 5 niveles", icon: Target, color: VIOLET, acceso: "en_camino" },
+      { path: "/alquimia", nombre: "Alquimia", desc: "Transformación de estados internos", icon: Sparkles, color: VIOLET, acceso: "en_camino" },
+      { path: "/esperanza", nombre: "Depósito (Esperanza)", desc: "Registro de esperanzas y deseos futuros", icon: Star, color: EMERALD, acceso: "en_camino" },
     ]
   },
   {
     titulo: "Inteligencia y Análisis",
     color: BLUE,
     rutas: [
-      { path: "/radar", nombre: "Radar IA", desc: "Detección de tensiones y sugerencias de misión con Gemini", icon: Radio, color: BLUE, acceso: "arquitecto" },
+      { path: "/radar", nombre: "Radar IA", desc: "Detección de tensiones y sugerencias de misión con Gemini", icon: Radio, color: BLUE, acceso: "en_camino" },
       { path: "/analytics", nombre: "Analytics", desc: "Estadísticas y gráficos de rendimiento", icon: BarChart3, color: BLUE, acceso: "usuario" },
       { path: "/codice", nombre: "Códice", desc: "ADN Soberano — leyes conductuales del usuario", icon: Scroll, color: GOLD, acceso: "usuario" },
       { path: "/escaner", nombre: "Escáner", desc: "Análisis profundo de patrones cognitivos", icon: Eye, color: EMERALD, acceso: "usuario" },
@@ -60,6 +62,7 @@ const CATEGORIAS: { titulo: string; color: string; rutas: Ruta[] }[] = [
       { path: "/como-funciona", nombre: "Cómo Funciona", desc: "Explicación del sistema y sus módulos", icon: Compass, color: BLUE, acceso: "usuario" },
       { path: "/documentos", nombre: "Documentos", desc: "Especificaciones técnicas descargables", icon: FileText, color: GOLD, acceso: "libre" },
       { path: "/acerca", nombre: "Acerca / Manifiesto", desc: "Filosofía y visión de SISTEMICAR", icon: Flame, color: ORANGE, acceso: "usuario" },
+      { path: "/manuales", nombre: "Manuales", desc: "Biblioteca de guías", icon: BookOpen, color: GOLD, acceso: "en_camino" },
     ]
   },
   {
@@ -68,9 +71,9 @@ const CATEGORIAS: { titulo: string; color: string; rutas: Ruta[] }[] = [
     rutas: [
       { path: "/ventas-espejo", nombre: "Ventas Espejo", desc: "El Corazón Sabio™ — producto de $17 con Doctor IA", icon: ShoppingCart, color: ORANGE, acceso: "libre" },
       { path: "/embudo", nombre: "Embudo SISTEMICAR", desc: "Funnel de ventas principal", icon: ExternalLink, color: ORANGE, acceso: "libre" },
-      { path: "/umbral", nombre: "Umbral", desc: "Página de entrada y conversión", icon: Lock, color: GOLD, acceso: "usuario" },
+      { path: "/umbral", nombre: "Umbral", desc: "Página de entrada y conversión", icon: Lock, color: GOLD, acceso: "en_camino" },
       { path: "/umbral-leads", nombre: "Umbral Leads", desc: "Captura de prospectos interesados", icon: Users, color: BLUE, acceso: "libre" },
-      { path: "/pagos", nombre: "Pagos", desc: "Procesamiento de pagos y suscripciones", icon: ShoppingCart, color: EMERALD, acceso: "libre" },
+      { path: "/pagos", nombre: "Pagos", desc: "Espejo + Planificación modular (Base, Soberanía del día, Operativo)", icon: ShoppingCart, color: EMERALD, acceso: "libre" },
       { path: "/gracias-compra", nombre: "Gracias por tu Compra", desc: "Página post-compra con siguiente paso", icon: Star, color: GOLD, acceso: "libre" },
     ]
   },
@@ -78,7 +81,7 @@ const CATEGORIAS: { titulo: string; color: string; rutas: Ruta[] }[] = [
     titulo: "Administración",
     color: "#6b7280",
     rutas: [
-      { path: "/socios", nombre: "Socios", desc: "Panel de socios y colaboradores", icon: Users, color: "#6b7280", acceso: "arquitecto" },
+      { path: "/socios", nombre: "Alianza (Socios)", desc: "Panel de socios y colaboradores", icon: Users, color: "#6b7280", acceso: "en_camino" },
       { path: "/admin-gilson", nombre: "Admin Gilson", desc: "Panel de administración exclusivo", icon: Settings, color: "#6b7280", acceso: "usuario" },
       { path: "/acceso", nombre: "Acceso / Login", desc: "Inicio de sesión con Google", icon: Lock, color: "#6b7280", acceso: "libre" },
       { path: "/bienvenida", nombre: "Bienvenida", desc: "Pantalla de bienvenida inicial", icon: Home, color: "#6b7280", acceso: "libre" },
@@ -92,7 +95,10 @@ const CATEGORIAS: { titulo: string; color: string; rutas: Ruta[] }[] = [
 const ACCESO_LABELS: Record<string, { label: string; color: string }> = {
   libre: { label: "LIBRE", color: EMERALD },
   usuario: { label: "USUARIO", color: BLUE },
-  arquitecto: { label: "ARQUITECTO", color: GOLD }
+  planificacion_base: { label: "PLAN BASE", color: GOLD },
+  soberania_dia: { label: "SOBERANÍA DÍA", color: "#38BDF8" },
+  operativo: { label: "OPERATIVO", color: "#00C851" },
+  en_camino: { label: "EN CAMINO", color: "#64748b" },
 };
 
 export default function MapaSistemicar() {
@@ -114,7 +120,8 @@ export default function MapaSistemicar() {
 
         <div className="p-3 rounded-xl border mb-4 flex items-center gap-3" style={{ backgroundColor: `${GOLD}05`, borderColor: `${GOLD}15` }}>
           <Map size={16} style={{ color: GOLD }} />
-          <p className="text-[10px] text-slate-400">Toca cualquier ruta para ir directamente a esa sección.</p>
+          <p className="text-[10px] text-slate-400">Precios hoy: Espejo $17 · Planificación Base $19.99/mes · Soberanía del día $29.99/mes · Operativo $39.99/mes</p>
+          <p className="text-[9px] text-slate-500 mt-1">Stacks: Estudiante ~$50/mes · Producción ~$60/mes</p>
         </div>
 
         <div className="flex gap-2 mb-4 flex-wrap">
@@ -151,11 +158,14 @@ export default function MapaSistemicar() {
                           <Icon size={14} style={{ color: ruta.color }} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5">
+                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                             <p className="text-[11px] font-bold text-white truncate">{ruta.nombre}</p>
                             <span className="text-[7px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: `${accLabel.color}10`, color: accLabel.color }}>
                               {accLabel.label}
                             </span>
+                            {ruta.acceso === "en_camino" && (
+                              <span className="text-[7px] text-slate-500 italic">{BADGE_EN_CAMINO}</span>
+                            )}
                           </div>
                           <p className="text-[9px] text-slate-500 leading-relaxed">{ruta.desc}</p>
                           <p className="text-[8px] text-slate-600 mt-0.5 font-mono">{ruta.path}</p>
@@ -170,7 +180,7 @@ export default function MapaSistemicar() {
         </div>
 
         <div className="mt-6 p-3 rounded-xl border text-center" style={{ backgroundColor: `${GOLD}05`, borderColor: `${GOLD}15` }}>
-          <p className="text-[9px] text-slate-500 italic">Este mapa se actualiza con cada nueva sección agregada al sistema.</p>
+          <p className="text-[9px] text-slate-500 italic">Slot reservado para próximo módulo — venta independiente cuando esté listo.</p>
         </div>
       </motion.div>
     </div>

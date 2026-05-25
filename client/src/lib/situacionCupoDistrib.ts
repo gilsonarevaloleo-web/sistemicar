@@ -1,7 +1,63 @@
-import type { SubTarea } from "./persistence";
+import { formatHHMM } from "./desglosadorClock";
+import type { SubTarea, Vehicle } from "./persistence";
 
 export function situacionFilaCronometroPendiente(st: SubTarea): boolean {
   return !!st.enDesgloseCronometro && (st.resultadoSituacion ?? "pendiente") === "pendiente";
+}
+
+export function situacionFilaEnFocoPendiente(st: SubTarea): boolean {
+  if ((st.minutosCupo ?? 0) <= 0) return false;
+  if (st.enDesgloseCronometro) return situacionFilaCronometroPendiente(st);
+  return !st.completada;
+}
+
+/** True cuando debe mostrarse la cuenta regresiva situacional (cronï¿½metro o fila en foco). */
+export function situacionRelojDebeMostrarse(vehicle: Pick<Vehicle, "tipoFlota" | "status" | "subTareas" | "situacionCronometro" | "situacionCupoAnchor">): boolean {
+  if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return false;
+  const subs = vehicle.subTareas || [];
+  if (vehicle.situacionCronometro?.activo === true) {
+    if (sumMinutosCronometroPendientes(subs) > 0) return true;
+    const firstCron = filasCronometroOrdenadas(subs).find(situacionFilaCronometroPendiente);
+    if (firstCron && (firstCron.minutosCupo ?? 0) > 0) return true;
+  }
+  const anchor = vehicle.situacionCupoAnchor;
+  if (anchor?.subTareaId) {
+    const sub = subs.find(s => s.id === anchor.subTareaId);
+    if (sub && situacionFilaEnFocoPendiente(sub)) return true;
+  }
+  return false;
+}
+
+/** Hora objetivo del reloj situacional: fila en foco, o primera fila del cronï¿½metro mientras sincroniza ancla. */
+export function situacionTargetMsReloj(
+  vehicle: Pick<Vehicle, "tipoFlota" | "subTareas" | "situacionCronometro" | "situacionCupoAnchor" | "aperturaAt">,
+  now = Date.now()
+): number | null {
+  if (vehicle.tipoFlota !== "situacion") return null;
+  const subs = vehicle.subTareas || [];
+  const sc = vehicle.situacionCronometro;
+  const aperturaMs = vehicle.aperturaAt ?? now;
+  const anchor = vehicle.situacionCupoAnchor;
+
+  if (anchor?.subTareaId) {
+    const sub = subs.find(s => s.id === anchor.subTareaId);
+    if (sub && situacionFilaEnFocoPendiente(sub) && (sub.minutosCupo ?? 0) > 0) {
+      return anchor.startedAt + sub.minutosCupo! * 60000;
+    }
+  }
+
+  if (sc?.activo) {
+    const firstPending = filasCronometroOrdenadas(subs).find(situacionFilaCronometroPendiente);
+    if (firstPending && (firstPending.minutosCupo ?? 0) > 0) {
+      const start = sc.bloqueInicioAt ?? aperturaMs;
+      return start + firstPending.minutosCupo! * 60000;
+    }
+    if (sc.horaFinMs != null) return sc.horaFinMs;
+    const sum = sumMinutosCronometroPendientes(subs);
+    if (sum > 0) return (sc.bloqueInicioAt ?? aperturaMs) + sum * 60000;
+  }
+
+  return null;
 }
 
 export function isCupoFijo(st: SubTarea): boolean {
@@ -12,7 +68,11 @@ export function sumMinutosCronometroPendientes(subTareas: SubTarea[] | undefined
   return (subTareas || []).filter(situacionFilaCronometroPendiente).reduce((a, st) => a + (st.minutosCupo ?? 0), 0);
 }
 
-/** Reparte `total` entre slots con pesos (mín. `minPerSlot` por slot). */
+export function filasCronometroOrdenadas(subTareas: SubTarea[]): SubTarea[] {
+  return (subTareas || []).filter(st => st.enDesgloseCronometro);
+}
+
+/** Reparte `total` entre slots con pesos (mï¿½n. `minPerSlot` por slot). */
 function repartirProporcional(weights: number[], total: number, minPerSlot = 1): number[] {
   const n = weights.length;
   if (n === 0) return [];
@@ -40,8 +100,207 @@ function repartirProporcional(weights: number[], total: number, minPerSlot = 1):
   return alloc;
 }
 
+/** Suma minutos ganados proporcionalmente a filas flexibles pendientes (excluye una fila). */
+function agregarMinutosProporcionalAFlexibles(
+  subTareas: SubTarea[],
+  minutosGanados: number,
+  excludeSubTareaId: string
+): SubTarea[] {
+  if (minutosGanados <= 0) return subTareas;
+  const pendingIdx = subTareas
+    .map((st, i) => ({ st, i }))
+    .filter(
+      ({ st }) =>
+        situacionFilaCronometroPendiente(st) && st.id !== excludeSubTareaId && !isCupoFijo(st)
+    );
+  if (pendingIdx.length === 0) return subTareas;
+
+  const weights = pendingIdx.map(({ st }) => Math.max(1, st.minutosCupo ?? 1));
+  const bonus = repartirProporcional(weights, minutosGanados, 0);
+  const next = [...subTareas];
+  pendingIdx.forEach(({ st, i }, k) => {
+    next[i] = { ...st, minutosCupo: (st.minutosCupo ?? 0) + bonus[k] };
+  });
+  return next;
+}
+
+/** Copia de cupos con bono virtual de tiempo ganado en la fila foco (solo proyecciï¿½n UI). */
+function aplicarPreviewTiempoGanado(
+  subTareas: SubTarea[],
+  anchor: { subTareaId: string; startedAt: number },
+  now: number
+): SubTarea[] {
+  const focal = subTareas.find(st => st.id === anchor.subTareaId);
+  if (!focal || !situacionFilaCronometroPendiente(focal)) return subTareas;
+  const cupoMin = focal.minutosCupo ?? 0;
+  if (cupoMin <= 0) return subTareas;
+  const elapsedMin = Math.floor(Math.max(0, now - anchor.startedAt) / 60000);
+  const minutosVirtualesGanados = Math.max(0, cupoMin - elapsedMin);
+  if (minutosVirtualesGanados <= 0) return subTareas;
+  return agregarMinutosProporcionalAFlexibles(subTareas, minutosVirtualesGanados, anchor.subTareaId);
+}
+
+export type SituacionFilaHorario = {
+  subTareaId: string;
+  inicioMs: number;
+  finMs: number;
+  finLabel: string;
+  minutosCupo: number;
+  enFoco: boolean;
+  pendiente: boolean;
+};
+
+export function computeSituacionCronometroHorarios(
+  subTareas: SubTarea[],
+  opts: {
+    bloqueInicioAt: number;
+    anchor?: { subTareaId: string; startedAt: number } | null;
+    now?: number;
+    previewTiempoGanado?: boolean;
+  }
+): SituacionFilaHorario[] {
+  const now = opts.now ?? Date.now();
+  const cronRows = filasCronometroOrdenadas(subTareas);
+  if (cronRows.length === 0) return [];
+
+  let effective = subTareas;
+  if (opts.previewTiempoGanado && opts.anchor?.subTareaId) {
+    effective = aplicarPreviewTiempoGanado(subTareas, opts.anchor, now);
+  }
+  const effectiveById = new Map(filasCronometroOrdenadas(effective).map(st => [st.id, st]));
+
+  let cursor = opts.bloqueInicioAt;
+  const out: SituacionFilaHorario[] = [];
+
+  for (const st of cronRows) {
+    const eff = effectiveById.get(st.id) ?? st;
+    const pendiente = situacionFilaCronometroPendiente(st);
+    const enFoco = pendiente && opts.anchor?.subTareaId === st.id;
+    const minutosCupo = eff.minutosCupo ?? st.minutosCupo ?? 0;
+
+    if (!pendiente) {
+      const durationSec =
+        st.duracionRealSec != null
+          ? st.duracionRealSec
+          : Math.max(0, (st.minutosCupo ?? 0) * 60);
+      const inicioMs = cursor;
+      const finMs = st.cerradaAt ?? inicioMs + durationSec * 1000;
+      cursor = finMs;
+      out.push({
+        subTareaId: st.id,
+        inicioMs,
+        finMs,
+        finLabel: formatHHMM(finMs),
+        minutosCupo: st.minutosCupo ?? 0,
+        enFoco: false,
+        pendiente: false,
+      });
+      continue;
+    }
+
+    let inicioMs: number;
+    let finMs: number;
+
+    if (enFoco && opts.anchor) {
+      inicioMs = opts.anchor.startedAt;
+      const plannedFinMs = inicioMs + minutosCupo * 60000;
+      finMs = plannedFinMs;
+      const ahead = opts.previewTiempoGanado && now < plannedFinMs;
+      cursor = ahead ? now : plannedFinMs;
+    } else {
+      inicioMs = cursor;
+      finMs = inicioMs + minutosCupo * 60000;
+      cursor = finMs;
+    }
+
+    out.push({
+      subTareaId: st.id,
+      inicioMs,
+      finMs,
+      finLabel: formatHHMM(finMs),
+      minutosCupo,
+      enFoco,
+      pendiente: true,
+    });
+  }
+
+  return out;
+}
+
 /**
- * Reparte minutos entre filas pendientes del cronómetro.
+ * Al marcar cumplido: registra duraciï¿½n real, reparte minutos ganados entre filas flexibles.
+ */
+export function aplicarTiempoGanadoAlCumplir(
+  subTareas: SubTarea[],
+  subTareaId: string,
+  anchor: { subTareaId: string; startedAt: number } | null | undefined,
+  now: number
+): { subTareas: SubTarea[]; minutosGanados: number } {
+  const target = subTareas.find(st => st.id === subTareaId);
+  if (!target?.enDesgloseCronometro || (target.resultadoSituacion ?? "pendiente") !== "pendiente") {
+    return { subTareas, minutosGanados: 0 };
+  }
+
+  const cupoMin = target.minutosCupo ?? 0;
+  let duracionRealSec = Math.max(0, cupoMin * 60);
+  let minutosGanados = 0;
+
+  if (anchor?.subTareaId === subTareaId && cupoMin > 0) {
+    duracionRealSec = Math.max(0, Math.floor((now - anchor.startedAt) / 1000));
+    const elapsedMin = Math.ceil(duracionRealSec / 60);
+    minutosGanados = Math.max(0, cupoMin - elapsedMin);
+  }
+
+  let next = subTareas.map(st =>
+    st.id === subTareaId
+      ? {
+          ...st,
+          completada: true,
+          resultadoSituacion: "cumplido" as const,
+          duracionRealSec,
+          cerradaAt: now,
+        }
+      : st
+  );
+
+  if (minutosGanados > 0) {
+    next = agregarMinutosProporcionalAFlexibles(next, minutosGanados, subTareaId);
+  }
+
+  return { subTareas: next, minutosGanados };
+}
+
+/** Registra cierre fallado con duraciï¿½n real (sin redistribuir tiempo). */
+export function registrarCierreFalladoCronometro(
+  subTareas: SubTarea[],
+  subTareaId: string,
+  anchor: { subTareaId: string; startedAt: number } | null | undefined,
+  now: number
+): SubTarea[] {
+  const target = subTareas.find(st => st.id === subTareaId);
+  if (!target) return subTareas;
+
+  const cupoMin = target.minutosCupo ?? 0;
+  let duracionRealSec = Math.max(0, cupoMin * 60);
+  if (anchor?.subTareaId === subTareaId) {
+    duracionRealSec = Math.max(0, Math.floor((now - anchor.startedAt) / 1000));
+  }
+
+  return subTareas.map(st =>
+    st.id === subTareaId
+      ? {
+          ...st,
+          completada: false,
+          resultadoSituacion: "fallado" as const,
+          duracionRealSec,
+          cerradaAt: now,
+        }
+      : st
+  );
+}
+
+/**
+ * Reparte minutos entre filas pendientes del cronï¿½metro.
  * Filas con `cupoFijo` conservan su minutosCupo; el resto del presupuesto va a las flexibles.
  */
 export function redistribuirMinutosSituacionCronometro(subTareas: SubTarea[], remainingMin: number): SubTarea[] {

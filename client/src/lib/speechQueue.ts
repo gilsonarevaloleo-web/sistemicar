@@ -1,6 +1,12 @@
 /** Cola secuencial para speechSynthesis — evita que utterances se cancelen entre sí. */
 
-import { isSituacionAlertsEnabled } from "./tikSound";
+import { isSituacionAlertsEnabled, isTikSoundEnabled } from "./tikSound";
+
+export type UbicacionVoiceSource = "situacion" | "desglosador";
+
+function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
+  return isSituacionAlertsEnabled() || isTikSoundEnabled();
+}
 
 let queue: string[] = [];
 let speaking = false;
@@ -47,12 +53,16 @@ export function warmupSpeechSynthesis(): void {
 }
 
 /** Encola frases y las reproduce en orden. cancelPrevious=true cancela lo anterior (nuevo sub). */
-export function speakUbicacionQueue(phrases: string[], cancelPrevious = false): void {
+export function speakUbicacionQueue(
+  phrases: string[],
+  cancelPrevious = false,
+  source: UbicacionVoiceSource = "situacion"
+): void {
   const filtered = phrases.map(p => p.trim()).filter(Boolean);
   if (filtered.length === 0) return;
   if (typeof window === "undefined" || !window.speechSynthesis) return;
 
-  if (!isSituacionAlertsEnabled()) return;
+  if (!isVoiceEnabledFor(source)) return;
 
   if (cancelPrevious) {
     try {
@@ -68,6 +78,9 @@ export function speakUbicacionQueue(phrases: string[], cancelPrevious = false): 
   processQueue();
 }
 
-export function speakUbicacionSingle(text: string): void {
-  speakUbicacionQueue([text], false);
+export function speakUbicacionSingle(
+  text: string,
+  source: UbicacionVoiceSource = "situacion"
+): void {
+  speakUbicacionQueue([text], false, source);
 }

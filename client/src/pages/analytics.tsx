@@ -18,6 +18,7 @@ import {
   Activity,
   BarChart3,
   Loader2,
+  Layers,
 } from "lucide-react";
 import {
   LineChart,
@@ -50,8 +51,15 @@ import {
   calculateTotalCP,
 } from "@/lib/persistence";
 import { analyzeUnified, UnifiedAnalysisResult } from "@/lib/gemini";
+import {
+  getPlanillaDailySnapshots,
+  aggregateCartografiaSemanal,
+  aggregateEspectroSemanal,
+  type PlanillaDailySnapshot,
+} from "@/lib/termodinamicaAtencional";
+import { RUTA_BANDA_META } from "@/lib/rutaEnfoque";
 
-type TabType = "soberania" | "tendencias" | "circadiano" | "logros" | "coach";
+type TabType = "soberania" | "tendencias" | "circadiano" | "logros" | "coach" | "atencional";
 
 const COLORS = {
   enfoque: "#A855F7",
@@ -151,6 +159,13 @@ function calculateSoberaniaScore(
   return { total: totalScore, balanceEjes, consistencia, misionesReto, esperanza, nivel };
 }
 
+const ESPECTRO_COLORS = {
+  fluido: "#38BDF8",
+  concentrado: "#A855F7",
+  limite: "#f87171",
+  descansos: "#10b981",
+};
+
 export default function Analytics() {
   const { user } = useAuthContext();
   const [activeTab, setActiveTab] = useState<TabType>("soberania");
@@ -160,6 +175,8 @@ export default function Analytics() {
   const [misiones, setMisiones] = useState<Mision[]>([]);
   const [coachAnalysis, setCoachAnalysis] = useState<UnifiedAnalysisResult | null>(null);
   const [analyzingCoach, setAnalyzingCoach] = useState(false);
+  const [dailySnapshots, setDailySnapshots] = useState<PlanillaDailySnapshot[]>([]);
+  const [loadingAtencional, setLoadingAtencional] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -170,6 +187,15 @@ export default function Analytics() {
       subscribeToMisiones(user.uid, setMisiones, console.error),
     ];
     return () => unsubs.forEach(u => u?.());
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    setLoadingAtencional(true);
+    getPlanillaDailySnapshots(user.uid, 7)
+      .then(setDailySnapshots)
+      .catch(console.error)
+      .finally(() => setLoadingAtencional(false));
   }, [user]);
 
   const cp = useMemo(() => calculateTotalCP(energyLogs), [energyLogs]);
@@ -257,6 +283,19 @@ export default function Analytics() {
 
   const unlockedCount = unlockedAchievements.filter(a => a.unlocked).length;
 
+  const cartografiaData = useMemo(() => aggregateCartografiaSemanal(dailySnapshots), [dailySnapshots]);
+  const espectroData = useMemo(() => aggregateEspectroSemanal(dailySnapshots), [dailySnapshots]);
+  const ultimoSnapshot = dailySnapshots.length > 0 ? dailySnapshots[dailySnapshots.length - 1] : null;
+  const bloquesLimiteSemana = useMemo(
+    () => espectroData.reduce((sum, d) => sum + d.limite, 0),
+    [espectroData]
+  );
+  const bloquesSemanaAnterior = useMemo(() => {
+    if (dailySnapshots.length < 2) return null;
+    const mid = Math.floor(dailySnapshots.length / 2);
+    return dailySnapshots.slice(0, mid).reduce((s, snap) => s + snap.espectroBloques.limite, 0);
+  }, [dailySnapshots]);
+
   const runCoachAnalysis = async () => {
     if (!user) return;
     setAnalyzingCoach(true);
@@ -289,6 +328,7 @@ export default function Analytics() {
     { id: "tendencias", label: "Tendencias", icon: TrendingUp },
     { id: "circadiano", label: "Circadiano", icon: Clock },
     { id: "logros", label: "Logros", icon: Trophy },
+    { id: "atencional", label: "Atencional", icon: Layers },
     { id: "coach", label: "Coach IA", icon: Sparkles },
   ];
 
@@ -582,6 +622,123 @@ export default function Analytics() {
               </div>
             );
           })()}
+
+          {activeTab === "atencional" && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl border" style={{ backgroundColor: "rgba(56,189,248,0.08)", borderColor: "rgba(56,189,248,0.25)" }}>
+                <h3 className="text-sm font-black text-white mb-1">Termodinámica Atencional</h3>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Medición por bloques de trabajo — sin meta de tiempo. Descanso cuerpo = escucha, no penalización.
+                </p>
+              </div>
+
+              {loadingAtencional ? (
+                <div className="flex items-center justify-center py-12 text-slate-500">
+                  <Loader2 size={20} className="animate-spin mr-2" />
+                  <span className="text-xs">Cargando cartografía…</span>
+                </div>
+              ) : dailySnapshots.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-white/5 border border-white/10 text-center">
+                  <Layers size={28} className="mx-auto mb-3 text-slate-600" />
+                  <p className="text-sm text-slate-400">Sin snapshots aún</p>
+                  <p className="text-[10px] text-slate-600 mt-2">
+                    Sella la jornada en Planificación para guardar Cartografía Panorámica y Espectro de Enfoque.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {ultimoSnapshot && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <p className="text-[9px] font-bold uppercase text-slate-500 mb-1">Profundidad ayer/hoy</p>
+                        <p className="text-lg font-black" style={{ color: RUTA_BANDA_META[ultimoSnapshot.profundidadMaxima].color }}>
+                          {RUTA_BANDA_META[ultimoSnapshot.profundidadMaxima].label}
+                        </p>
+                        <p className="text-[9px] text-slate-600 mt-1">{ultimoSnapshot.bloquesCompletados} bloques cerrados</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <p className="text-[9px] font-bold uppercase text-slate-500 mb-1">Descansos cuerpo</p>
+                        <p className="text-lg font-black" style={{ color: ESPECTRO_COLORS.descansos }}>
+                          {ultimoSnapshot.espectroBloques.descansosCuerpo}
+                        </p>
+                        <p className="text-[9px] text-slate-600 mt-1">Recuperación consciente</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10">
+                    <h3 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
+                      <BarChart3 size={16} style={{ color: ESPECTRO_COLORS.fluido }} />
+                      Cartografía Panorámica
+                    </h3>
+                    <p className="text-[9px] text-slate-500 mb-4">Segmentos: cierre manual vs entropía (7 días)</p>
+                    <div className="h-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={cartografiaData}>
+                          <XAxis dataKey="label" stroke="#64748b" fontSize={9} tickLine={false} axisLine={false} />
+                          <YAxis stroke="#64748b" fontSize={9} tickLine={false} axisLine={false} allowDecimals={false} />
+                          <Tooltip contentStyle={{ backgroundColor: "#1e1b4b", border: "1px solid rgba(139,92,246,0.3)", borderRadius: "8px", fontSize: "11px" }} />
+                          <Bar dataKey="cerradosManual" name="Cierre manual" fill={EMERALD} stackId="seg" />
+                          <Bar dataKey="entropia" name="Entropía" fill="#64748b" stackId="seg" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10">
+                    <h3 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
+                      <Layers size={16} style={{ color: ESPECTRO_COLORS.concentrado }} />
+                      Espectro de Enfoque
+                    </h3>
+                    <p className="text-[9px] text-slate-500 mb-4">Bloques completados por régimen — no por minutos</p>
+                    <div className="h-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={espectroData}>
+                          <XAxis dataKey="label" stroke="#64748b" fontSize={9} tickLine={false} axisLine={false} />
+                          <YAxis stroke="#64748b" fontSize={9} tickLine={false} axisLine={false} allowDecimals={false} />
+                          <Tooltip contentStyle={{ backgroundColor: "#1e1b4b", border: "1px solid rgba(139,92,246,0.3)", borderRadius: "8px", fontSize: "11px" }} />
+                          <Bar dataKey="fluido" name="Fluido" fill={ESPECTRO_COLORS.fluido} stackId="esp" />
+                          <Bar dataKey="concentrado" name="Concentrado" fill={ESPECTRO_COLORS.concentrado} stackId="esp" />
+                          <Bar dataKey="limite" name="Al límite" fill={ESPECTRO_COLORS.limite} stackId="esp" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex flex-wrap gap-3 mt-3">
+                      {(["fluido", "concentrado", "limite"] as const).map(k => (
+                        <div key={k} className="flex items-center gap-1.5 text-[10px]">
+                          <div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: ESPECTRO_COLORS[k] }} />
+                          <span className="text-slate-400">{RUTA_BANDA_META[k].label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {ultimoSnapshot && (
+                    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                      <p className="text-[9px] font-bold uppercase text-slate-500 mb-3">PS por origen (último cierre)</p>
+                      <div className="grid grid-cols-2 gap-2 text-[10px]">
+                        <div><span className="text-slate-500">Panorámico</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.panoramico}</span></div>
+                        <div><span className="text-slate-500">Espectro</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.espectro}</span></div>
+                        <div><span className="text-slate-500">Vehículos</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.vehiculos}</span></div>
+                        <div><span className="text-slate-500">Introspección</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.introspeccion}</span></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {bloquesSemanaAnterior !== null && (
+                    <div className="p-3 rounded-xl border border-white/5 text-center">
+                      <p className="text-[10px] text-slate-500">
+                        Bloques al límite esta semana: <span className="text-white font-bold">{bloquesLimiteSemana}</span>
+                        {bloquesLimiteSemana > bloquesSemanaAnterior && (
+                          <span className="text-emerald-400 ml-1">↑ vs mitad anterior ({bloquesSemanaAnterior})</span>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           {activeTab === "coach" && (
             <div className="space-y-4">

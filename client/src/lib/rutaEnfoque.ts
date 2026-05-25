@@ -54,6 +54,28 @@ export function getRutaBandaActual(restantes: number, umbrales: RutaEnfoqueUmbra
 
 export type RutaUmbralAlert = "concentrado" | "limite";
 
+/**
+ * Corrige `cruzado` adelantado respecto a restantes actuales (p. ej. tras cambio de sub con valor stale).
+ */
+export function repairRutaCruzadoAheadOfRestantes(
+  ruta: RutaEnfoqueState,
+  restantes: number
+): { ruta: RutaEnfoqueState; changed: boolean } {
+  const r = Math.max(0, Math.floor(restantes));
+  const c = { ...ruta.cruzado };
+  let changed = false;
+  if (r > ruta.umbrales.fluido && c.concentrado) {
+    c.concentrado = false;
+    changed = true;
+  }
+  if (r > ruta.umbrales.concentrado && c.limite) {
+    c.limite = false;
+    changed = true;
+  }
+  if (!changed) return { ruta, changed: false };
+  return { ruta: { ...ruta, cruzado: c }, changed: true };
+}
+
 /** Actualiza `cruzado` al bajar restantes; devuelve avisos si se cruzan umbrales por primera vez. */
 export function applyRutaThresholdCrossing(
   ruta: RutaEnfoqueState,
@@ -66,11 +88,21 @@ export function applyRutaThresholdCrossing(
   const alerts: RutaUmbralAlert[] = [];
   const nextCruzado = { ...cruzado };
 
-  if (!cruzado.concentrado && curr <= umbrales.fluido && (prev === null || prev > umbrales.fluido)) {
+  if (prev === null || curr > prev) {
+    if (
+      nextCruzado.concentrado === cruzado.concentrado &&
+      nextCruzado.limite === cruzado.limite
+    ) {
+      return { ruta, alerts: [] };
+    }
+    return { ruta: { ...ruta, cruzado: nextCruzado }, alerts: [] };
+  }
+
+  if (!cruzado.concentrado && curr <= umbrales.fluido && prev > umbrales.fluido) {
     nextCruzado.concentrado = true;
     alerts.push("concentrado");
   }
-  if (!cruzado.limite && curr <= umbrales.concentrado && (prev === null || prev > umbrales.concentrado)) {
+  if (!cruzado.limite && curr <= umbrales.concentrado && prev > umbrales.concentrado) {
     nextCruzado.limite = true;
     alerts.push("limite");
   }

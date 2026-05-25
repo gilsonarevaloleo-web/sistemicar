@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { FileText, Download, Eye, Target, ArrowLeft, Brain } from "lucide-react";
+import { FileText, Download, Eye, Target, ArrowLeft, Brain, Users } from "lucide-react";
 import { useLocation } from "wouter";
 
 const GOLD = "#D4AF37";
@@ -9,7 +9,16 @@ const EMERALD = "#10B981";
 
 const DOCUMENTOS = [
   {
-    id: "metricas",
+    id: "vendedores",
+    titulo: "KIT VENDEDORES — PLANIFICACIÓN",
+    descripcion: "Guía para vender Planificación modular: stacks Estudiante/Producción, comisiones 30%, links ref= y guion de venta.",
+    archivo: "/vendedores-planificacion",
+    icon: Users,
+    color: EMERALD,
+    version: "v1.0",
+    isRoute: true
+  },
+  {
     titulo: "MÉTRICAS COGNITIVAS",
     descripcion: "Documento completo de métricas del sistema: lo que se mide, lo que falta medir, y el significado psicológico de cada dato.",
     archivo: "/metricas",

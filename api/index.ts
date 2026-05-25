@@ -528,7 +528,7 @@ app.post("/api/mercadopago/create-preference", async (req: Request, res: Respons
       return res.status(500).json({ error: "Mercado Pago no configurado" });
     }
 
-    const { planId, email, userName } = req.body;
+    const { planId, email, userName, sellerRef } = req.body;
     const plan = SUBSCRIPTION_PLANS[planId as keyof typeof SUBSCRIPTION_PLANS];
     
     if (!plan) {
@@ -561,7 +561,13 @@ app.post("/api/mercadopago/create-preference", async (req: Request, res: Respons
         },
         auto_return: "approved",
         notification_url: `${baseUrl}/api/mercadopago/webhook`,
-        external_reference: JSON.stringify({ planId: plan.id, email, userName, timestamp: Date.now() }),
+        external_reference: JSON.stringify({
+          planId: plan.id,
+          email,
+          userName,
+          sellerRef: typeof sellerRef === "string" ? sellerRef.trim().toUpperCase() : undefined,
+          timestamp: Date.now(),
+        }),
         statement_descriptor: "SISTEMICAR",
         expires: true,
         expiration_date_from: new Date().toISOString(),

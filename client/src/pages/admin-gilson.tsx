@@ -57,7 +57,7 @@ export default function AdminGilson() {
   const [users, setUsers] = useState<User[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"users" | "payments" | "recovery" | "laboratorio" | "adn" | "creditos">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "payments" | "recovery" | "laboratorio" | "adn" | "creditos" | "vendedores">("users");
   const [loginLoading, setLoginLoading] = useState(false);
   const [accounts, setAccounts] = useState<AccountData[]>([]);
   const [searchingAccounts, setSearchingAccounts] = useState(false);
@@ -96,6 +96,21 @@ export default function AdminGilson() {
     adminNote: string | null;
   }>>([]);
   const [creditDeliveriesLoading, setCreditDeliveriesLoading] = useState(false);
+  const [sellerSales, setSellerSales] = useState<Array<{
+    id: string;
+    sellerRef: string;
+    planId: string;
+    planName: string;
+    amountUsd: number;
+    commissionUsd: number;
+    buyerEmail?: string;
+    mpPaymentId: string;
+    createdAt: string;
+    commissionPaidOut: boolean;
+  }>>([]);
+  const [sellerSalesLoading, setSellerSalesLoading] = useState(false);
+  const [newSellerCode, setNewSellerCode] = useState("");
+  const [newSellerName, setNewSellerName] = useState("");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -247,7 +262,60 @@ export default function AdminGilson() {
     if (activeTab === "creditos" && isAuthenticated) {
       void loadCreditDeliveries();
     }
+    if (activeTab === "vendedores" && isAuthenticated) {
+      void loadSellerSales();
+    }
   }, [activeTab, isAuthenticated]);
+
+  const loadSellerSales = async () => {
+    setSellerSalesLoading(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch("/api/admin/seller-sales?limit=50", { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error");
+      setSellerSales(data.sales || []);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error cargando ventas");
+    } finally {
+      setSellerSalesLoading(false);
+    }
+  };
+
+  const markSellerCommissionPaid = async (id: string) => {
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`/api/admin/seller-sales/${id}/paid`, { method: "POST", headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error");
+      toast.success("Comisión marcada como pagada");
+      void loadSellerSales();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error");
+    }
+  };
+
+  const registerSellerCode = async () => {
+    if (!newSellerCode.trim() || !newSellerName.trim()) {
+      toast.error("Nombre y código requeridos");
+      return;
+    }
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch("/api/admin/sellers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ seller_name: newSellerName, seller_code: newSellerCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error");
+      toast.success(`Link: ${data.seller?.link || ""}`);
+      setNewSellerCode("");
+      setNewSellerName("");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error");
+    }
+  };
 
   useEffect(() => {
     const saved = sessionStorage.getItem("adminAuth");
@@ -573,6 +641,16 @@ export default function AdminGilson() {
             >
               <DollarSign size={14} className="inline mr-1" />
               Créditos Espejo
+            </button>
+            <button
+              onClick={() => setActiveTab("vendedores")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === "vendedores" ? "bg-emerald-600 text-white" : "bg-white/5 text-slate-400"
+              }`}
+              data-testid="tab-vendedores"
+            >
+              <Users size={14} className="inline mr-1" />
+              Vendedores
             </button>
             <button
               onClick={() => navigate("/admin-semillas")}
@@ -1257,6 +1335,75 @@ export default function AdminGilson() {
                   Descargar Documento de Conocimiento (.md)
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "vendedores" && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+              <h3 className="text-emerald-400 font-bold mb-2">Registrar vendedor</h3>
+              <p className="text-xs text-slate-400 mb-3">Genera código y comparte link: sistemicar.app/pagos?ref=CODIGO</p>
+              <div className="flex flex-col sm:flex-row gap-2 mb-2">
+                <input
+                  value={newSellerName}
+                  onChange={(e) => setNewSellerName(e.target.value)}
+                  placeholder="Nombre vendedor"
+                  className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+                />
+                <input
+                  value={newSellerCode}
+                  onChange={(e) => setNewSellerCode(e.target.value.toUpperCase())}
+                  placeholder="CODIGO"
+                  className="w-32 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => void registerSellerCode()}
+                  className="px-4 py-2 rounded-lg bg-emerald-500 text-black font-bold text-sm"
+                >
+                  Crear link
+                </button>
+              </div>
+              <a href="/vendedores-planificacion" className="text-xs text-emerald-400 underline">Ver kit de vendedores</a>
+            </div>
+
+            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-white font-bold text-sm">Ventas atribuidas (MercadoPago)</h3>
+                <button type="button" onClick={() => void loadSellerSales()} className="text-xs text-emerald-400" disabled={sellerSalesLoading}>
+                  Actualizar
+                </button>
+              </div>
+              {sellerSalesLoading ? (
+                <p className="text-xs text-slate-500">Cargando...</p>
+              ) : sellerSales.length === 0 ? (
+                <p className="text-xs text-slate-500">Sin ventas registradas aún. Log: data/seller-sales.json</p>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {sellerSales.map((s) => (
+                    <div key={s.id} className="p-3 rounded-lg bg-black/30 border border-white/5 text-xs">
+                      <div className="flex justify-between gap-2 mb-1">
+                        <span className="font-black text-emerald-400">{s.sellerRef}</span>
+                        <span className="text-slate-500">{new Date(s.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      <p className="text-white">{s.planName} · ${s.amountUsd} · comisión <span className="text-emerald-400">${s.commissionUsd}</span></p>
+                      <p className="text-slate-500">{s.buyerEmail || "sin email"} · MP {s.mpPaymentId}</p>
+                      {!s.commissionPaidOut ? (
+                        <button
+                          type="button"
+                          onClick={() => void markSellerCommissionPaid(s.id)}
+                          className="mt-2 px-2 py-1 rounded bg-amber-500/20 text-amber-400 font-bold"
+                        >
+                          Marcar comisión pagada
+                        </button>
+                      ) : (
+                        <span className="text-emerald-500 mt-1 inline-block">Comisión pagada</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

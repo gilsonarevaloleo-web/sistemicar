@@ -21,6 +21,7 @@ import {
   Radio,
   Zap,
   Sprout,
+  Layers,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -113,6 +114,7 @@ export function Sidebar() {
     { path: "/radar", icon: Radio, label: "Radar" },
     { path: "/alquimia", icon: Flame, label: "Sabiduría" },
     { path: "/planeacion", icon: Compass, label: "Planificación" },
+    { path: "/proyectos", icon: Layers, label: "Proyectos" },
     { path: "/esperanza", icon: Sparkles, label: "Esperanza" },
     { path: "/analytics", icon: TrendingUp, label: "Analytics" },
     { path: "/rewards", icon: Trophy, label: "Beneficios" },

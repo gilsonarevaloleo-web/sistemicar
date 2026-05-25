@@ -26,6 +26,17 @@ export {
   mergeSubTareasById,
 } from "./situacionSessionMerge";
 import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
+import {
+  type ModuleAccessInput,
+  type ModuleId,
+  hasPlanificacionBaseAccess as _hasPlanificacionBaseAccess,
+  hasSoberaniaDiaAccess as _hasSoberaniaDiaAccess,
+  hasOperativoAccess as _hasOperativoAccess,
+  resolveActiveModules,
+  mergeModuleIds,
+  modulesGrantedByPlan,
+  isOwnerEmail as _isOwnerEmail,
+} from "@shared/moduleAccess";
 
 export interface AcervoEntry {
   id: string;
@@ -464,6 +475,10 @@ export interface SubTarea {
   enDesgloseCronometro?: boolean;
   /** Resultado en lista cronometrada; en lista libre suele omitirse (solo `completada`). */
   resultadoSituacion?: "pendiente" | "cumplido" | "fallado";
+  /** Tiempo real usado al cerrar fila del cronómetro situacional (segundos). */
+  duracionRealSec?: number;
+  /** Timestamp de cierre cumplido/fallado en cronómetro situacional. */
+  cerradaAt?: number;
 }
 
 export interface SubVehiculo {
@@ -521,6 +536,14 @@ export interface CierreJornadaLog {
   entropiaMin?: number;
   vacioMin?: number;
   jornadaPlanMin?: number;
+  /** Desglose PS por origen (Termodinámica Atencional). */
+  psPanoramico?: number;
+  psEspectro?: number;
+  psVehiculos?: number;
+  psIntrospeccion?: number;
+  profundidadMaxima?: "fluido" | "concentrado" | "limite";
+  bloquesCompletados?: number;
+  descansosCuerpo?: number;
 }
 
 export interface Vehicle {
@@ -604,6 +627,9 @@ export interface Vehicle {
   excluirDeHistorial?: boolean;
   /** Vehículo situación lanzado desde pausa de desglosador. */
   vehiculoPadreDesglosadorId?: string;
+  /** Hub Proyectos: enlace al proyecto y peldaño en ejecución. */
+  proyectoId?: string;
+  proyectoPeldanoId?: string;
 }
 
 const VEHICLES_KEY = "sistemicar_vehicles";
@@ -710,16 +736,60 @@ export function notifyVehicleClosed(vehicleId?: string): void {
 
 /** Evita crear un segundo centinela si otra pestaña/dispositivo ya escribió uno en Firestore. */
 export async function hasActiveCentinelaInFirestore(userId: string): Promise<boolean> {
-  if (!isFirebaseConfigured() || !db) return false;
+  const { hasActiveRemote } = await reconcileStaleCentinelaInFirestore(userId);
+  return hasActiveRemote;
+}
+
+const CENTINELA_MAX_AGE_MS = 8 * 3600 * 1000;
+
+/** Cierra centinelas activos obsoletos en Firestore (día anterior, >8h, sin apertura). */
+export async function reconcileStaleCentinelaInFirestore(userId: string): Promise<{
+  closedIds: string[];
+  hasActiveRemote: boolean;
+}> {
+  if (!isFirebaseConfigured() || !db) return { closedIds: [], hasActiveRemote: false };
   try {
+    const { getLimaDayStartMs } = await import("./segmentTime");
     const path = getPrivatePath(userId, "vehicles");
     const snap = await getDocs(collection(db, path));
-    return snap.docs.some(d => {
-      const r = d.data() as { status?: string; autoVerdad?: boolean };
-      return r.status === "activo" && r.autoVerdad === true;
-    });
-  } catch {
-    return false;
+    const closedIds: string[] = [];
+    let hasActiveRemote = false;
+    const dayStartMs = getLimaDayStartMs();
+    const now = Date.now();
+
+    for (const d of snap.docs) {
+      const r = d.data() as { status?: string; autoVerdad?: boolean; aperturaAt?: number };
+      if (r.status !== "activo" || !r.autoVerdad) continue;
+      if (wasVehicleRecentlyClosed(d.id)) {
+        try {
+          await updateVehicleStatus(userId, d.id, "archivado");
+          closedIds.push(d.id);
+          console.log(`[Centinela] Sincronizado cierre local → Firestore: ${d.id}`);
+        } catch (e) {
+          console.warn("[Centinela] sync cierre local:", d.id, e);
+        }
+        continue;
+      }
+      const apertura = r.aperturaAt ?? 0;
+      const stale = apertura === 0 || apertura < dayStartMs || now - apertura > CENTINELA_MAX_AGE_MS;
+      if (stale) {
+        const dur = apertura > 0 ? Math.round((now - apertura) / 60000) : 0;
+        try {
+          await updateVehicle(userId, d.id, { cierreAt: now, duracionFinal: dur });
+          await updateVehicleStatus(userId, d.id, "archivado");
+          closedIds.push(d.id);
+          console.log(`[Centinela] Cerrado stale en Firestore: ${d.id} (${dur} min)`);
+        } catch (e) {
+          console.warn("[Centinela] Error cerrando stale:", d.id, e);
+        }
+      } else {
+        hasActiveRemote = true;
+      }
+    }
+    return { closedIds, hasActiveRemote };
+  } catch (e) {
+    console.warn("[Centinela] reconcileStaleCentinelaInFirestore:", e);
+    return { closedIds: [], hasActiveRemote: false };
   }
 }
 
@@ -1789,28 +1859,89 @@ export async function saveMision(
 
 // ========== PROGRESIÓN DE USUARIO (Embudo de Iniciación) ==========
 
+export type { ModuleId, ModuleAccessInput };
+export { resolveActiveModules, mergeModuleIds, modulesGrantedByPlan };
+
 export type UserRank = "iniciado" | "guerrero" | "operador" | "arquitecto" | "soberano_operativo" | "soberano";
 
 const OWNER_EMAIL = "gilsonarevalo.leo@gmail.com";
 
-export function hasDesglosadorAccess(subscriptionPlan?: string | null, email?: string | null): boolean {
-  if (email?.toLowerCase() === OWNER_EMAIL) return true;
-  return subscriptionPlan === "soberano_operativo" || subscriptionPlan === "soberano";
+function accessInput(
+  subscriptionPlan?: string | null,
+  email?: string | null,
+  rank?: UserRank | null,
+  activeModules?: string[] | null
+): ModuleAccessInput {
+  return { subscriptionPlan, email, rank, activeModules };
+}
+
+export function hasPlanificacionBaseAccess(
+  subscriptionPlan?: string | null,
+  email?: string | null,
+  rank?: UserRank | null,
+  activeModules?: string[] | null
+): boolean {
+  return _hasPlanificacionBaseAccess(accessInput(subscriptionPlan, email, rank, activeModules));
+}
+
+export function hasSoberaniaDiaAccess(
+  subscriptionPlan?: string | null,
+  email?: string | null,
+  rank?: UserRank | null,
+  activeModules?: string[] | null
+): boolean {
+  return _hasSoberaniaDiaAccess(accessInput(subscriptionPlan, email, rank, activeModules));
+}
+
+export function hasOperativoAccess(
+  subscriptionPlan?: string | null,
+  email?: string | null,
+  rank?: UserRank | null,
+  activeModules?: string[] | null
+): boolean {
+  return _hasOperativoAccess(accessInput(subscriptionPlan, email, rank, activeModules));
+}
+
+export function hasDesglosadorAccess(
+  subscriptionPlan?: string | null,
+  email?: string | null,
+  rank?: UserRank | null,
+  activeModules?: string[] | null
+): boolean {
+  return hasOperativoAccess(subscriptionPlan, email, rank, activeModules);
 }
 
 export function hasArquitectoAccess(
   subscriptionPlan?: string | null,
   email?: string | null,
-  rank?: UserRank | null
+  rank?: UserRank | null,
+  activeModules?: string[] | null
 ): boolean {
-  if (email?.toLowerCase() === OWNER_EMAIL) return true;
-  if (rank === "arquitecto" || rank === "soberano_operativo" || rank === "soberano") return true;
-  return subscriptionPlan === "arquitecto" || subscriptionPlan === "soberano_operativo" || subscriptionPlan === "soberano";
+  if (_isOwnerEmail(email)) return true;
+  return hasPlanificacionBaseAccess(subscriptionPlan, email, rank, activeModules);
 }
 
-export function hasPuntoCeroAccess(subscriptionPlan?: string | null, email?: string | null): boolean {
-  if (email?.toLowerCase() === OWNER_EMAIL) return true;
-  return subscriptionPlan === "soberano_operativo" || subscriptionPlan === "soberano";
+export function hasPuntoCeroAccess(
+  subscriptionPlan?: string | null,
+  email?: string | null,
+  rank?: UserRank | null,
+  activeModules?: string[] | null
+): boolean {
+  if (_isOwnerEmail(email)) return true;
+  return hasOperativoAccess(subscriptionPlan, email, rank, activeModules);
+}
+
+export async function activateModulesForUser(
+  userId: string,
+  moduleIds: ModuleId[],
+  opts?: { subscriptionPlan?: string | null }
+): Promise<void> {
+  const prog = getLocalProgression(userId);
+  const merged = mergeModuleIds(prog.activeModules, moduleIds);
+  await updateProgression(userId, {
+    activeModules: merged,
+    ...(opts?.subscriptionPlan != null ? { subscriptionPlan: opts.subscriptionPlan } : {}),
+  });
 }
 
 // ========== MODOS DE CLIENTE (Segmentación para Gemini) ==========
@@ -1866,6 +1997,8 @@ export interface UserProgression {
   ptsPlanificacion: number;
   ptsDeposito: number;
   subscriptionPlan?: string | null;
+  /** Módulos comprados (venta independiente por producto). */
+  activeModules?: string[];
 }
 
 const PROGRESSION_KEY = "sistemicar_progression";
@@ -2362,6 +2495,171 @@ function isLogTimestampToday(ts: number, todayStartMs: number): boolean {
   return ts >= todayStartMs;
 }
 
+function isLogTimestampInLimaDayRange(
+  ts: number,
+  dayStartMs: number,
+  dayEndMs: number | null,
+  treatZeroTimestampAsInRange: boolean
+): boolean {
+  if (ts === 0 || Number.isNaN(ts)) return treatZeroTimestampAsInRange;
+  if (ts < dayStartMs) return false;
+  if (dayEndMs != null && ts >= dayEndMs) return false;
+  return true;
+}
+
+async function collectDailyPointsForRange(
+  userId: string,
+  dayStartMs: number,
+  dayEndMs: number | null,
+  treatZeroTimestampAsInRange: boolean
+): Promise<{ total: number; logs: SovereigntyPointsLog[] }> {
+  let allLogs: SovereigntyPointsLog[] = [];
+  const seenIds = new Set<string>();
+
+  const inRange = (ts: number) =>
+    isLogTimestampInLimaDayRange(ts, dayStartMs, dayEndMs, treatZeroTimestampAsInRange);
+
+  const pushLog = (entry: SovereigntyPointsLog) => {
+    if (seenIds.has(entry.id)) return;
+    seenIds.add(entry.id);
+    allLogs.push(entry);
+  };
+
+  getLocalSPLog(userId)
+    .filter(l => inRange(l.timestamp.getTime()))
+    .forEach(pushLog);
+
+  if (isFirebaseConfigured() && db) {
+    try {
+      const path = getPrivatePath(userId, "sovereigntyPointsLog");
+      const snapshot = await getDocs(collection(db, path));
+      snapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp);
+        if (inRange(ts)) {
+          pushLog({
+            id: d.id,
+            amount: data.amount || 0,
+            source: data.source || "Sistema",
+            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now()),
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[collectDailyPointsForRange] Error SP logs:", error);
+    }
+
+    try {
+      const energyPath = getPrivatePath(userId, "energyLogs");
+      const energySnapshot = await getDocs(collection(db, energyPath));
+      energySnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp);
+        if (inRange(ts) && data.points > 0) {
+          pushLog({
+            id: `energy_${d.id}`,
+            amount: data.points || 0,
+            source: `Registro: ${data.type === "positive" ? "Energía+" : data.type === "negative" ? "Tensión" : "Neutral"}`,
+            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now()),
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[collectDailyPointsForRange] Error energy logs:", error);
+    }
+
+    try {
+      const vehiclesPath = getPrivatePath(userId, "vehicles");
+      const vehiclesSnapshot = await getDocs(collection(db, vehiclesPath));
+      vehiclesSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.completedAt || data.updatedAt);
+        if (inRange(ts) && (data.status === "cumplido" || data.status === "archivado")) {
+          const ejes = data.ejes || {};
+          let vehiclePoints = 0;
+          const trifectaToBase = (t: string) => (t === "reto" ? 10 : t === "intermedio" ? 5 : t === "blando" ? 2 : 0);
+          Object.values(ejes).forEach((eje: unknown) => {
+            const trifecta = (eje as { trifecta?: string })?.trifecta || "omitir";
+            vehiclePoints += trifectaToBase(trifecta);
+          });
+          if (data.status === "cumplido") vehiclePoints = Math.round(vehiclePoints * 1.5);
+          if (data.status === "archivado") vehiclePoints = Math.round(vehiclePoints * 0.3);
+          if (vehiclePoints > 0) {
+            pushLog({
+              id: `vehicle_${d.id}`,
+              amount: vehiclePoints,
+              source: `Vehículo: ${data.titulo || "Misión"}`,
+              timestamp: new Date(ts || Date.now()),
+            });
+          }
+        }
+      });
+    } catch (error) {
+      console.error("[collectDailyPointsForRange] Error vehicles:", error);
+    }
+
+    try {
+      const alquimiaPath = getPrivatePath(userId, "alquimia");
+      const alquimiaSnapshot = await getDocs(collection(db, alquimiaPath));
+      alquimiaSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp || data.createdAt);
+        if (inRange(ts)) {
+          pushLog({
+            id: `alquimia_${d.id}`,
+            amount: 2,
+            source: `Alquimia: ${data.type || "Reflexión"}`,
+            timestamp: new Date(ts || Date.now()),
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[collectDailyPointsForRange] Error alquimia:", error);
+    }
+
+    try {
+      const meditationPath = getPrivatePath(userId, "meditationSessions");
+      const meditationSnapshot = await getDocs(collection(db, meditationPath));
+      meditationSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp || data.completedAt);
+        if (inRange(ts)) {
+          pushLog({
+            id: `meditation_${d.id}`,
+            amount: 3,
+            source: `Meditación: ${data.duration || 0}min`,
+            timestamp: new Date(ts || Date.now()),
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[collectDailyPointsForRange] Error meditation:", error);
+    }
+
+    try {
+      const hopePath = getPrivatePath(userId, "hopeLogs");
+      const hopeSnapshot = await getDocs(collection(db, hopePath));
+      hopeSnapshot.docs.forEach(d => {
+        const data = d.data();
+        const ts = getTimestampMs(data.timestamp || data.createdAt);
+        if (inRange(ts)) {
+          pushLog({
+            id: `hope_${d.id}`,
+            amount: 1,
+            source: "Registro de Esperanza",
+            timestamp: new Date(ts || Date.now()),
+          });
+        }
+      });
+    } catch (error) {
+      console.error("[collectDailyPointsForRange] Error hopeLogs:", error);
+    }
+  }
+
+  const total = allLogs.reduce((sum, log) => sum + log.amount, 0);
+  return { total, logs: allLogs };
+}
+
 /** Si la progresión local quedó en 0 pero hay log SP, reconstruir el total acumulado */
 function reconcileProgressionFromLocalLog(userId: string): UserProgression {
   const prog = getLocalProgression(userId);
@@ -2499,154 +2797,21 @@ export async function getDailyPoints(userId: string): Promise<{
   total: number;
   logs: SovereigntyPointsLog[];
 }> {
-  const todayLima = getLimaDayStart();
-  const todayStartMs = todayLima.getTime();
+  const todayStartMs = getLimaDayStart().getTime();
+  return collectDailyPointsForRange(userId, todayStartMs, null, true);
+}
 
-  let allLogs: SovereigntyPointsLog[] = [];
-  const seenIds = new Set<string>();
-
-  const pushLog = (entry: SovereigntyPointsLog) => {
-    if (seenIds.has(entry.id)) return;
-    seenIds.add(entry.id);
-    allLogs.push(entry);
-  };
-
-  // 1. Log local (fuente más fiable — awardSovereigntyPoints escribe aquí primero)
-  getLocalSPLog(userId)
-    .filter(l => isLogTimestampToday(l.timestamp.getTime(), todayStartMs))
-    .forEach(pushLog);
-
-  // 2. sovereigntyPointsLog en Firebase
-  if (isFirebaseConfigured() && db) {
-    try {
-      const path = getPrivatePath(userId, "sovereigntyPointsLog");
-      const snapshot = await getDocs(collection(db, path));
-      snapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp);
-        if (isLogTimestampToday(ts, todayStartMs)) {
-          pushLog({
-            id: d.id,
-            amount: data.amount || 0,
-            source: data.source || "Sistema",
-            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now())
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error SP logs:", error);
-    }
-
-    // 3. Fuentes legacy (actividad que aún no pasó por awardSovereigntyPoints)
-    try {
-      const energyPath = getPrivatePath(userId, "energyLogs");
-      const energySnapshot = await getDocs(collection(db, energyPath));
-      energySnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp);
-        if (isLogTimestampToday(ts, todayStartMs) && data.points > 0) {
-          pushLog({
-            id: `energy_${d.id}`,
-            amount: data.points || 0,
-            source: `Registro: ${data.type === "positive" ? "Energía+" : data.type === "negative" ? "Tensión" : "Neutral"}`,
-            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now())
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error energy logs:", error);
-    }
-
-    try {
-      const vehiclesPath = getPrivatePath(userId, "vehicles");
-      const vehiclesSnapshot = await getDocs(collection(db, vehiclesPath));
-      vehiclesSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.completedAt || data.updatedAt);
-        if (isLogTimestampToday(ts, todayStartMs) && (data.status === "cumplido" || data.status === "archivado")) {
-          const ejes = data.ejes || {};
-          let vehiclePoints = 0;
-          const trifectaToBase = (t: string) => t === "reto" ? 10 : t === "intermedio" ? 5 : t === "blando" ? 2 : 0;
-          Object.values(ejes).forEach((eje: unknown) => {
-            const trifecta = (eje as { trifecta?: string })?.trifecta || "omitir";
-            vehiclePoints += trifectaToBase(trifecta);
-          });
-          if (data.status === "cumplido") vehiclePoints = Math.round(vehiclePoints * 1.5);
-          if (data.status === "archivado") vehiclePoints = Math.round(vehiclePoints * 0.3);
-          if (vehiclePoints > 0) {
-            pushLog({
-              id: `vehicle_${d.id}`,
-              amount: vehiclePoints,
-              source: `Vehículo: ${data.titulo || "Misión"}`,
-              timestamp: new Date(ts || Date.now())
-            });
-          }
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error vehicles:", error);
-    }
-
-    try {
-      const alquimiaPath = getPrivatePath(userId, "alquimia");
-      const alquimiaSnapshot = await getDocs(collection(db, alquimiaPath));
-      alquimiaSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.createdAt);
-        if (isLogTimestampToday(ts, todayStartMs)) {
-          pushLog({
-            id: `alquimia_${d.id}`,
-            amount: 2,
-            source: `Alquimia: ${data.type || "Reflexión"}`,
-            timestamp: new Date(ts || Date.now())
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error alquimia:", error);
-    }
-
-    try {
-      const meditationPath = getPrivatePath(userId, "meditationSessions");
-      const meditationSnapshot = await getDocs(collection(db, meditationPath));
-      meditationSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.completedAt);
-        if (isLogTimestampToday(ts, todayStartMs)) {
-          pushLog({
-            id: `meditation_${d.id}`,
-            amount: 3,
-            source: `Meditación: ${data.duration || 0}min`,
-            timestamp: new Date(ts || Date.now())
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error meditation:", error);
-    }
-
-    try {
-      const hopePath = getPrivatePath(userId, "hopeLogs");
-      const hopeSnapshot = await getDocs(collection(db, hopePath));
-      hopeSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.createdAt);
-        if (isLogTimestampToday(ts, todayStartMs)) {
-          pushLog({
-            id: `hope_${d.id}`,
-            amount: 1,
-            source: "Registro de Esperanza",
-            timestamp: new Date(ts || Date.now())
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[getDailyPoints] Error hopeLogs:", error);
-    }
-  }
-
-  const total = allLogs.reduce((sum, log) => sum + log.amount, 0);
-  return { total, logs: allLogs };
+/** Total PS del día anterior (Lima), misma agregación que getDailyPoints. */
+export async function getYesterdayDailyPointsTotal(userId: string): Promise<number> {
+  const todayStartMs = getLimaDayStart().getTime();
+  const yesterdayStartMs = todayStartMs - 24 * 60 * 60 * 1000;
+  const { total } = await collectDailyPointsForRange(
+    userId,
+    yesterdayStartMs,
+    todayStartMs,
+    false
+  );
+  return total;
 }
 
 // Subscribe to daily points changes - usa getDailyPoints para consistencia
@@ -4645,6 +4810,46 @@ export interface IntrospectionEntry {
   totalPS: number;
   ai_feedback_status: "pending" | "processed";
   timestamp: Date;
+}
+
+/** Suma PS de introspecciones de un día (fecha Lima YYYY-MM-DD). */
+export async function getIntrospectionPsForDay(userId: string, fecha: string): Promise<number> {
+  const inDay = (ts: Date | string | number) => getLimaDateString(new Date(ts).getTime()) === fecha;
+  let total = 0;
+
+  try {
+    const locals = JSON.parse(localStorage.getItem("local_introspection") || "[]") as IntrospectionEntry[];
+    for (const e of locals) {
+      if (inDay(e.timestamp)) total += e.totalPS || 0;
+    }
+  } catch {
+    // ignore
+  }
+
+  if (isFirebaseConfigured() && db) {
+    try {
+      const path = getPrivatePath(userId, "introspection_logs");
+      const { query: fbQuery, where, getDocs } = await import("firebase/firestore");
+      const q = fbQuery(collection(db, path), where("fecha", "==", fecha));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        snap.docs.forEach(d => {
+          total += (d.data().totalPS as number) || 0;
+        });
+        return total;
+      }
+      const allSnap = await getDocs(collection(db, path));
+      allSnap.docs.forEach(d => {
+        const data = d.data();
+        const ts = data.timestamp?.toDate?.() || data.timestamp;
+        if (ts && inDay(ts)) total += (data.totalPS as number) || 0;
+      });
+    } catch {
+      // local total
+    }
+  }
+
+  return total;
 }
 
 export async function saveIntrospectionEntry(

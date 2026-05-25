@@ -1,4 +1,6 @@
-# Dependencies
+# Local seller sales log (server)
+data/seller-sales.json
+
 node_modules/
 
 # Logs and caches

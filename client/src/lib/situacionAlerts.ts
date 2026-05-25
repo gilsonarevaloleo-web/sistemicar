@@ -6,11 +6,11 @@ import {
   vibrateSituacionCupo,
 } from "./situacionAlertSounds";
 import { isSituacionAlertsEnabled } from "./tikSound";
-import { speakUbicacionSingle } from "./speechQueue";
+import { speakUbicacionQueue, speakUbicacionSingle } from "./speechQueue";
 
 function trimSubText(text: string, max = 48): string {
   const t = text.trim();
-  return t.length > max ? `${t.slice(0, max)}…` : t;
+  return t.length > max ? `${t.slice(0, max)}ï¿½` : t;
 }
 
 export function fireSituacion2MinAlert(params: {
@@ -24,12 +24,12 @@ export function fireSituacion2MinAlert(params: {
   void playSituacion2MinBell();
   vibrateSituacion2Min();
   notifySituacionAlert({
-    title: `? 2 min · ${params.vehicleTitulo}`,
-    body: `Quedan 2 minutos para la fila: «${fila}». Prepárate.`,
+    title: `? 2 min ï¿½ ${params.vehicleTitulo}`,
+    body: `Quedan 2 minutos para la fila: ï¿½${fila}ï¿½. Prepï¿½rate.`,
     tag: `situacion-2m-${params.vehicleId}-${params.tagKey}`,
     vehicleId: params.vehicleId,
   });
-  speakUbicacionSingle(`Dos minutos para la fila: ${fila}`);
+  speakUbicacionSingle(`Dos minutos para la fila: ${fila}`, "situacion");
 }
 
 export function fireSituacionCupoAlert(params: {
@@ -44,17 +44,27 @@ export function fireSituacionCupoAlert(params: {
   void playSituacionCupoSiren();
   vibrateSituacionCupo();
   notifySituacionAlert({
-    title: params.escalation ? `?? Cupo · ${params.vehicleTitulo} (recordatorio)` : `?? Cupo · ${params.vehicleTitulo}`,
+    title: params.escalation ? `?? Cupo ï¿½ ${params.vehicleTitulo} (recordatorio)` : `?? Cupo ï¿½ ${params.vehicleTitulo}`,
     body: params.escalation
-      ? `Aún pendiente: «${fila}». Marca Cumplido o Incumplido.`
-      : `Cupo alcanzado en «${fila}». Marca Cumplido o Incumplido.`,
+      ? `Aï¿½n pendiente: ï¿½${fila}ï¿½. Marca Cumplido o Incumplido.`
+      : `Cupo alcanzado en ï¿½${fila}ï¿½. Marca Cumplido o Incumplido.`,
     tag: `situacion-cupo-${params.vehicleId}-${params.tagKey}${params.escalation ? "-esc" : ""}`,
     requireInteraction: !params.escalation,
     vehicleId: params.vehicleId,
   });
   if (!params.escalation) {
-    speakUbicacionSingle(`Cupo alcanzado. Marca cumplido o incumplido en ${fila}`);
+    speakUbicacionSingle(`Cupo alcanzado. Marca cumplido o incumplido en ${fila}`, "situacion");
   }
+}
+
+/** Anuncia por voz la fila activa del desglose situacional (cronï¿½metro). */
+export function speakSituacionFilaEnFoco(filaTexto: string, opts?: { intro?: boolean }): void {
+  const fila = trimSubText(filaTexto, 56);
+  if (!fila) return;
+  const phrases = opts?.intro
+    ? [fila, "Desglose situacional activo"]
+    : [fila, "Fila en foco"];
+  speakUbicacionQueue(phrases, true, "situacion");
 }
 
 export const SITUACION_CUPO_ESCALATION_MS = 60_000;

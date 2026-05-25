@@ -17,6 +17,8 @@ export type MpExternalRef = {
   email?: string;
   userName?: string;
   timestamp?: number;
+  /** Código de vendedor (Planificación / Espejo). */
+  sellerRef?: string;
 };
 
 export function parseMpExternalRef(paymentInfo: MpPaymentInfo): MpExternalRef {

@@ -71,6 +71,9 @@ import {
   listEspejoDeliveries,
 } from "./espejoCreditDeliveries";
 import { deliverCorazonSabioIfNeeded, parseMpExternalRef } from "./mercadopagoEspejo";
+import { activateModulesForEmail, activateModulesForUserById } from "./firebaseAdmin";
+import { modulesGrantedByPlan } from "../shared/moduleAccess";
+import { recordSellerSale, listSellerSales, markSellerCommissionPaid } from "./sellerSales";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
@@ -1946,7 +1949,7 @@ app.post("/api/mercadopago/create-preference", async (req, res) => {
       return res.status(500).json({ error: "Mercado Pago no configurado" });
     }
 
-    const { planId, email, userName } = req.body;
+    const { planId, email, userName, sellerRef } = req.body;
     const plan = SUBSCRIPTION_PLANS[planId as keyof typeof SUBSCRIPTION_PLANS];
     
     if (!plan) {
@@ -1982,7 +1985,13 @@ app.post("/api/mercadopago/create-preference", async (req, res) => {
         },
         auto_return: "approved",
         notification_url: `${baseUrl}/api/mercadopago/webhook`,
-        external_reference: JSON.stringify({ planId: plan.id, email, userName, timestamp: Date.now() }),
+        external_reference: JSON.stringify({
+          planId: plan.id,
+          email,
+          userName,
+          sellerRef: typeof sellerRef === "string" ? sellerRef.trim().toUpperCase() : undefined,
+          timestamp: Date.now(),
+        }),
         statement_descriptor: "SISTEMICAR",
         expires: true,
         expiration_date_from: new Date().toISOString(),
@@ -2021,12 +2030,32 @@ app.post("/api/mercadopago/webhook", async (req, res) => {
 
         console.log(`[MP] PAGO APROBADO: Plan ${externalRef.planId}, Email: ${externalRef.email}`);
         const plan = SUBSCRIPTION_PLANS[externalRef.planId as keyof typeof SUBSCRIPTION_PLANS];
+        const paymentIdStr = String(paymentInfo.id);
 
         if (externalRef.planId === "corazon-sabio") {
           await deliverCorazonSabioIfNeeded(paymentInfo, externalRef);
+        } else if (
+          externalRef.email &&
+          modulesGrantedByPlan(externalRef.planId ?? "").length > 0
+        ) {
+          const activated = await activateModulesForEmail(
+            externalRef.email,
+            externalRef.planId!
+          );
+          if (activated) {
+            console.log(`[MP] Módulos activados para ${externalRef.email} plan ${externalRef.planId}`);
+          }
         }
 
-        const paymentIdStr = String(paymentInfo.id);
+        if (externalRef.sellerRef && externalRef.planId) {
+          await recordSellerSale({
+            sellerRef: externalRef.sellerRef,
+            planId: externalRef.planId,
+            buyerEmail: externalRef.email,
+            mpPaymentId: paymentIdStr,
+          });
+        }
+
         const existingPayment = await getApiKeyByPaymentId(paymentIdStr);
         if (existingPayment.exists && existingPayment.status === "sent") {
           // Entrega confirmada — ignorar replay
@@ -4945,6 +4974,30 @@ async function verifyFirebaseIdToken(authHeader: string): Promise<string | null>
   return verified?.email ?? null;
 }
 
+app.post("/api/planificacion/claim-module", async (req, res) => {
+  try {
+    const verified = await verifyFirebaseJwt(req.headers.authorization);
+    if (!verified?.uid) {
+      return res.status(401).json({ error: "Inicia sesión para activar tu módulo." });
+    }
+    const planId = typeof req.body?.planId === "string" ? req.body.planId : "";
+    if (!planId || modulesGrantedByPlan(planId).length === 0) {
+      return res.status(400).json({ error: "Plan no válido para activación modular." });
+    }
+    const ok = await activateModulesForUserById(verified.uid, planId);
+    res.json({
+      activated: ok,
+      planId,
+      message: ok
+        ? "Módulo activado en tu cuenta."
+        : "No se pudo activar; verifica FIREBASE_SERVICE_ACCOUNT_JSON en el servidor.",
+    });
+  } catch (error) {
+    console.error("[planificacion/claim-module]", error);
+    res.status(500).json({ error: "No se pudo activar el módulo." });
+  }
+});
+
 app.post("/api/espejo/claim-purchase-credits", async (req, res) => {
   try {
     const verified = await verifyFirebaseJwt(req.headers.authorization);
@@ -5074,11 +5127,34 @@ app.post("/api/admin/espejo/grant-credits", requireAdminToken, async (req, res) 
   }
 });
 
-// ===== ADMIN: SELLERS (vendedores API) =====
+// ===== ADMIN: VENTAS VENDEDORES PLANIFICACIÓN =====
+app.get("/api/admin/seller-sales", requireAdminToken, async (req, res) => {
+  try {
+    const limitStr = typeof req.query.limit === "string" ? req.query.limit : "50";
+    const limit = parseInt(limitStr, 10) || 50;
+    const sales = await listSellerSales(limit);
+    res.json({ sales });
+  } catch (error) {
+    console.error("[admin/seller-sales] GET", error);
+    res.status(500).json({ error: "Error listando ventas de vendedores." });
+  }
+});
+
+app.post("/api/admin/seller-sales/:id/paid", requireAdminToken, async (req, res) => {
+  try {
+    const ok = await markSellerCommissionPaid(req.params.id);
+    if (!ok) return res.status(404).json({ error: "Venta no encontrada." });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("[admin/seller-sales/paid]", error);
+    res.status(500).json({ error: "Error marcando comisión." });
+  }
+});
+
+// ===== ADMIN: SELLERS (vendedores API — legacy, pendiente) =====
 app.get("/api/admin/sellers", requireAdminToken, async (_req, res) => {
   try {
-    const sellers = await listSellers();
-    res.json({ sellers });
+    res.json({ sellers: [], note: "Use seller-sales y códigos ref en /pagos?ref=CODIGO" });
   } catch (error: any) {
     console.error("[admin/sellers] GET error:", error?.message);
     res.status(500).json({ error: "Error listando vendedores." });
@@ -5094,50 +5170,29 @@ app.post("/api/admin/sellers", requireAdminToken, async (req, res) => {
     if (!seller_code || typeof seller_code !== "string" || seller_code.trim().length < 2) {
       return res.status(400).json({ error: "seller_code requerido (mínimo 2 caracteres)." });
     }
-    const created = await createSeller({
-      sellerName: seller_name,
-      sellerEmail: typeof seller_email === "string" ? seller_email : null,
-      sellerCode: seller_code,
+    res.json({
+      seller: {
+        sellerName: seller_name.trim(),
+        sellerEmail: typeof seller_email === "string" ? seller_email : null,
+        sellerCode: seller_code.trim().toUpperCase(),
+        link: `https://sistemicar.app/pagos?ref=${encodeURIComponent(seller_code.trim().toUpperCase())}`,
+      },
+      message: "Vendedor registrado manualmente. Comparte el link al vendedor.",
     });
-    res.json({ seller: created });
   } catch (error: any) {
     console.error("[admin/sellers] POST error:", error?.message);
     res.status(500).json({ error: error?.message || "Error creando vendedor." });
   }
 });
 
-app.patch("/api/admin/sellers/:id", requireAdminToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (!id || isNaN(id)) return res.status(400).json({ error: "ID inválido." });
-    const { active } = req.body || {};
-    if (typeof active !== "boolean") return res.status(400).json({ error: "active debe ser boolean." });
-    const updated = await setSellerActive(id, active);
-    if (!updated) return res.status(404).json({ error: "Vendedor no encontrado." });
-    res.json({ seller: updated });
-  } catch (error: any) {
-    console.error("[admin/sellers] PATCH error:", error?.message);
-    res.status(500).json({ error: "Error actualizando vendedor." });
-  }
+app.patch("/api/admin/sellers/:id", requireAdminToken, async (_req, res) => {
+  res.status(501).json({ error: "Use seller-sales para comisiones de Planificación." });
 });
 
-app.get("/api/admin/sales-attribution", requireAdminToken, async (req, res) => {
+app.get("/api/admin/sales-attribution", requireAdminToken, async (_req, res) => {
   try {
-    const fromStr = typeof req.query.from === "string" ? req.query.from : undefined;
-    const toStr = typeof req.query.to === "string" ? req.query.to : undefined;
-    const sellerIdStr = typeof req.query.sellerId === "string" ? req.query.sellerId : undefined;
-    const limitStr = typeof req.query.limit === "string" ? req.query.limit : undefined;
-    const from = fromStr ? new Date(fromStr) : undefined;
-    const to = toStr ? new Date(toStr) : undefined;
-    const sellerId = sellerIdStr ? parseInt(sellerIdStr, 10) : undefined;
-    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    const rows = await listSalesAttribution({
-      from: from && !isNaN(from.getTime()) ? from : undefined,
-      to: to && !isNaN(to.getTime()) ? to : undefined,
-      sellerId: sellerId && !isNaN(sellerId) ? sellerId : undefined,
-      limit: limit && !isNaN(limit) ? limit : undefined,
-    });
-    res.json({ sales: rows });
+    const sales = await listSellerSales(100);
+    res.json({ sales });
   } catch (error: any) {
     console.error("[admin/sales-attribution] GET error:", error?.message);
     res.status(500).json({ error: "Error listando atribución de ventas." });
