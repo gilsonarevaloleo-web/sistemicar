@@ -216,14 +216,17 @@ import {
   markPeldanoConquistadoSituacion,
 } from "@/lib/proyectos";
 import {
-  isPastSegmentAutoStart,
-  isPastSegmentEnd,
   isWithinSegmentTimeMargin,
   segmentDurationMinutes,
   validateSegmentTimes,
   getJournalDateString,
   getJournalDayStartMs,
 } from "@/lib/segmentTime";
+import {
+  applyDayRolloverEntropia,
+  applySegmentAttentionTick,
+  type SegmentAttentionEvent,
+} from "@/lib/segmentAttentionEngine";
 import { scheduleSegmentNotifications, cancelAllNotifications, requestNotificationPermission, getNotificationPermission } from "@/lib/notifications";
 import { auth } from "@/lib/firebase";
 import { setActiveSegmento, registrarEvento, COMPONENTES } from "@/lib/evento-universal";
@@ -818,9 +821,15 @@ const MONITOR_STATES = {
   },
   PESO_TIEMPO: {
     label: "EL PESO DEL TIEMPO",
-    desc: "Este segmento lleva más tiempo del previsto. Considera cerrarlo con intención.",
+    desc: "El segmento lleva demasiado sin cierre. La entropía se acerca.",
     color: "#f59e0b",
     icon: AlertTriangle
+  },
+  TRAICION: {
+    label: "LA TRAICIÓN SILENCIOSA",
+    desc: "Cerraste por entropía. 0 PS. El sistema no perdona la omisión.",
+    color: "#7f1d1d",
+    icon: Lock
   }
 };
 
@@ -1123,6 +1132,8 @@ export default function Planeacion() {
 
   const monitorState = useMemo(() => {
     if (!planilla || planilla.segmentos.length === 0) return null;
+    const lastEntropia = planilla.segmentos.filter(s => s.estado === "entropia").slice(-1)[0];
+    if (lastEntropia) return "TRAICION";
     if (!segmentoActivo) {
       const hasPendientes = planilla.segmentos.some(s => s.estado === "pendiente");
       if (hasPendientes) return "OMISION";
@@ -1335,42 +1346,50 @@ export default function Planeacion() {
       const fechaHoy = getJournalDateString();
 
       if (planilla.fecha !== fechaHoy) {
-        const hadActive = planilla.segmentos.some(s => s.estado === "activo");
-        const finalized: Planilla = {
-          ...planilla,
-          segmentos: planilla.segmentos.map(seg =>
-            seg.estado === "activo"
-              ? { ...seg, estado: "cerrado_manual" as const, cerradoAt: nowMs, psGanados: Math.max(seg.psGanados || 0, 1) }
-              : seg
-          ),
-        };
-        if (hadActive) {
+        const { segmentos: rolled, events, changed } = applyDayRolloverEntropia(planilla.segmentos, nowMs);
+        if (changed) {
+          const finalized: Planilla = { ...planilla, segmentos: rolled };
           savePlanilla(user.uid, finalized);
-          toast.info("Nuevo día — segmentos activos cerrados", {
-            description: "Se registró cierre automático al cambiar la fecha. Revisa tu planilla de hoy.",
-            style: { backgroundColor: PIZARRA, border: `1px solid ${SLATE}40`, color: SLATE },
+          toast.error("Jornada cerrada", {
+            description: "Segmentos activos pasaron a entropía al cambiar el día (máx. 24 h por segmento).",
+            style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
             duration: 6000,
           });
+          for (const ev of events) {
+            if (ev.type === "day_rollover_entropia") {
+              toast.error(`ENTROPÍA: ${ev.nombre}`, {
+                description: "0 PS. No cerraste a tiempo. El sistema no perdona la omisión.",
+                style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
+                duration: 6000,
+              });
+            }
+          }
         }
         setPlanillaFecha(fechaHoy);
         return;
       }
 
-      let changed = false;
-      const nextSegmentos = planilla.segmentos.map(seg => {
-        if (seg.estado === "pendiente") {
-          if (isPastSegmentAutoStart(nowMs, seg.horaInicio, seg.horaFin, 6, getJournalDayStartMs(nowMs))) {
-            changed = true;
-            toast.info(`Segmento iniciado: ${seg.nombre}`, {
-              description: "Activado automáticamente — sin PS. La ventana ±5 min ya cerró.",
-              style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}40`, color: EMERALD },
-            });
-            return { ...seg, estado: "activo" as const, activadoAt: nowMs };
-          }
-        }
+      const dayStart = getJournalDayStartMs(nowMs);
+      const { segmentos: nextSegmentos, events, changed } = applySegmentAttentionTick(
+        planilla.segmentos,
+        nowMs,
+        dayStart
+      );
 
-        return seg;
-      });
+      for (const ev of events as SegmentAttentionEvent[]) {
+        if (ev.type === "auto_start") {
+          toast.info(`Segmento iniciado: ${ev.nombre}`, {
+            description: "Activado automáticamente — sin PS. La ventana ±5 min ya cerró.",
+            style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}40`, color: EMERALD },
+          });
+        } else if (ev.type === "entropia") {
+          toast.error(`ENTROPÍA: ${ev.nombre}`, {
+            description: "0 PS. No cerraste a tiempo. El sistema no perdona la omisión.",
+            style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
+            duration: 6000,
+          });
+        }
+      }
 
       if (changed) {
         const updated = { ...planilla, segmentos: nextSegmentos };
@@ -1991,32 +2010,21 @@ export default function Planeacion() {
     registrarEvento(COMPONENTES.PLANIFICACION);
   };
 
-  const cerrarSegmentoManual = async (segId: string, opts?: { forceOutsideWindow?: boolean }) => {
+  const cerrarSegmentoManual = async (segId: string) => {
     if (!user || !planilla) return;
     const seg = planilla.segmentos.find(s => s.id === segId);
     if (!seg || seg.estado !== "activo") return;
 
-    let psCierre = 2;
-    if (seg.horaFin && !opts?.forceOutsideWindow) {
+    if (seg.horaFin) {
       const dentroVentana = isWithinSegmentTimeMargin(Date.now(), seg.horaInicio, seg.horaFin, "fin", 5);
       if (!dentroVentana) {
         toast.warning("La puerta está sellada", {
-          description: `El cierre con intención (+2 PS) está disponible entre 5 min antes y 5 min después de ${seg.horaFin}. Puedes usar «Forzar cierre» si necesitas registrar ya.`,
+          description: `El cierre con intención (+2 PS) solo está disponible ±5 min de ${seg.horaFin}. Fuera de esa ventana el segmento pasará a entropía automáticamente.`,
           style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}40`, color: BLOOD },
           duration: 6000,
         });
         return;
       }
-    }
-    if (opts?.forceOutsideWindow) {
-      if (
-        !window.confirm(
-          "Cerrar fuera de la ventana de la llave: +1 PS (registro honesto), no +2 PS de cierre con intención en horario. ¿Continuar?"
-        )
-      ) {
-        return;
-      }
-      psCierre = 1;
     }
 
     const duration = seg.activadoAt ? Math.round((Date.now() - seg.activadoAt) / 60000) : 0;
@@ -2026,14 +2034,14 @@ export default function Planeacion() {
     const updated = await updateSegmentoInPlanilla(user.uid, segId, {
       estado: "cerrado_manual",
       cerradoAt: Date.now(),
-      psGanados: (seg.psGanados || 0) + psCierre
+      psGanados: (seg.psGanados || 0) + 2
     });
     setPlanilla(updated);
-    toast.success(psCierre === 2 ? "+2 PS Cierre Consciente" : "+1 PS Cierre registrado", {
-      description: seg.nombre + (psCierre === 2 ? " · Puerta cerrada con intención" : " · Fuera de ventana de llave"),
+    toast.success("+2 PS Cierre Consciente", {
+      description: seg.nombre + " · Puerta cerrada con intención",
       style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD }
     });
-    awardSovereigntyPoints(user.uid, psCierre, (psCierre === 2 ? "Cierre consciente: " : "Cierre fuera de ventana: ") + seg.nombre).catch(() => {});
+    awardSovereigntyPoints(user.uid, 2, "Cierre consciente: " + seg.nombre).catch(() => {});
     incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
     if (labIntroTimeoutRef.current) {
       clearTimeout(labIntroTimeoutRef.current);
@@ -3972,7 +3980,8 @@ export default function Planeacion() {
             vehiculos: vehicles,
             now: Date.now(),
           });
-          const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual" || s.estado === "entropia").length;
+          const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
+          const segEntropia = segs.filter((s: any) => s.estado === "entropia").length;
           return (
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
@@ -3991,7 +4000,7 @@ export default function Planeacion() {
                 size={130}
                 segmentos={segs}
               />
-              <div className="mt-2 grid grid-cols-2 gap-1 w-full text-center">
+              <div className="mt-2 grid grid-cols-3 gap-1 w-full text-center">
                 <div>
                   <p className="text-[7px] text-slate-500 uppercase">Hrs Plan</p>
                   <p className="text-xs font-black" style={{ color: "#D4AF37" }}>{metricas.horasCubiertas}h</p>
@@ -3999,6 +4008,10 @@ export default function Planeacion() {
                 <div>
                   <p className="text-[7px] uppercase font-bold" style={{ color: "#00FFC3" }}>✓ Seg.</p>
                   <p className="text-xs font-black" style={{ color: "#00FFC3" }}>{segConquistados}/{segs.length}</p>
+                </div>
+                <div>
+                  <p className="text-[7px] uppercase font-bold" style={{ color: BLOOD }}>Entropía</p>
+                  <p className="text-xs font-black" style={{ color: segEntropia > 0 ? BLOOD : "rgba(148,163,184,0.5)" }}>{segEntropia}</p>
                 </div>
               </div>
             </motion.div>
@@ -4497,7 +4510,8 @@ export default function Planeacion() {
                     <div className="space-y-1.5">
                       {planilla.segmentos.map((seg) => {
                         const isActive = seg.estado === "activo";
-                        const isClosed = seg.estado === "cerrado_manual" || seg.estado === "entropia";
+                        const isEntropia = seg.estado === "entropia";
+                        const isClosedManual = seg.estado === "cerrado_manual";
                         const nowMsSeg = Date.now();
                         const activarVentanaAbierta = isWithinSegmentTimeMargin(
                           nowMsSeg, seg.horaInicio, seg.horaFin, "inicio", 5
@@ -4507,33 +4521,29 @@ export default function Planeacion() {
                           : true;
                         return (
                           <div key={seg.id} className="p-3 rounded-xl border transition-all" style={{
-                            backgroundColor: isActive ? `${EMERALD}08` : isClosed ? "rgba(100,116,139,0.05)" : "rgba(107,114,128,0.03)",
-                            borderColor: isActive ? `${EMERALD}40` : isClosed ? "rgba(100,116,139,0.2)" : "rgba(107,114,128,0.15)"
+                            backgroundColor: isActive ? `${EMERALD}08` : isEntropia ? `${BLOOD}08` : isClosedManual ? "rgba(100,116,139,0.05)" : "rgba(107,114,128,0.03)",
+                            borderColor: isActive ? `${EMERALD}40` : isEntropia ? `${BLOOD}40` : isClosedManual ? "rgba(100,116,139,0.2)" : "rgba(107,114,128,0.15)"
                           }}>
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: isActive ? EMERALD : isClosed ? SLATE : seg.color }} />
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: isActive ? EMERALD : isEntropia ? BLOOD : isClosedManual ? SLATE : seg.color }} />
                                 <div>
-                                  <p className="text-xs font-bold" style={{ color: isActive ? EMERALD : isClosed ? SLATE : "#e2e8f0" }}>{seg.nombre}</p>
+                                  <p className="text-xs font-bold" style={{ color: isActive ? EMERALD : isEntropia ? BLOOD : isClosedManual ? SLATE : "#e2e8f0" }}>{seg.nombre}</p>
                                   <p className="text-[9px] text-slate-600">{seg.horaInicio} - {seg.horaFin}</p>
                                 </div>
                               </div>
                               <div className="flex flex-col items-end gap-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                                  {isClosed && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: "rgba(100,116,139,0.2)", color: SLATE }}>CERRADO</span>}
+                                  {isEntropia && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }}>ENTROPÍA</span>}
+                                  {isClosedManual && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: "rgba(100,116,139,0.2)", color: SLATE }}>CERRADO</span>}
                                   {isActive && cierreVentanaAbierta && (
                                     <button onClick={() => cerrarSegmentoManual(seg.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }} data-testid={`button-close-segment-${seg.id}`}>
                                       <Square size={10} /> Cerrar (+2 PS)
                                     </button>
                                   )}
                                   {isActive && !cierreVentanaAbierta && seg.horaFin && (
-                                    <button type="button" onClick={() => cerrarSegmentoManual(seg.id, { forceOutsideWindow: true })} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: "rgba(100,116,139,0.15)", color: SLATE }} data-testid={`button-force-close-segment-${seg.id}`}>
-                                      <Square size={10} /> Forzar cierre (+1 PS)
-                                    </button>
-                                  )}
-                                  {isActive && !cierreVentanaAbierta && seg.horaFin && (
-                                    <span className="text-[7px] text-slate-500 text-right max-w-[11rem] leading-tight">
-                                      Llave +2 PS: ±5 min de {seg.horaFin}
+                                    <span className="text-[7px] text-right max-w-[11rem] leading-tight" style={{ color: BLOOD }}>
+                                      Puerta sellada — entropía inminente si no cierras ±5 min de {seg.horaFin}
                                     </span>
                                   )}
                                   {seg.estado === "pendiente" && (
@@ -4566,7 +4576,7 @@ export default function Planeacion() {
                                 </div>
                               </div>
                             )}
-                            {!isClosed && (
+                            {!isClosedManual && !isEntropia && (
                               <div className="mt-2 pt-2 border-t" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
                                 <button
                                   onClick={async () => {
@@ -4610,6 +4620,17 @@ export default function Planeacion() {
                           </div>
                         );
                       })}
+                      {planilla.segmentos.filter(s => s.estado === "entropia").length > 0 && (
+                        <div className="p-3 rounded-xl border" style={{ backgroundColor: "#1a000010", borderColor: "#7f1d1d" }}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <Lock size={12} style={{ color: "#7f1d1d" }} />
+                            <span className="text-[9px] font-black uppercase" style={{ color: "#7f1d1d" }}>
+                              SEGMENTOS EN ENTROPÍA: {planilla.segmentos.filter(s => s.estado === "entropia").length}
+                            </span>
+                          </div>
+                          <p className="text-[9px] text-slate-500">Cada entropía = 0 PS. Registro de atención perdida — entrena la conciencia panorámica.</p>
+                        </div>
+                      )}
                       <div ref={segmentosListEndRef} className="h-0 w-full scroll-mt-4" aria-hidden />
                     </div>
                   ) : (
