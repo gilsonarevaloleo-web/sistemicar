@@ -59,6 +59,11 @@ export function getNextLimaMidnightMs(fromMs: number = Date.now()): number {
   return getLimaDayStartMs(fromMs) + 86400000;
 }
 
+/** Próximo inicio de día-jornada (05:00 Lima). */
+export function getNextJournalDayStartMs(fromMs: number = Date.now()): number {
+  return getJournalDayStartMs(fromMs) + 86400000;
+}
+
 export function segmentClockMs(hora: string, dayStartMs: number): number {
   const parsed = parseSegmentTime(hora);
   if (!parsed) return dayStartMs;

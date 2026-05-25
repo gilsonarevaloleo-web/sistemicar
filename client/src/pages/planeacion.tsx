@@ -871,7 +871,7 @@ export default function Planeacion() {
     user?.email
   );
   const [dailyPS, setDailyPS] = useState(0);
-  const [limaDayKey, setLimaDayKey] = useState(() => getLimaDayStart().getTime());
+  const [journalDayKey, setJournalDayKey] = useState(() => getJournalDayStartMs());
   const [yesterdayPS, setYesterdayPS] = useState<number | null>(null);
   const [centinelaEsperaSec, setCentinelaEsperaSec] = useState(0);
   const [centinelaBlockReason, setCentinelaBlockReason] = useState<string | null>(null);
@@ -1204,11 +1204,12 @@ export default function Planeacion() {
     };
     loadYesterday();
     const onDayChange = () => {
-      setLimaDayKey(getLimaDayStart().getTime());
+      setJournalDayKey(getJournalDayStartMs());
+      setYesterdayPS(null);
       loadYesterday();
     };
-    window.addEventListener("lima-day-changed", onDayChange);
-    return () => window.removeEventListener("lima-day-changed", onDayChange);
+    window.addEventListener("journal-day-changed", onDayChange);
+    return () => window.removeEventListener("journal-day-changed", onDayChange);
   }, [user]);
 
   const dailyPsBar = useMemo(
@@ -1220,7 +1221,7 @@ export default function Planeacion() {
 
   useEffect(() => {
     if (!user) return;
-    const yesterdayFecha = getLimaDateString(getLimaDayStart().getTime() - 86400000);
+    const yesterdayFecha = getJournalDateString(getJournalDayStartMs() - 86400000);
     getPlanillaDailySnapshotForDate(user.uid, yesterdayFecha)
       .then(setYesterdayTermoSnapshot)
       .catch(() => setYesterdayTermoSnapshot(null));
@@ -3798,7 +3799,7 @@ export default function Planeacion() {
               title="100% = ayer"
             />
             <motion.div
-              key={`${limaDayKey}-${dailyPsBar.todayPs}`}
+              key={`${journalDayKey}-${dailyPsBar.todayPs}`}
               initial={{ width: 0 }}
               animate={{ width: `${dailyPsBar.fillWidthPct}%` }}
               transition={{ duration: 0.6, ease: "easeOut" }}

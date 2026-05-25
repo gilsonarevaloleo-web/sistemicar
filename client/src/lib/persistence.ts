@@ -26,7 +26,7 @@ export {
   mergeSubTareasById,
 } from "./situacionSessionMerge";
 import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
-import { getJournalDateString, getJournalDayStartMs, getNextLimaMidnightMs } from "./segmentTime";
+import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
 import {
   type ModuleAccessInput,
   type ModuleId,
@@ -2488,19 +2488,20 @@ function saveLocalSPLog(userId: string, logs: SovereigntyPointsLog[]): void {
   localStorage.setItem(spLogKey(userId), JSON.stringify(logs));
 }
 
-/** serverTimestamp pendiente (ts=0) se trata como hoy para no perder PS recién otorgados */
-function isLogTimestampToday(ts: number, todayStartMs: number): boolean {
-  if (ts === 0 || Number.isNaN(ts)) return true;
-  return ts >= todayStartMs;
+/** Timestamp fiable de un log SP local (fallback al epoch embebido en id sp_<ms>_). */
+function spLogEffectiveMs(entry: SovereigntyPointsLog): number {
+  const ts = entry.timestamp.getTime();
+  if (ts > 0 && !Number.isNaN(ts)) return ts;
+  const match = entry.id.match(/^sp_(\d+)_/);
+  return match ? Number(match[1]) : 0;
 }
 
-function isLogTimestampInLimaDayRange(
+function isLogTimestampInDayRange(
   ts: number,
   dayStartMs: number,
-  dayEndMs: number | null,
-  treatZeroTimestampAsInRange: boolean
+  dayEndMs: number | null
 ): boolean {
-  if (ts === 0 || Number.isNaN(ts)) return treatZeroTimestampAsInRange;
+  if (ts <= 0 || Number.isNaN(ts)) return false;
   if (ts < dayStartMs) return false;
   if (dayEndMs != null && ts >= dayEndMs) return false;
   return true;
@@ -2509,14 +2510,12 @@ function isLogTimestampInLimaDayRange(
 async function collectDailyPointsForRange(
   userId: string,
   dayStartMs: number,
-  dayEndMs: number | null,
-  treatZeroTimestampAsInRange: boolean
+  dayEndMs: number | null
 ): Promise<{ total: number; logs: SovereigntyPointsLog[] }> {
   let allLogs: SovereigntyPointsLog[] = [];
   const seenIds = new Set<string>();
 
-  const inRange = (ts: number) =>
-    isLogTimestampInLimaDayRange(ts, dayStartMs, dayEndMs, treatZeroTimestampAsInRange);
+  const inRange = (ts: number) => isLogTimestampInDayRange(ts, dayStartMs, dayEndMs);
 
   const pushLog = (entry: SovereigntyPointsLog) => {
     if (seenIds.has(entry.id)) return;
@@ -2525,7 +2524,7 @@ async function collectDailyPointsForRange(
   };
 
   getLocalSPLog(userId)
-    .filter(l => inRange(l.timestamp.getTime()))
+    .filter(l => inRange(spLogEffectiveMs(l)))
     .forEach(pushLog);
 
   if (isFirebaseConfigured() && db) {
@@ -2540,7 +2539,7 @@ async function collectDailyPointsForRange(
             id: d.id,
             amount: data.amount || 0,
             source: data.source || "Sistema",
-            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now()),
+            timestamp: data.timestamp?.toDate?.() || new Date(ts),
           });
         }
       });
@@ -2565,36 +2564,6 @@ async function collectDailyPointsForRange(
       });
     } catch (error) {
       console.error("[collectDailyPointsForRange] Error energy logs:", error);
-    }
-
-    try {
-      const vehiclesPath = getPrivatePath(userId, "vehicles");
-      const vehiclesSnapshot = await getDocs(collection(db, vehiclesPath));
-      vehiclesSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.completedAt || data.updatedAt);
-        if (inRange(ts) && (data.status === "cumplido" || data.status === "archivado")) {
-          const ejes = data.ejes || {};
-          let vehiclePoints = 0;
-          const trifectaToBase = (t: string) => (t === "reto" ? 10 : t === "intermedio" ? 5 : t === "blando" ? 2 : 0);
-          Object.values(ejes).forEach((eje: unknown) => {
-            const trifecta = (eje as { trifecta?: string })?.trifecta || "omitir";
-            vehiclePoints += trifectaToBase(trifecta);
-          });
-          if (data.status === "cumplido") vehiclePoints = Math.round(vehiclePoints * 1.5);
-          if (data.status === "archivado") vehiclePoints = Math.round(vehiclePoints * 0.3);
-          if (vehiclePoints > 0) {
-            pushLog({
-              id: `vehicle_${d.id}`,
-              amount: vehiclePoints,
-              source: `Vehículo: ${data.titulo || "Misión"}`,
-              timestamp: new Date(ts || Date.now()),
-            });
-          }
-        }
-      });
-    } catch (error) {
-      console.error("[collectDailyPointsForRange] Error vehicles:", error);
     }
 
     try {
@@ -2791,24 +2760,23 @@ function getTimestampMs(ts: any): number {
   return new Date(ts).getTime();
 }
 
-// Obtener puntos del día actual (zona horaria America/Lima)
+// Obtener puntos del día-jornada actual (desde 05:00 Lima)
 export async function getDailyPoints(userId: string): Promise<{
   total: number;
   logs: SovereigntyPointsLog[];
 }> {
-  const todayStartMs = getLimaDayStart().getTime();
-  return collectDailyPointsForRange(userId, todayStartMs, null, true);
+  const journalStartMs = getJournalDayStartMs();
+  return collectDailyPointsForRange(userId, journalStartMs, null);
 }
 
-/** Total PS del día anterior (Lima), misma agregación que getDailyPoints. */
+/** Total PS del día-jornada anterior, misma agregación que getDailyPoints. */
 export async function getYesterdayDailyPointsTotal(userId: string): Promise<number> {
-  const todayStartMs = getLimaDayStart().getTime();
-  const yesterdayStartMs = todayStartMs - 24 * 60 * 60 * 1000;
+  const journalStartMs = getJournalDayStartMs();
+  const yesterdayStartMs = journalStartMs - 86400000;
   const { total } = await collectDailyPointsForRange(
     userId,
     yesterdayStartMs,
-    todayStartMs,
-    false
+    journalStartMs
   );
   return total;
 }
@@ -2819,13 +2787,13 @@ export function subscribeToDailyPoints(
   onData: (data: { total: number; logs: SovereigntyPointsLog[] }) => void,
   onError: (error: Error) => void
 ): () => void {
-  let lastDayStartMs = getLimaDayStart().getTime();
-  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastDayStartMs = getJournalDayStartMs();
+  let journalDayTimer: ReturnType<typeof setTimeout> | undefined;
 
   const emitLocalDaily = () => {
-    const todayStartMs = getLimaDayStart().getTime();
+    const journalStartMs = getJournalDayStartMs();
     const localLogs = getLocalSPLog(userId).filter(l =>
-      isLogTimestampToday(l.timestamp.getTime(), todayStartMs)
+      isLogTimestampInDayRange(spLogEffectiveMs(l), journalStartMs, null)
     );
     const total = localLogs.reduce((sum, log) => sum + log.amount, 0);
     onData({ total, logs: localLogs });
@@ -2841,13 +2809,14 @@ export function subscribeToDailyPoints(
   };
 
   const refreshForDayChange = () => {
-    const currentDayStart = getLimaDayStart().getTime();
+    const currentDayStart = getJournalDayStartMs();
     if (currentDayStart === lastDayStartMs) return;
     lastDayStartMs = currentDayStart;
+    onData({ total: 0, logs: [] });
     emitLocalDaily();
     void fetchAllDailyPoints();
     window.dispatchEvent(
-      new CustomEvent("lima-day-changed", { detail: { dayStartMs: currentDayStart } })
+      new CustomEvent("journal-day-changed", { detail: { dayStartMs: currentDayStart } })
     );
   };
 
@@ -2856,19 +2825,19 @@ export function subscribeToDailyPoints(
     void fetchAllDailyPoints();
   };
 
-  const scheduleMidnightRefresh = () => {
-    if (midnightTimer) clearTimeout(midnightTimer);
-    const delay = Math.max(500, getNextLimaMidnightMs() - Date.now() + 250);
-    midnightTimer = setTimeout(() => {
+  const scheduleJournalDayRefresh = () => {
+    if (journalDayTimer) clearTimeout(journalDayTimer);
+    const delay = Math.max(500, getNextJournalDayStartMs() - Date.now() + 250);
+    journalDayTimer = setTimeout(() => {
       refreshForDayChange();
-      scheduleMidnightRefresh();
+      scheduleJournalDayRefresh();
     }, delay);
   };
 
   // Mostrar de inmediato lo que hay en local; luego enriquecer con Firebase
   emitLocalDaily();
   void fetchAllDailyPoints();
-  void scheduleMidnightRefresh();
+  void scheduleJournalDayRefresh();
 
   const dayCheckInterval = setInterval(refreshForDayChange, 60_000);
 
@@ -2885,7 +2854,7 @@ export function subscribeToDailyPoints(
     const unsubSnap = onSnapshot(collection(db, path), () => fetchAllDailyPoints(), onError);
     return () => {
       unsubSnap();
-      if (midnightTimer) clearTimeout(midnightTimer);
+      if (journalDayTimer) clearTimeout(journalDayTimer);
       clearInterval(dayCheckInterval);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("sovereignty-points-awarded", handler);
@@ -2894,7 +2863,7 @@ export function subscribeToDailyPoints(
   }
 
   return () => {
-    if (midnightTimer) clearTimeout(midnightTimer);
+    if (journalDayTimer) clearTimeout(journalDayTimer);
     clearInterval(dayCheckInterval);
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("sovereignty-points-awarded", handler);
