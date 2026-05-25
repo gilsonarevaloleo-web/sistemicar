@@ -26,6 +26,7 @@ export {
   mergeSubTareasById,
 } from "./situacionSessionMerge";
 import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
+import { getJournalDateString, getNextLimaMidnightMs } from "./segmentTime";
 import {
   type ModuleAccessInput,
   type ModuleId,
@@ -749,12 +750,12 @@ export async function reconcileStaleCentinelaInFirestore(userId: string): Promis
 }> {
   if (!isFirebaseConfigured() || !db) return { closedIds: [], hasActiveRemote: false };
   try {
-    const { getLimaDayStartMs } = await import("./segmentTime");
+    const { getJournalDayStartMs } = await import("./segmentTime");
     const path = getPrivatePath(userId, "vehicles");
     const snap = await getDocs(collection(db, path));
     const closedIds: string[] = [];
     let hasActiveRemote = false;
-    const dayStartMs = getLimaDayStartMs();
+    const dayStartMs = getJournalDayStartMs();
     const now = Date.now();
 
     for (const d of snap.docs) {
@@ -1091,6 +1092,8 @@ export async function updateVehicle(
     saveLocalVehicles(vehicles);
     window.dispatchEvent(new CustomEvent("vehicles-updated"));
   };
+  // Local-first: la lista del desglosador situacional debe sobrevivir navegación y snapshots tardíos.
+  updateLocally();
   if (isFirebaseConfigured() && db) {
     try {
       const path = getPrivatePath(userId, "vehicles");
@@ -1099,13 +1102,9 @@ export async function updateVehicle(
       if (updates.status === "cumplido" || updates.status === "archivado") {
         notifyVehicleClosed(vehicleId);
       }
-      updateLocally();
     } catch (error) {
-      console.warn("[updateVehicle] Firebase falló, guardando localmente:", error);
-      updateLocally();
+      console.warn("[updateVehicle] Firebase falló; cambios conservados en local:", error);
     }
-  } else {
-    updateLocally();
   }
 }
 
@@ -2820,6 +2819,9 @@ export function subscribeToDailyPoints(
   onData: (data: { total: number; logs: SovereigntyPointsLog[] }) => void,
   onError: (error: Error) => void
 ): () => void {
+  let lastDayStartMs = getLimaDayStart().getTime();
+  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+
   const emitLocalDaily = () => {
     const todayStartMs = getLimaDayStart().getTime();
     const localLogs = getLocalSPLog(userId).filter(l =>
@@ -2838,14 +2840,43 @@ export function subscribeToDailyPoints(
     }
   };
 
-  // Mostrar de inmediato lo que hay en local; luego enriquecer con Firebase
-  emitLocalDaily();
-  void fetchAllDailyPoints();
+  const refreshForDayChange = () => {
+    const currentDayStart = getLimaDayStart().getTime();
+    if (currentDayStart === lastDayStartMs) return;
+    lastDayStartMs = currentDayStart;
+    emitLocalDaily();
+    void fetchAllDailyPoints();
+    window.dispatchEvent(
+      new CustomEvent("lima-day-changed", { detail: { dayStartMs: currentDayStart } })
+    );
+  };
 
   const handler = () => {
     emitLocalDaily();
     void fetchAllDailyPoints();
   };
+
+  const scheduleMidnightRefresh = () => {
+    if (midnightTimer) clearTimeout(midnightTimer);
+    const delay = Math.max(500, getNextLimaMidnightMs() - Date.now() + 250);
+    midnightTimer = setTimeout(() => {
+      refreshForDayChange();
+      scheduleMidnightRefresh();
+    }, delay);
+  };
+
+  // Mostrar de inmediato lo que hay en local; luego enriquecer con Firebase
+  emitLocalDaily();
+  void fetchAllDailyPoints();
+  void scheduleMidnightRefresh();
+
+  const dayCheckInterval = setInterval(refreshForDayChange, 60_000);
+
+  const onVisible = () => {
+    if (document.visibilityState === "visible") refreshForDayChange();
+  };
+  document.addEventListener("visibilitychange", onVisible);
+
   window.addEventListener("sovereignty-points-awarded", handler);
   window.addEventListener("progression-updated", handler);
 
@@ -2854,12 +2885,18 @@ export function subscribeToDailyPoints(
     const unsubSnap = onSnapshot(collection(db, path), () => fetchAllDailyPoints(), onError);
     return () => {
       unsubSnap();
+      if (midnightTimer) clearTimeout(midnightTimer);
+      clearInterval(dayCheckInterval);
+      document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("sovereignty-points-awarded", handler);
       window.removeEventListener("progression-updated", handler);
     };
   }
 
   return () => {
+    if (midnightTimer) clearTimeout(midnightTimer);
+    clearInterval(dayCheckInterval);
+    document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("sovereignty-points-awarded", handler);
     window.removeEventListener("progression-updated", handler);
   };
@@ -4933,16 +4970,7 @@ function saveLocalPlanilla(planilla: Planilla): void {
 }
 
 function getTodayDateString(): string {
-  const now = new Date();
-  // Adjust for Lima timezone (UTC-5)
-  const limaOffset = -5 * 60;
-  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const limaMinutes = utcMinutes + limaOffset;
-  const limaDate = new Date(now);
-  if (limaMinutes < 0) {
-    limaDate.setUTCDate(limaDate.getUTCDate() - 1);
-  }
-  return limaDate.toISOString().split("T")[0];
+  return getJournalDateString();
 }
 
 export async function getPlanillaHoy(userId: string): Promise<Planilla> {

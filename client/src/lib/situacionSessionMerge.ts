@@ -5,7 +5,9 @@ function countSubTareasEnCronometro(v: Vehicle): number {
 }
 
 export function hasActiveSituacionDesglose(v: Vehicle): boolean {
-  return v.tipoFlota === "situacion" && (
+  if (v.tipoFlota !== "situacion" || v.status !== "activo") return false;
+  return (
+    (v.subTareas?.length ?? 0) > 0 ||
     v.situacionCronometro?.activo === true ||
     countSubTareasEnCronometro(v) > 0
   );
@@ -105,7 +107,17 @@ export function applySituacionDesgloseMerge(
   firebaseV: Vehicle,
   localV: Vehicle
 ): Vehicle {
-  if (!hasActiveSituacionDesglose(firebaseV) && !hasActiveSituacionDesglose(localV)) {
+  const activeSituacionPair =
+    firebaseV.tipoFlota === "situacion" &&
+    localV.tipoFlota === "situacion" &&
+    firebaseV.status === "activo" &&
+    localV.status === "activo";
+
+  if (
+    !activeSituacionPair &&
+    !hasActiveSituacionDesglose(firebaseV) &&
+    !hasActiveSituacionDesglose(localV)
+  ) {
     return merged;
   }
   return {

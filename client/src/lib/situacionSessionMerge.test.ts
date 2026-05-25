@@ -75,4 +75,22 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     assert.equal(merged.situacionCupoAnchor?.subTareaId, "c1");
     assert.equal(merged.situacionCronometro?.activo, true);
   });
+
+  it("merges free-list subtasks when firebase snapshot lacks them", () => {
+    const fb: Vehicle = {
+      ...baseVehicle(),
+      subTareas: undefined,
+    };
+    const local: Vehicle = {
+      ...baseVehicle(),
+      subTareas: [
+        st("a", { texto: "Comprar leche" }),
+        st("b", { texto: "Llamar al banco", completada: true }),
+      ],
+    };
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.subTareas?.length, 2);
+    assert.equal(merged.subTareas![0].texto, "Comprar leche");
+    assert.equal(merged.subTareas![1].completada, true);
+  });
 });

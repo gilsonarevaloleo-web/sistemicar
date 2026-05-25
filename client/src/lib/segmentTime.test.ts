@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   getLimaDayStartMs,
+  getNextLimaMidnightMs,
   isPastSegmentEnd,
   isWithinSegmentTimeMargin,
   segmentDurationMinutes,
@@ -50,6 +51,14 @@ describe("isPastSegmentEnd", () => {
     const { end } = segmentWindowMs("09:00", "17:00", dayStart);
     assert.equal(isPastSegmentEnd(end + 10 * 60000, "09:00", "17:00", 5, dayStart), true);
     assert.equal(isPastSegmentEnd(end - 60 * 60000, "09:00", "17:00", 5, dayStart), false);
+  });
+});
+
+describe("getNextLimaMidnightMs", () => {
+  it("is 24h after lima day start", () => {
+    const now = Date.UTC(2026, 4, 18, 12, 0, 0);
+    const dayStart = getLimaDayStartMs(now);
+    assert.equal(getNextLimaMidnightMs(now), dayStart + 86400000);
   });
 });
 

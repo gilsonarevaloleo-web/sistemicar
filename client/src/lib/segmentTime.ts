@@ -29,6 +29,36 @@ export function getLimaDayStartMs(fromMs: number = Date.now()): number {
   return fromMs - msSinceMidnight;
 }
 
+/** Inicio del día-jornada (después de dormir). Por defecto 05:00 Lima. */
+export const JOURNAL_DAY_START = "05:00";
+
+export function getJournalDayStartMs(fromMs: number = Date.now()): number {
+  const calDayStart = getLimaDayStartMs(fromMs);
+  const fiveAm = segmentClockMs(JOURNAL_DAY_START, calDayStart);
+  if (fromMs >= fiveAm) return fiveAm;
+  return fiveAm - 86400000;
+}
+
+/** Fecha YYYY-MM-DD del día-jornada (cambia a las 05:00, no a medianoche). */
+export function getJournalDateString(fromMs: number = Date.now()): string {
+  const LIMA_OFFSET_MS = -5 * 60 * 60 * 1000;
+  const lima = new Date(getJournalDayStartMs(fromMs) + LIMA_OFFSET_MS);
+  const y = lima.getUTCFullYear();
+  const mo = String(lima.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(lima.getUTCDate()).padStart(2, "0");
+  return `${y}-${mo}-${d}`;
+}
+
+export function isPastJournalDayStart(nowMs: number = Date.now()): boolean {
+  const calDayStart = getLimaDayStartMs(nowMs);
+  return nowMs >= segmentClockMs(JOURNAL_DAY_START, calDayStart);
+}
+
+/** Próxima medianoche Lima (inicio del siguiente día calendario). */
+export function getNextLimaMidnightMs(fromMs: number = Date.now()): number {
+  return getLimaDayStartMs(fromMs) + 86400000;
+}
+
 export function segmentClockMs(hora: string, dayStartMs: number): number {
   const parsed = parseSegmentTime(hora);
   if (!parsed) return dayStartMs;

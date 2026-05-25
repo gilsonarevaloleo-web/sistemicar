@@ -132,11 +132,16 @@ import {
   RadiografiaTokenData,
   getExpedientesRecientes,
   ExpedienteClinico,
-  reconcileStaleCentinelaInFirestore,
   notifyVehicleClosed,
   wasVehicleRecentlyClosed,
   mergeActiveVehicleSessionState,
 } from "@/lib/persistence";
+import {
+  releaseCentinela,
+  resetCentinelaTimerState,
+  suppressCentinela,
+  type CentinelaUiState,
+} from "@/lib/centinelaEngine";
 import {
   createRutaEnfoqueState,
   applyRutaThresholdCrossing,
@@ -214,6 +219,8 @@ import {
   isWithinSegmentTimeMargin,
   segmentDurationMinutes,
   validateSegmentTimes,
+  getJournalDateString,
+  getJournalDayStartMs,
 } from "@/lib/segmentTime";
 import { scheduleSegmentNotifications, cancelAllNotifications, requestNotificationPermission, getNotificationPermission } from "@/lib/notifications";
 import { auth } from "@/lib/firebase";
@@ -222,31 +229,6 @@ import { ManualTriggerButton } from "@/components/master-manual-drawer";
 import AnilloConciencia from "@/components/AnilloConciencia";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada } from "@/engines/ConcienciaEngine";
-
-const CENTINELA_DELAY_MS = 120_000;
-
-type CentinelaGate = { allowed: true; segActivo?: SegmentoV5 } | { allowed: false; reason: string };
-
-function getCentinelaSegmentGate(planilla: Planilla | null): CentinelaGate {
-  if (!planilla || planilla.segmentos.length === 0) {
-    return { allowed: true };
-  }
-  const segActivo = planilla.segmentos.find(s => s.estado === "activo");
-  if (!segActivo) {
-    return { allowed: false, reason: "Sin segmento activo — inicia uno en Segmentos del Día" };
-  }
-  if (segActivo.centinelaEnabled === false) {
-    return { allowed: false, reason: `Centinela desactivado en «${segActivo.nombre}»` };
-  }
-  return { allowed: true, segActivo };
-}
-
-function isCentinelaBlockedByVehicles(vehicles: Vehicle[], optimistic: Vehicle[]): boolean {
-  return (
-    vehicles.some(v => v.status === "activo" && !v.autoVerdad) ||
-    optimistic.some(v => v.status === "activo" && !v.autoVerdad)
-  );
-}
 
 const GOLD = "#D4AF37";
 const AZURE = "#1E90FF";
@@ -860,6 +842,7 @@ export default function Planeacion() {
     user?.email
   );
   const [dailyPS, setDailyPS] = useState(0);
+  const [limaDayKey, setLimaDayKey] = useState(() => getLimaDayStart().getTime());
   const [yesterdayPS, setYesterdayPS] = useState<number | null>(null);
   const [centinelaEsperaSec, setCentinelaEsperaSec] = useState(0);
   const [centinelaBlockReason, setCentinelaBlockReason] = useState<string | null>(null);
@@ -966,7 +949,7 @@ export default function Planeacion() {
   const [gordaHistory, setGordaHistory] = useState<VehicleHistoryEntry[]>([]);
 
   const [planilla, setPlanilla] = useState<Planilla | null>(null);
-  const [planillaFecha, setPlanillaFecha] = useState(() => getLimaDateString());
+  const [planillaFecha, setPlanillaFecha] = useState(() => getJournalDateString());
   const [showCrearSegmento, setShowCrearSegmento] = useState(false);
   const [segmentoProgramando, setSegmentoProgramando] = useState(false);
   const segmentosListEndRef = useRef<HTMLDivElement | null>(null);
@@ -1189,10 +1172,13 @@ export default function Planeacion() {
         .catch(() => setYesterdayPS(0));
     };
     loadYesterday();
-    const onPoints = () => loadYesterday();
-    window.addEventListener("sovereignty-points-awarded", onPoints);
-    return () => window.removeEventListener("sovereignty-points-awarded", onPoints);
-  }, [user, dailyPS]);
+    const onDayChange = () => {
+      setLimaDayKey(getLimaDayStart().getTime());
+      loadYesterday();
+    };
+    window.addEventListener("lima-day-changed", onDayChange);
+    return () => window.removeEventListener("lima-day-changed", onDayChange);
+  }, [user]);
 
   const dailyPsBar = useMemo(
     () => computeDailyPsBarModel(dailyPS, yesterdayPS ?? 0),
@@ -1326,7 +1312,7 @@ export default function Planeacion() {
 
     const checkPuertaAtencion = () => {
       const nowMs = Date.now();
-      const fechaHoy = getLimaDateString();
+      const fechaHoy = getJournalDateString();
 
       if (planilla.fecha !== fechaHoy) {
         const hadActive = planilla.segmentos.some(s => s.estado === "activo");
@@ -1353,7 +1339,7 @@ export default function Planeacion() {
       let changed = false;
       const nextSegmentos = planilla.segmentos.map(seg => {
         if (seg.estado === "pendiente") {
-          if (isPastSegmentAutoStart(nowMs, seg.horaInicio, seg.horaFin)) {
+          if (isPastSegmentAutoStart(nowMs, seg.horaInicio, seg.horaFin, 6, getJournalDayStartMs(nowMs))) {
             changed = true;
             toast.info(`Segmento iniciado: ${seg.nombre}`, {
               description: "Activado automáticamente — sin PS. La ventana ±5 min ya cerró.",
@@ -1379,154 +1365,26 @@ export default function Planeacion() {
     return () => clearInterval(interval);
   }, [user, planilla]);
 
-  const lastAutoVerdadCheck = useRef<number>(0);
-  const noVehicleSince = useRef<number>(0);
-  const sentinelSuppressed = useRef<boolean>(false);
   const vehiclesRef = useRef(vehicles);
   const closingInProgressRef = useRef<Set<string>>(new Set());
   const pausaInterrupcionLockRef = useRef<string | null>(null);
   vehiclesRef.current = vehicles;
 
-  const NO_VEHICLE_SINCE_KEY = "sistemicar_no_vehicle_since";
+  const persistVehiclesRef = () => {
+    saveLocalVehicles(vehiclesRef.current);
+  };
 
-  const checkAutoVerdadRef = useRef<(() => Promise<void>) | null>(null);
   const checkTraslado50Ref = useRef<(() => Promise<void>) | null>(null);
 
-  const resetCentinelaTimer = useCallback(() => {
-    noVehicleSince.current = 0;
-    localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
-    setCentinelaEsperaSec(0);
-  }, []);
-
-  const ensureCentinelaTimerStarted = useCallback((now: number) => {
-    const persistedSince = parseInt(localStorage.getItem(NO_VEHICLE_SINCE_KEY) || "0", 10);
-    const MAX_SINCE_AGE = 4 * 3600 * 1000;
-    const persistedSinceValid = persistedSince > 0 && (now - persistedSince) < MAX_SINCE_AGE;
-    if (noVehicleSince.current === 0) {
-      if (persistedSinceValid) {
-        noVehicleSince.current = persistedSince;
-      } else {
-        if (persistedSince > 0) localStorage.removeItem(NO_VEHICLE_SINCE_KEY);
-        noVehicleSince.current = now;
-        localStorage.setItem(NO_VEHICLE_SINCE_KEY, now.toString());
-      }
-    }
-    return noVehicleSince.current;
-  }, []);
-
-  // Cuenta regresiva 1s — visible desde el primer segundo de inactividad
   useEffect(() => {
-    if (!user || !planilla) return;
-
-    const tickCountdown = () => {
-      if (sentinelSuppressed.current) {
-        setCentinelaEsperaSec(0);
-        setCentinelaBlockReason("Preparando lanzamiento…");
-        return;
-      }
-
-      if (vehiclesRef.current.some(v => v.autoVerdad && v.status === "activo")) {
-        resetCentinelaTimer();
-        setCentinelaBlockReason(null);
-        return;
-      }
-
-      const gate = getCentinelaSegmentGate(planilla);
-      if (!gate.allowed) {
-        resetCentinelaTimer();
-        setCentinelaBlockReason(gate.reason);
-        return;
-      }
-
-      if (isCentinelaBlockedByVehicles(vehiclesRef.current, optimisticVehiclesRef.current)) {
-        resetCentinelaTimer();
-        setCentinelaBlockReason(null);
-        return;
-      }
-
-      setCentinelaBlockReason(null);
-      const now = Date.now();
-      const sinceMoment = ensureCentinelaTimerStarted(now);
-      const elapsedWait = now - sinceMoment;
-      setCentinelaEsperaSec(Math.max(0, Math.ceil((CENTINELA_DELAY_MS - elapsedWait) / 1000)));
+    const onCentinelaUi = (e: Event) => {
+      const detail = (e as CustomEvent<CentinelaUiState>).detail;
+      setCentinelaEsperaSec(detail.esperaSec);
+      setCentinelaBlockReason(detail.blockReason);
     };
-
-    const interval = setInterval(tickCountdown, 1000);
-    tickCountdown();
-    return () => clearInterval(interval);
-  }, [user, planilla, ensureCentinelaTimerStarted, resetCentinelaTimer]);
-
-  useEffect(() => {
-    if (!user || !planilla) return;
-    const localVehicles = getLocalVehicles();
-    const hasLocalActivos = localVehicles.some(v => v.status === "activo" && !v.autoVerdad);
-    if (hasLocalActivos) {
-      resetCentinelaTimer();
-    }
-    const checkAutoVerdad = async () => {
-      if (sentinelSuppressed.current) return;
-      const now = Date.now();
-      if (now - lastAutoVerdadCheck.current < 5000) return;
-      lastAutoVerdadCheck.current = now;
-
-      const currentVehicles = vehiclesRef.current;
-      const gate = getCentinelaSegmentGate(planilla);
-      if (!gate.allowed) {
-        resetCentinelaTimer();
-        return;
-      }
-
-      if (isCentinelaBlockedByVehicles(currentVehicles, optimisticVehiclesRef.current)) {
-        resetCentinelaTimer();
-        return;
-      }
-
-      const localCentinela = currentVehicles.find(v => v.autoVerdad && v.status === "activo");
-      if (localCentinela) return;
-
-      const { closedIds, hasActiveRemote } = await reconcileStaleCentinelaInFirestore(user.uid);
-      if (closedIds.length > 0) {
-        console.log("[Centinela] Limpiados obsoletos:", closedIds.join(", "));
-      }
-      if (hasActiveRemote) {
-        console.log("[Centinela] Ya hay uno activo en la nube — esperando sync local");
-        return;
-      }
-
-      const sinceMoment = ensureCentinelaTimerStarted(now);
-      const elapsedWait = now - sinceMoment;
-      if (elapsedWait < CENTINELA_DELAY_MS) return;
-
-      if (sentinelSuppressed.current) return;
-      if (isCentinelaBlockedByVehicles(vehiclesRef.current, optimisticVehiclesRef.current)) return;
-
-      const centinelaAperturaAt = sinceMoment;
-      console.log("[Centinela] Activando tras", Math.round(elapsedWait / 1000), "s sin vehículos");
-      await addVehicle(user.uid, {
-        titulo: "Modo Centinela",
-        criterioFin: "circunstancia",
-        criterioDetalle: "Modo Verdad",
-        tiempoInicio: new Date(centinelaAperturaAt),
-        ejes: STUB_EJES,
-        tipoTerminoRapido: "omitido",
-        tipoFlota: "verdad",
-        aperturaAt: centinelaAperturaAt,
-        autoVerdad: true
-      });
-      if ("Notification" in window && Notification.permission === "granted") {
-        new Notification("⚡ SISTEMICAR — Modo Centinela Activado", {
-          body: "Ningún vehículo activo. El centinela registra el vacío.",
-          icon: "/favicon.ico",
-          silent: false
-        });
-      }
-      resetCentinelaTimer();
-    };
-    checkAutoVerdadRef.current = checkAutoVerdad;
-    const interval = setInterval(checkAutoVerdad, 5000);
-    checkAutoVerdad();
-    return () => clearInterval(interval);
-  }, [user, planilla, resetCentinelaTimer, ensureCentinelaTimerStarted]);
+    window.addEventListener("centinela-ui-state", onCentinelaUi);
+    return () => window.removeEventListener("centinela-ui-state", onCentinelaUi);
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -1578,57 +1436,16 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    if (!user || !planilla) return;
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
+    if (!user) return;
 
-    const checkExpiredCentinela = async () => {
-      const activeCentinela = vehiclesRef.current.find(v => v.autoVerdad && v.status === "activo");
-      if (activeCentinela?.aperturaAt) {
-        const { getLimaDayStartMs } = await import("@/lib/segmentTime");
-        const dayStartMs = getLimaDayStartMs();
-        const age = Date.now() - activeCentinela.aperturaAt;
-        const isExpired =
-          activeCentinela.aperturaAt < dayStartMs || age > 8 * 3600 * 1000;
-        if (isExpired) {
-          const dur = Math.round(age / 60000);
-          try {
-            await updateVehicle(user.uid, activeCentinela.id, { cierreAt: Date.now(), duracionFinal: dur });
-            await updateVehicleStatus(user.uid, activeCentinela.id, "archivado");
-            if ("Notification" in window && Notification.permission === "granted") {
-              new Notification("⚡ SISTEMICAR — Centinela Cerrado", {
-                body: `Sesión anterior cerrada automáticamente. Duración registrada: ${dur} min.`,
-                icon: "/favicon.ico",
-                silent: false,
-              });
-            }
-            console.log("[Centinela] Auto-cerrado local. Duración:", dur, "min");
-          } catch (e) {
-            console.error("[Centinela autoclose]", e);
-          }
-        }
-      }
-      await reconcileStaleCentinelaInFirestore(user.uid);
-    };
-
-    checkExpiredCentinela();
-
-    const onVisible = async () => {
+    const onVisible = () => {
       if (document.visibilityState === "visible") {
-        console.log("[Sistemicar] App volvió al foco — verificando centinela y traslado50");
-        await checkExpiredCentinela();
-        lastAutoVerdadCheck.current = 0;
-        // Delay para que Firebase reconecte y envíe snapshot antes de evaluar Centinela
-        setTimeout(() => {
-          checkAutoVerdadRef.current?.();
-        }, 3000);
         checkTraslado50Ref.current?.();
       }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [user, planilla]);
+  }, [user]);
 
   useEffect(() => {
     if (relojTiempo !== "desglosador" || titulo.trim().length < 3) {
@@ -1795,9 +1612,8 @@ export default function Planeacion() {
 
       const bonoTemple = isNearDescanso();
 
-      sentinelSuppressed.current = true;
-      noVehicleSince.current = 0;
-      localStorage.removeItem("sistemicar_no_vehicle_since");
+      suppressCentinela();
+      resetCentinelaTimerState();
 
       const autoVerdadVehicles = vehicles.filter(v => v.status === "activo" && v.autoVerdad);
       if (autoVerdadVehicles.length > 0) {
@@ -1929,7 +1745,7 @@ export default function Planeacion() {
         });
       }
 
-      sentinelSuppressed.current = false;
+      releaseCentinela();
       console.log(`[handleFlotaSave] Vehículo creado exitosamente: "${titulo}"`);
 
       const optimisticVehicle: Vehicle = {
@@ -1983,7 +1799,7 @@ export default function Planeacion() {
       registrarEvento(COMPONENTES.PLANIFICACION);
       resetForm();
     } catch {
-      sentinelSuppressed.current = false;
+      releaseCentinela();
       toast.error("Error al guardar vehículo");
     }
     setSaving(false);
@@ -2757,7 +2573,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === parentId ? { ...v, ...patch } : v);
     saveLocalVehicles(vehiclesRef.current);
     await updateVehicle(user.uid, parentId, patch).catch(e => console.warn("[desglosador] resume:", e));
-    sentinelSuppressed.current = false;
+    releaseCentinela();
     toast.info("Desglosador reanudado", {
       description: "Tiempo restante recuperado tras la interrupción.",
       style: { backgroundColor: PIZARRA, border: `1px solid ${VIOLET}`, color: VIOLET },
@@ -2823,8 +2639,8 @@ export default function Planeacion() {
     saveLocalVehicles(pausedList);
 
     setExpandedId(provisionalInterruptId);
-    sentinelSuppressed.current = true;
-    noVehicleSince.current = 0;
+    suppressCentinela();
+    resetCentinelaTimerState();
 
     toast.success("Interrupción lanzada", {
       description: "Cierra la situación arriba (Cumplido o Incumplido) para reanudar el desglosador.",
@@ -2865,14 +2681,14 @@ export default function Planeacion() {
       setVehicles(rolledBack);
       vehiclesRef.current = rolledBack;
       saveLocalVehicles(rolledBack);
-      sentinelSuppressed.current = false;
+      releaseCentinela();
       toast.error("No se pudo lanzar la interrupción", {
         description: "El desglosador se reanudó. Intenta de nuevo.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
     } finally {
       pausaInterrupcionLockRef.current = null;
-      sentinelSuppressed.current = false;
+      releaseCentinela();
     }
   };
 
@@ -3149,6 +2965,7 @@ export default function Planeacion() {
       if (cur != null) {
         setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x)));
         vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x));
+        persistVehiclesRef();
         try {
           await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: null });
         } catch (err) {
@@ -3161,6 +2978,7 @@ export default function Planeacion() {
     const next = { subTareaId: first.id, startedAt: Date.now() };
     setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x)));
     vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x));
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: next });
     } catch (err) {
@@ -3176,6 +2994,7 @@ export default function Planeacion() {
     const subTareas = [...(vehicle.subTareas || []), newSubTarea];
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas });
       void handleSyncSituacionCupoAnchor(vehicleId);
@@ -3197,6 +3016,7 @@ export default function Planeacion() {
     const subTareas = list.map(st => st.id === subTareaId ? { ...st, completada: !st.completada } : st);
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas });
       void handleSyncSituacionCupoAnchor(vehicleId);
@@ -3240,6 +3060,7 @@ export default function Planeacion() {
 
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
+    persistVehiclesRef();
     try {
       let situacionCronometroPatch: Vehicle["situacionCronometro"] | undefined;
       if (cronActivo && sc) {
@@ -3250,6 +3071,7 @@ export default function Planeacion() {
       if (situacionCronometroPatch) {
         setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCronometro: situacionCronometroPatch! } : x)));
         vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCronometro: situacionCronometroPatch! } : x));
+        persistVehiclesRef();
       }
       const vAfter = vehiclesRef.current.find(x => x.id === vehicleId);
       const first = (vAfter?.subTareas || []).find(st => {
@@ -3292,6 +3114,7 @@ export default function Planeacion() {
     });
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas });
       toast.success(`+${delta} min`, {
@@ -3333,6 +3156,7 @@ export default function Planeacion() {
     const updatedVehicle: Vehicle = { ...vehicleSnapshot, subTareas, situacionCronometro };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? updatedVehicle : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? updatedVehicle : v));
+    persistVehiclesRef();
 
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
@@ -3415,6 +3239,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v =>
       v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v
     );
+    persistVehiclesRef();
     setExpandedId(vehicleId);
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor: situacionCupoAnchor ?? null });
@@ -3442,6 +3267,7 @@ export default function Planeacion() {
     if (!next) return;
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas: next } : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas: next } : v));
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas: next });
       const nextTexto = firstPendingCronometroTexto(next);
@@ -3473,6 +3299,7 @@ export default function Planeacion() {
     const situacionCronometro = { ...vehicle.situacionCronometro!, horaFinMs };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void handleSyncSituacionCupoAnchor(vehicleId);
@@ -3517,6 +3344,7 @@ export default function Planeacion() {
     };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void playSituacionChimes(chimesOnComplete);
@@ -3567,6 +3395,7 @@ export default function Planeacion() {
         : sc;
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
@@ -3602,6 +3431,7 @@ export default function Planeacion() {
     }
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void handleSyncSituacionCupoAnchor(vehicleId);
@@ -3620,6 +3450,7 @@ export default function Planeacion() {
     );
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
+    persistVehiclesRef();
     try { await updateVehicle(user.uid, vehicleId, { subTareas }); } catch (e) { console.error("[handleAddDetalle]", e); }
   };
 
@@ -3637,6 +3468,7 @@ export default function Planeacion() {
     );
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas });
       try {
@@ -3866,7 +3698,7 @@ export default function Planeacion() {
               title="100% = ayer"
             />
             <motion.div
-              key={dailyPsBar.todayPs}
+              key={`${limaDayKey}-${dailyPsBar.todayPs}`}
               initial={{ width: 0 }}
               animate={{ width: `${dailyPsBar.fillWidthPct}%` }}
               transition={{ duration: 0.6, ease: "easeOut" }}
