@@ -1,13 +1,16 @@
 /**
- * PS de profundidad por sesi�n desglosador � curva progresiva sin tope de horas.
- * Hora 1 = 5 PS; hora n (n?2) = award(n-1) + 2^(n-2) ? 5, 6, 8, 12, 20, 36�
+ * PS de profundidad por sesión desglosador — curva suave sin explosión exponencial.
+ * Hora 1 = 4 PS; hora 2 = 6; hora 3 = 8; luego +1–2 PS/h hasta estabilizar en +1/h.
  */
+
+const DEPTH_AWARD_TABLE: readonly number[] = [4, 6, 8, 9, 10, 11, 12];
 
 /** PS otorgados al completar la hora n (1-based). */
 export function depthAwardForHour(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 0;
-  if (n === 1) return 5;
-  return 4 + (1 << (n - 1));
+  if (n <= DEPTH_AWARD_TABLE.length) return DEPTH_AWARD_TABLE[n - 1];
+  const tail = DEPTH_AWARD_TABLE[DEPTH_AWARD_TABLE.length - 1];
+  return tail + (n - DEPTH_AWARD_TABLE.length);
 }
 
 /** PS acumulados tras floor(elapsedSec / 3600) horas completas. */
@@ -22,8 +25,15 @@ export function computeDesglosadorSessionDepthPS(elapsedSec: number): number {
   return total;
 }
 
-/** PS de la pr�xima hora a cruzar (para badge UI). */
+/** PS de la próxima hora a cruzar (para badge UI). */
 export function nextDepthAwardAfterHours(completedHours: number): number {
   if (!Number.isFinite(completedHours) || completedHours < 0) return depthAwardForHour(1);
   return depthAwardForHour(completedHours + 1);
+}
+
+/** Texto corto para UI (primeras horas + cola). */
+export function formatDepthAwardPreview(maxHours = 4): string {
+  const parts: string[] = [];
+  for (let h = 1; h <= maxHours; h++) parts.push(String(depthAwardForHour(h)));
+  return `${parts.join(" → ")}… (+1/h después)`;
 }

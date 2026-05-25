@@ -188,6 +188,7 @@ import { countCasaHechas, groupCasaByTexto, type CasaTextoCount } from "@/lib/si
 import {
   computeDesglosadorSessionDepthPS,
   depthAwardForHour,
+  formatDepthAwardPreview,
   nextDepthAwardAfterHours,
 } from "@/lib/desglosadorDepth";
 import {
@@ -479,8 +480,7 @@ function RutaEnfoqueBar({ restantes, ruta }: { restantes: number; ruta: { N: num
 /** PS por resistencia de profundidad (referencia por sub — solo situación/planificación). */
 const computeDesglosadorDepthPS = (tiempoSugeridoSeg: number | undefined): number => {
   if (tiempoSugeridoSeg == null || !Number.isFinite(tiempoSugeridoSeg) || tiempoSugeridoSeg <= 0) return 0;
-  const fullHours = Math.floor(tiempoSugeridoSeg / 3600);
-  return Math.max(0, 5 * fullHours);
+  return computeDesglosadorSessionDepthPS(tiempoSugeridoSeg);
 };
 
 function getDesglosadorElapsedSec(vehicle: Vehicle): number {
@@ -488,12 +488,6 @@ function getDesglosadorElapsedSec(vehicle: Vehicle): number {
   if (aperturaMs <= 0) return 0;
   return Math.floor((Date.now() - aperturaMs) / 1000);
 }
-
-/** +5 PS por cada hora completa de duración real del bloque (situación cronometrada). */
-const computeBloqueDepthPS = (elapsedSec: number): number => {
-  if (!Number.isFinite(elapsedSec) || elapsedSec <= 0) return 0;
-  return 5 * Math.floor(elapsedSec / 3600);
-};
 
 type SituacionDesgloseSummary = {
   cumplidos: number;
@@ -1018,6 +1012,17 @@ export default function Planeacion() {
     summary: SituacionDesgloseSummary;
   } | null>(null);
   const situacionBloqueCelebratedRef = useRef<Set<string>>(new Set());
+  const [situacionBloqueSummaries, setSituacionBloqueSummaries] = useState<
+    Record<string, SituacionDesgloseSummary>
+  >({});
+
+  const openSituacionDesgloseCelebration = useCallback(
+    (vehicleId: string, titulo: string, summary: SituacionDesgloseSummary) => {
+      setSituacionBloqueSummaries(prev => ({ ...prev, [vehicleId]: summary }));
+      setSituacionDesgloseCelebration({ vehicleId, titulo, summary });
+    },
+    []
+  );
 
   useEffect(() => {
     if (!user) return;
@@ -3191,7 +3196,7 @@ export default function Planeacion() {
 
     const bloqueInicio = sc!.bloqueInicioAt ?? vehicleSnapshot.aperturaAt ?? Date.now();
     const elapsedSec = Math.floor((Date.now() - bloqueInicio) / 1000);
-    const totalDepthPs = computeBloqueDepthPS(elapsedSec);
+    const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
     const prevGranted = sc!.depthBlockPsGranted ?? 0;
     const deltaDepth = totalDepthPs - prevGranted;
     const situacionCronometro: NonNullable<Vehicle["situacionCronometro"]> = {
@@ -3216,7 +3221,7 @@ export default function Planeacion() {
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
       registrarEvento(COMPONENTES.PLANIFICACION);
       const summary = computeSituacionDesgloseSummary(updatedVehicle);
-      setSituacionDesgloseCelebration({ vehicleId, titulo: vehicleSnapshot.titulo, summary });
+      openSituacionDesgloseCelebration(vehicleId, vehicleSnapshot.titulo, summary);
       if (vehicleSnapshot.proyectoId && vehicleSnapshot.proyectoPeldanoId) {
         void markPeldanoConquistadoSituacion(user.uid, updatedVehicle, {
           duracionMin: summary.minutosBloque,
@@ -3233,13 +3238,19 @@ export default function Planeacion() {
       situacionBloqueCelebratedRef.current.delete(bloqueKey);
       return false;
     }
-  }, [user]);
+  }, [user, openSituacionDesgloseCelebration]);
 
   const handleCerrarSituacionDesgloseBloque = useCallback(async (vehicleId: string) => {
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle?.subTareas) return;
-    await tryFinalizeSituacionDesgloseBloque(vehicleId, vehicle.subTareas, vehicle);
-  }, [vehicles, tryFinalizeSituacionDesgloseBloque]);
+    const finalized = await tryFinalizeSituacionDesgloseBloque(vehicleId, vehicle.subTareas, vehicle);
+    if (!finalized) {
+      const cached = situacionBloqueSummaries[vehicleId];
+      if (cached) {
+        openSituacionDesgloseCelebration(vehicleId, vehicle.titulo, cached);
+      }
+    }
+  }, [vehicles, tryFinalizeSituacionDesgloseBloque, situacionBloqueSummaries, openSituacionDesgloseCelebration]);
 
   const handleMoveSubTareasToCronometro = async (vehicleId: string, ids: string[]) => {
     if (!user || ids.length === 0) return;
@@ -3382,9 +3393,10 @@ export default function Planeacion() {
     const sc = vehicle.situacionCronometro!;
     const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? now;
     const elapsedSec = Math.floor((now - bloqueInicio) / 1000);
-    const totalDepthPs = computeBloqueDepthPS(elapsedSec);
+    const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
     const prevGranted = sc.depthBlockPsGranted ?? 0;
     const deltaDepth = totalDepthPs - prevGranted;
+    const bloqueListo = !subTareas.some(situacionFilaCronometroPendiente);
     const pendingSum = sumMinutosCronometroPendientes(subTareas);
     const situacionCronometro = {
       ...sc,
@@ -3400,7 +3412,12 @@ export default function Planeacion() {
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
       await awardSovereigntyPoints(user.uid, 4, `Sub-tarea (cronómetro): ${targetSub.texto}`);
       if (deltaDepth > 0) await awardSovereigntyPoints(user.uid, deltaDepth, `Profundidad bloque situación: ${vehicle.titulo}`);
-      if (deltaDepth > 0) {
+      if (bloqueListo) {
+        toast.info("Bloque listo — toca «Recibir cierre del bloque» para ver el desglose de PS", {
+          style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+          duration: 5500,
+        });
+      } else if (deltaDepth > 0) {
         toast.success(`+4 PS · +${deltaDepth} PS profundidad (bloque)`, {
           style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
           duration: 2800,
@@ -3416,8 +3433,6 @@ export default function Planeacion() {
           duration: 2200,
         });
       }
-      const vehicleAfter: Vehicle = { ...vehicle, subTareas, situacionCronometro };
-      void tryFinalizeSituacionDesgloseBloque(vehicleId, subTareas, vehicleAfter);
     } catch (e) {
       console.error("[handleSituacionCronometroCumplido]", e);
     }
@@ -3449,8 +3464,13 @@ export default function Planeacion() {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
       toast.info("Fallado (sin PS de fila)", { description: targetSub.texto, duration: 2200 });
-      const vehicleAfter: Vehicle = { ...vehicle, subTareas, situacionCronometro };
-      void tryFinalizeSituacionDesgloseBloque(vehicleId, subTareas, vehicleAfter);
+      const bloqueListo = !subTareas.some(situacionFilaCronometroPendiente);
+      if (bloqueListo) {
+        toast.info("Bloque listo — toca «Recibir cierre del bloque» para ver el desglose de PS", {
+          style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+          duration: 5500,
+        });
+      }
     } catch (e) {
       console.error("[handleSituacionCronometroFallado]", e);
     }
@@ -4692,7 +4712,7 @@ export default function Planeacion() {
             {activeVehicles.length > 0 ? (
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length}>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
                 ))}
               </AccordionSection>
             ) : (
@@ -5014,7 +5034,7 @@ export default function Planeacion() {
                                 <span className="text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider" style={{ backgroundColor: `${cfg.color}15`, color: cfg.color, opacity: 0.7 }}>Planificación</span>
                               </div>
                               <p className="text-[8px] text-slate-500 leading-snug">
-                                Profundidad de sesión: PS progresivos por hora real activa en el desglosador (5 → 6 → 8 → 12 → 20… sin tope de horas). Se otorgan al cruzar cada hora completa.
+                                Profundidad de sesión: {formatDepthAwardPreview()} PS por hora real activa. Se otorgan al cruzar cada hora completa (curva suave, sin explosión).
                               </p>
 
                               {/* Secuencia histórica */}
@@ -5620,6 +5640,7 @@ export default function Planeacion() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="situacion-desglose-celebracion-titulo"
+              onClick={(e) => e.stopPropagation()}
             >
               <motion.div
                 initial={{ opacity: 0, scale: 0.88, y: 24 }}
@@ -5627,6 +5648,7 @@ export default function Planeacion() {
                 transition={{ type: "spring", stiffness: 220, damping: 22 }}
                 className="w-full max-w-md rounded-2xl border p-5 space-y-4 relative overflow-hidden"
                 style={{ backgroundColor: PIZARRA, borderColor: `${GOLD}55`, boxShadow: `0 0 40px ${GOLD}25, inset 0 0 60px ${GOLD}08` }}
+                onClick={(e) => e.stopPropagation()}
               >
                 <motion.div
                   animate={{ opacity: [0.2, 0.45, 0.2] }}
@@ -5750,9 +5772,13 @@ export default function Planeacion() {
                   onClick={() => setSituacionDesgloseCelebration(null)}
                   className="relative w-full py-3 rounded-xl text-xs font-black uppercase tracking-wider"
                   style={{ backgroundColor: GOLD, color: "#000", boxShadow: `0 0 24px ${GOLD}40` }}
+                  data-testid="situacion-desglose-absorber"
                 >
                   Absorber victoria
                 </button>
+                <p className="relative text-[7px] text-center text-slate-600 leading-snug">
+                  El desglose permanece en el vehículo con «Ver PS del bloque» si cierras antes de leer.
+                </p>
               </motion.div>
             </motion.div>
           );
@@ -5924,7 +5950,7 @@ function VehicleCard({
   segmentoNumero,
   planilla,
   onAddSubTarea, onToggleSubTarea, onSetSubTareaMinutosCupo, onExtendSituacionCupo, onSyncSituacionCupoAnchor, onAddDetalle, onEntregarDetalle, onAddCasaItem, onToggleCasaItem, arquitectoUnlocked,
-  onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onQuitarSituacionCupo, onCerrarSituacionDesgloseBloque,
+  onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onQuitarSituacionCupo, onCerrarSituacionDesgloseBloque, situacionBloquePsTotal, onVerSituacionBloquePs,
   onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose, onDesglosadorDepthTick, onDesglosadorPausaInterrupcion, onResumeDesglosador, onDesglosadorReorderSubs,
   onReorderSubTareasCronometro,
   onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle, onOpenCierreEnergia,
@@ -5944,6 +5970,8 @@ function VehicleCard({
   onSituacionCronometroFallado?: (vehicleId: string, subTareaId: string) => void;
   onQuitarSituacionCupo?: (vehicleId: string, subTareaId: string, minutos: number) => void;
   onCerrarSituacionDesgloseBloque?: (vehicleId: string) => void;
+  situacionBloquePsTotal?: number;
+  onVerSituacionBloquePs?: () => void;
   onAddDetalle?: (vehicleId: string, subTareaId: string, texto: string) => void;
   onEntregarDetalle?: (vehicleId: string, subTareaId: string, detalleId: string) => void;
   onAddCasaItem?: (vehicleId: string, subTareaId: string, texto: string) => void;
@@ -7607,6 +7635,18 @@ function VehicleCard({
                     >
                       <Trophy size={12} />
                       Recibir cierre del bloque · ver PS ganados
+                    </button>
+                  )}
+                  {vehicle.situacionCronometro?.activo !== true && (situacionBloquePsTotal ?? 0) > 0 && onVerSituacionBloquePs && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onVerSituacionBloquePs(); }}
+                      className="w-full py-2 mb-2 rounded-xl text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5"
+                      style={{ backgroundColor: "rgba(212,175,55,0.1)", color: GOLD, border: "1px solid rgba(212,175,55,0.35)" }}
+                      data-testid={`situacion-ver-ps-bloque-${vehicle.id}`}
+                    >
+                      <Sparkles size={11} />
+                      Ver PS del bloque (+{situacionBloquePsTotal} PS)
                     </button>
                   )}
                   {vehicle.situacionCronometro?.activo === true && (

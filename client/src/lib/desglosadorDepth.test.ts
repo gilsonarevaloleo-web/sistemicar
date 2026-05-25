@@ -7,13 +7,16 @@ import {
 } from "./desglosadorDepth.ts";
 
 describe("depthAwardForHour", () => {
-  it("returns progressive awards per hour", () => {
-    assert.equal(depthAwardForHour(1), 5);
+  it("returns gentle progressive awards per hour", () => {
+    assert.equal(depthAwardForHour(1), 4);
     assert.equal(depthAwardForHour(2), 6);
     assert.equal(depthAwardForHour(3), 8);
-    assert.equal(depthAwardForHour(4), 12);
-    assert.equal(depthAwardForHour(5), 20);
-    assert.equal(depthAwardForHour(6), 36);
+    assert.equal(depthAwardForHour(4), 9);
+    assert.equal(depthAwardForHour(5), 10);
+    assert.equal(depthAwardForHour(6), 11);
+    assert.equal(depthAwardForHour(7), 12);
+    assert.equal(depthAwardForHour(8), 13);
+    assert.equal(depthAwardForHour(10), 15);
   });
 
   it("returns 0 for invalid hour", () => {
@@ -29,22 +32,25 @@ describe("computeDesglosadorSessionDepthPS", () => {
   });
 
   it("accumulates at hour boundaries", () => {
-    assert.equal(computeDesglosadorSessionDepthPS(3600), 5);
-    assert.equal(computeDesglosadorSessionDepthPS(7200), 11);
-    assert.equal(computeDesglosadorSessionDepthPS(14400), 31);
+    assert.equal(computeDesglosadorSessionDepthPS(3600), 4);
+    assert.equal(computeDesglosadorSessionDepthPS(7200), 10);
+    assert.equal(computeDesglosadorSessionDepthPS(10800), 18);
+    assert.equal(computeDesglosadorSessionDepthPS(14400), 27);
   });
 
-  it("has no 6h cap � 10h cumulative matches closed formula 4N + 2^N - 1", () => {
+  it("grows much slower than the old exponential curve at 10h", () => {
     const tenHours = 10 * 3600;
-    const expected = 4 * 10 + (1 << 10) - 1; // 355
-    assert.equal(computeDesglosadorSessionDepthPS(tenHours), expected);
+    const total = computeDesglosadorSessionDepthPS(tenHours);
+    assert.equal(total, 4 + 6 + 8 + 9 + 10 + 11 + 12 + 13 + 14 + 15);
+    assert.ok(total < 120);
   });
 });
 
 describe("nextDepthAwardAfterHours", () => {
   it("returns award for the next hour to cross", () => {
-    assert.equal(nextDepthAwardAfterHours(0), 5);
+    assert.equal(nextDepthAwardAfterHours(0), 4);
     assert.equal(nextDepthAwardAfterHours(1), 6);
-    assert.equal(nextDepthAwardAfterHours(3), 12);
+    assert.equal(nextDepthAwardAfterHours(2), 8);
+    assert.equal(nextDepthAwardAfterHours(3), 9);
   });
 });
