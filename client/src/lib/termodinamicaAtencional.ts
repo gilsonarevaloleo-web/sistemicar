@@ -523,7 +523,9 @@ export async function savePlanillaDailySnapshot(
   saveLocalSnapshots(userId, locals);
 
   const { db, getPrivatePath, isFirebaseConfigured } = await import("./firebase");
-  if (isFirebaseConfigured() && db) {
+  if (!isFirebaseConfigured() || !db) return;
+
+  void (async () => {
     try {
       const { addDoc, collection, getDocs, query, where, deleteDoc } = await import("firebase/firestore");
       const path = getPrivatePath(userId, "dailySnapshots");
@@ -533,10 +535,10 @@ export async function savePlanillaDailySnapshot(
         await deleteDoc(docSnap.ref);
       }
       await addDoc(collection(db, path), snapshot);
-    } catch {
-      // local saved
+    } catch (error) {
+      console.error("[savePlanillaDailySnapshot] Error Firebase:", error);
     }
-  }
+  })();
 }
 
 export async function getPlanillaDailySnapshots(

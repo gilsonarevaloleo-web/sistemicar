@@ -106,6 +106,7 @@ import {
   getLastCierreJornada,
   getTodayCierreJornada,
   getDailyPoints,
+  getDailyPointsLocalSync,
   getYesterdayDailyPointsTotal,
   subscribeToDailyPoints,
   getLimaDateString,
@@ -199,6 +200,7 @@ import {
   type ReorderDirection,
 } from "@/lib/desglosadorReorder";
 import { computeDailyPsBarModel } from "@/lib/dailyPsBar";
+import { withTimeout } from "@/lib/asyncTimeout";
 import { recordFocusBandEvent, getFocusBandEventsRecent, getFocusBandEventsForRange } from "@/lib/focusBandLedger";
 import type { FocusBandEvent } from "@/lib/focusBandLedger";
 import {
@@ -5822,7 +5824,12 @@ export default function Planeacion() {
                 return;
               }
               try {
-                const fresh = await getDailyPoints(user.uid);
+                const localFresh = getDailyPointsLocalSync(user.uid);
+                const fresh = await withTimeout(
+                  getDailyPoints(user.uid),
+                  5000,
+                  localFresh
+                );
                 const fecha = getLimaDateString();
                 const dayStartMs = getLimaDayStart().getTime();
                 const jornadaVehicles = vehicles.filter(v => {
@@ -5835,8 +5842,16 @@ export default function Planeacion() {
                   now: Date.now(),
                   dayStartMs,
                 });
-                const introPs = await getIntrospectionPsForDay(user.uid, fecha);
-                const events = await getFocusBandEventsRecent(user.uid, 1);
+                const introPs = await withTimeout(
+                  getIntrospectionPsForDay(user.uid, fecha),
+                  4000,
+                  0
+                );
+                const events = await withTimeout(
+                  getFocusBandEventsRecent(user.uid, 1),
+                  4000,
+                  []
+                );
                 const todayEvents = events.filter(e => e.fecha === fecha);
                 const snapshot = buildDailySnapshot({
                   fecha,

@@ -1193,21 +1193,25 @@ function saveLocalCierres(cierres: CierreJornadaLog[]) {
   localStorage.setItem(CIERRE_JORNADA_KEY, JSON.stringify(cierres));
 }
 
+function upsertLocalCierre(cierre: CierreJornadaLog): void {
+  const cierres = getLocalCierres().filter(c => c.fecha !== cierre.fecha);
+  cierres.unshift(cierre);
+  saveLocalCierres(cierres);
+}
+
 export async function saveCierreJornada(userId: string, cierre: CierreJornadaLog): Promise<void> {
-  if (isFirebaseConfigured() && db) {
+  upsertLocalCierre(cierre);
+
+  if (!isFirebaseConfigured() || !db) return;
+
+  void (async () => {
     try {
       const path = getPrivatePath(userId, "cierreJornada");
       await addDoc(collection(db, path), { ...cierre, userId, timestamp: Date.now() });
-    } catch {
-      const cierres = getLocalCierres();
-      cierres.unshift(cierre);
-      saveLocalCierres(cierres);
+    } catch (error) {
+      console.error("[saveCierreJornada] Error Firebase:", error);
     }
-  } else {
-    const cierres = getLocalCierres();
-    cierres.unshift(cierre);
-    saveLocalCierres(cierres);
-  }
+  })();
 }
 
 export async function getLastCierreJornada(userId: string): Promise<CierreJornadaLog | null> {
@@ -1227,6 +1231,9 @@ export async function getLastCierreJornada(userId: string): Promise<CierreJornad
 
 export async function getTodayCierreJornada(userId: string): Promise<CierreJornadaLog | null> {
   const today = getLimaDateString();
+  const local = getLocalCierres().find(c => c.fecha === today);
+  if (local) return local;
+
   if (isFirebaseConfigured() && db) {
     try {
       const path = getPrivatePath(userId, "cierreJornada");
@@ -1235,10 +1242,11 @@ export async function getTodayCierreJornada(userId: string): Promise<CierreJorna
       const snap = await getDocs(q);
       if (snap.empty) return null;
       return { id: snap.docs[0].id, ...snap.docs[0].data() } as CierreJornadaLog;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
-  const cierres = getLocalCierres();
-  return cierres.find(c => c.fecha === today) || null;
+  return null;
 }
 
 // ========== BOSS STEP (Paso Jefe) ==========
@@ -2682,6 +2690,19 @@ export async function getDailyPoints(userId: string): Promise<{
 }> {
   const journalStartMs = getJournalDayStartMs();
   return collectDailyPointsForRange(userId, journalStartMs, null);
+}
+
+/** PS del día-jornada solo desde local (respuesta inmediata, sin Firebase). */
+export function getDailyPointsLocalSync(userId: string): {
+  total: number;
+  logs: SovereigntyPointsLog[];
+} {
+  const journalStartMs = getJournalDayStartMs();
+  const logs = getLocalSPLog(userId).filter(l =>
+    isLogTimestampInDayRange(spLogEffectiveMs(l), journalStartMs, null)
+  );
+  const total = logs.reduce((sum, log) => sum + log.amount, 0);
+  return { total, logs };
 }
 
 /** Total PS del día-jornada anterior, misma agregación que getDailyPoints. */
@@ -4753,17 +4774,8 @@ export async function getIntrospectionPsForDay(userId: string, fecha: string): P
       const { query: fbQuery, where, getDocs } = await import("firebase/firestore");
       const q = fbQuery(collection(db, path), where("fecha", "==", fecha));
       const snap = await getDocs(q);
-      if (!snap.empty) {
-        snap.docs.forEach(d => {
-          total += (d.data().totalPS as number) || 0;
-        });
-        return total;
-      }
-      const allSnap = await getDocs(collection(db, path));
-      allSnap.docs.forEach(d => {
-        const data = d.data();
-        const ts = data.timestamp?.toDate?.() || data.timestamp;
-        if (ts && inDay(ts)) total += (data.totalPS as number) || 0;
+      snap.docs.forEach(d => {
+        total += (d.data().totalPS as number) || 0;
       });
     } catch {
       // local total
