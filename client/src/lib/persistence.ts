@@ -27,6 +27,7 @@ export {
 } from "./situacionSessionMerge";
 import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
 import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
+import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
 import {
   type ModuleAccessInput,
   type ModuleId,
@@ -2488,14 +2489,6 @@ function saveLocalSPLog(userId: string, logs: SovereigntyPointsLog[]): void {
   localStorage.setItem(spLogKey(userId), JSON.stringify(logs));
 }
 
-/** Timestamp fiable de un log SP local (fallback al epoch embebido en id sp_<ms>_). */
-function spLogEffectiveMs(entry: SovereigntyPointsLog): number {
-  const ts = entry.timestamp.getTime();
-  if (ts > 0 && !Number.isNaN(ts)) return ts;
-  const match = entry.id.match(/^sp_(\d+)_/);
-  return match ? Number(match[1]) : 0;
-}
-
 function isLogTimestampInDayRange(
   ts: number,
   dayStartMs: number,
@@ -2512,20 +2505,12 @@ async function collectDailyPointsForRange(
   dayStartMs: number,
   dayEndMs: number | null
 ): Promise<{ total: number; logs: SovereigntyPointsLog[] }> {
-  let allLogs: SovereigntyPointsLog[] = [];
-  const seenIds = new Set<string>();
-
   const inRange = (ts: number) => isLogTimestampInDayRange(ts, dayStartMs, dayEndMs);
-
-  const pushLog = (entry: SovereigntyPointsLog) => {
-    if (seenIds.has(entry.id)) return;
-    seenIds.add(entry.id);
-    allLogs.push(entry);
-  };
+  const candidates: SovereigntyPointsLog[] = [];
 
   getLocalSPLog(userId)
     .filter(l => inRange(spLogEffectiveMs(l)))
-    .forEach(pushLog);
+    .forEach(l => candidates.push(l));
 
   if (isFirebaseConfigured() && db) {
     try {
@@ -2534,98 +2519,22 @@ async function collectDailyPointsForRange(
       snapshot.docs.forEach(d => {
         const data = d.data();
         const ts = getTimestampMs(data.timestamp);
-        if (inRange(ts)) {
-          pushLog({
-            id: d.id,
-            amount: data.amount || 0,
-            source: data.source || "Sistema",
-            timestamp: data.timestamp?.toDate?.() || new Date(ts),
-          });
-        }
+        if (!inRange(ts)) return;
+        candidates.push({
+          id: d.id,
+          amount: data.amount || 0,
+          source: data.source || "Sistema",
+          timestamp: data.timestamp?.toDate?.() || new Date(ts),
+        });
       });
     } catch (error) {
       console.error("[collectDailyPointsForRange] Error SP logs:", error);
     }
-
-    try {
-      const energyPath = getPrivatePath(userId, "energyLogs");
-      const energySnapshot = await getDocs(collection(db, energyPath));
-      energySnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp);
-        if (inRange(ts) && data.points > 0) {
-          pushLog({
-            id: `energy_${d.id}`,
-            amount: data.points || 0,
-            source: `Registro: ${data.type === "positive" ? "Energía+" : data.type === "negative" ? "Tensión" : "Neutral"}`,
-            timestamp: data.timestamp?.toDate?.() || new Date(ts || Date.now()),
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[collectDailyPointsForRange] Error energy logs:", error);
-    }
-
-    try {
-      const alquimiaPath = getPrivatePath(userId, "alquimia");
-      const alquimiaSnapshot = await getDocs(collection(db, alquimiaPath));
-      alquimiaSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.createdAt);
-        if (inRange(ts)) {
-          pushLog({
-            id: `alquimia_${d.id}`,
-            amount: 2,
-            source: `Alquimia: ${data.type || "Reflexión"}`,
-            timestamp: new Date(ts || Date.now()),
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[collectDailyPointsForRange] Error alquimia:", error);
-    }
-
-    try {
-      const meditationPath = getPrivatePath(userId, "meditationSessions");
-      const meditationSnapshot = await getDocs(collection(db, meditationPath));
-      meditationSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.completedAt);
-        if (inRange(ts)) {
-          pushLog({
-            id: `meditation_${d.id}`,
-            amount: 3,
-            source: `Meditación: ${data.duration || 0}min`,
-            timestamp: new Date(ts || Date.now()),
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[collectDailyPointsForRange] Error meditation:", error);
-    }
-
-    try {
-      const hopePath = getPrivatePath(userId, "hopeLogs");
-      const hopeSnapshot = await getDocs(collection(db, hopePath));
-      hopeSnapshot.docs.forEach(d => {
-        const data = d.data();
-        const ts = getTimestampMs(data.timestamp || data.createdAt);
-        if (inRange(ts)) {
-          pushLog({
-            id: `hope_${d.id}`,
-            amount: 1,
-            source: "Registro de Esperanza",
-            timestamp: new Date(ts || Date.now()),
-          });
-        }
-      });
-    } catch (error) {
-      console.error("[collectDailyPointsForRange] Error hopeLogs:", error);
-    }
   }
 
-  const total = allLogs.reduce((sum, log) => sum + log.amount, 0);
-  return { total, logs: allLogs };
+  const logs = mergeSovereigntyPointsLogs(candidates);
+  const total = logs.reduce((sum, log) => sum + log.amount, 0);
+  return { total, logs };
 }
 
 /** Si la progresión local quedó en 0 pero hay log SP, reconstruir el total acumulado */
@@ -2751,13 +2660,19 @@ export function getLimaDateString(fromMs: number = Date.now()): string {
 // Obtener timestamp en milisegundos desde cualquier formato
 function getTimestampMs(ts: any): number {
   if (!ts) return 0;
-  if (typeof ts === 'object' && 'seconds' in ts) {
-    return ts.seconds * 1000;
+  if (typeof ts === "object") {
+    if ("seconds" in ts && typeof ts.seconds === "number") return ts.seconds * 1000;
+    if (typeof ts.toDate === "function") {
+      const d = ts.toDate().getTime();
+      return Number.isNaN(d) ? 0 : d;
+    }
   }
   if (ts instanceof Date) {
-    return ts.getTime();
+    const d = ts.getTime();
+    return Number.isNaN(d) ? 0 : d;
   }
-  return new Date(ts).getTime();
+  const d = new Date(ts).getTime();
+  return Number.isNaN(d) ? 0 : d;
 }
 
 // Obtener puntos del día-jornada actual (desde 05:00 Lima)
