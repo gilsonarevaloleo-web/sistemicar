@@ -2725,6 +2725,7 @@ export function subscribeToDailyPoints(
 ): () => void {
   let lastDayStartMs = getJournalDayStartMs();
   let journalDayTimer: ReturnType<typeof setTimeout> | undefined;
+  let fetchDebounce: ReturnType<typeof setTimeout> | undefined;
 
   const emitLocalDaily = () => {
     const journalStartMs = getJournalDayStartMs();
@@ -2744,6 +2745,14 @@ export function subscribeToDailyPoints(
     }
   };
 
+  const scheduleFetchAllDailyPoints = () => {
+    if (fetchDebounce) clearTimeout(fetchDebounce);
+    fetchDebounce = setTimeout(() => {
+      fetchDebounce = undefined;
+      void fetchAllDailyPoints();
+    }, 2000);
+  };
+
   const refreshForDayChange = () => {
     const currentDayStart = getJournalDayStartMs();
     if (currentDayStart === lastDayStartMs) return;
@@ -2758,7 +2767,7 @@ export function subscribeToDailyPoints(
 
   const handler = () => {
     emitLocalDaily();
-    void fetchAllDailyPoints();
+    scheduleFetchAllDailyPoints();
   };
 
   const scheduleJournalDayRefresh = () => {
@@ -2770,9 +2779,9 @@ export function subscribeToDailyPoints(
     }, delay);
   };
 
-  // Mostrar de inmediato lo que hay en local; luego enriquecer con Firebase
+  // Mostrar de inmediato lo que hay en local; Firebase en segundo plano (debounced)
   emitLocalDaily();
-  void fetchAllDailyPoints();
+  scheduleFetchAllDailyPoints();
   void scheduleJournalDayRefresh();
 
   const dayCheckInterval = setInterval(refreshForDayChange, 60_000);
@@ -2787,10 +2796,11 @@ export function subscribeToDailyPoints(
 
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "sovereigntyPointsLog");
-    const unsubSnap = onSnapshot(collection(db, path), () => fetchAllDailyPoints(), onError);
+    const unsubSnap = onSnapshot(collection(db, path), () => scheduleFetchAllDailyPoints(), onError);
     return () => {
       unsubSnap();
       if (journalDayTimer) clearTimeout(journalDayTimer);
+      if (fetchDebounce) clearTimeout(fetchDebounce);
       clearInterval(dayCheckInterval);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("sovereignty-points-awarded", handler);
@@ -2800,6 +2810,7 @@ export function subscribeToDailyPoints(
 
   return () => {
     if (journalDayTimer) clearTimeout(journalDayTimer);
+    if (fetchDebounce) clearTimeout(fetchDebounce);
     clearInterval(dayCheckInterval);
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("sovereignty-points-awarded", handler);

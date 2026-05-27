@@ -225,6 +225,7 @@ import {
   validateSegmentTimes,
   getJournalDateString,
   getJournalDayStartMs,
+  getLimaDayStartMs,
 } from "@/lib/segmentTime";
 import {
   applyDayRolloverEntropia,
@@ -3870,36 +3871,69 @@ export default function Planeacion() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-3 rounded-xl border"
-          style={{ backgroundColor: PIZARRA, borderColor: "rgba(56,189,248,0.22)" }}
+          className="p-3 rounded-xl border overflow-hidden"
+          style={{ backgroundColor: PIZARRA, borderColor: "rgba(56,189,248,0.28)" }}
           data-testid="termo-compare-card"
         >
-          <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-start justify-between gap-2 mb-2.5">
             <div>
               <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#38BDF8" }}>
                 Termodinámica Atencional
               </p>
               <p className="text-[7px] text-slate-500 mt-0.5">Frente a ayer · tu referencia, no el reloj</p>
             </div>
-            <div className="text-right shrink-0">
-              <p className="text-[8px] text-slate-500 uppercase">Profundidad hoy</p>
-              <p className="text-xs font-black" style={{ color: RUTA_BANDA_META[termoCompare.profundidadHoy].color }}>
+            <div
+              className="shrink-0 px-2.5 py-1.5 rounded-lg border text-center"
+              style={{
+                backgroundColor: `${RUTA_BANDA_META[termoCompare.profundidadHoy].color}12`,
+                borderColor: `${RUTA_BANDA_META[termoCompare.profundidadHoy].color}40`,
+              }}
+            >
+              <p className="text-[7px] text-slate-500 uppercase tracking-wider">Profundidad</p>
+              <p className="text-sm font-black leading-tight" style={{ color: RUTA_BANDA_META[termoCompare.profundidadHoy].color }}>
+                <span className="mr-1">{RUTA_BANDA_META[termoCompare.profundidadHoy].icon}</span>
                 {RUTA_BANDA_META[termoCompare.profundidadHoy].label}
               </p>
               {termoCompare.profundidadAyer && (
-                <p className="text-[7px] text-slate-600">
-                  ayer: {RUTA_BANDA_META[termoCompare.profundidadAyer].label}
+                <p className="text-[7px] text-slate-600 mt-0.5">
+                  ayer {RUTA_BANDA_META[termoCompare.profundidadAyer].icon}{" "}
+                  {RUTA_BANDA_META[termoCompare.profundidadAyer].label}
                 </p>
               )}
             </div>
           </div>
-          <p className="text-[10px] font-bold text-white mb-1 leading-snug">{termoCompare.headline}</p>
-          <p className="text-[8px] text-slate-400 mb-2 leading-relaxed">{termoCompare.motivacion}</p>
+
+          <div
+            className="p-2.5 rounded-lg mb-2.5 border"
+            style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.06)" }}
+          >
+            <p className="text-[10px] font-bold text-white leading-snug">{termoCompare.headline}</p>
+            <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{termoCompare.motivacion}</p>
+          </div>
+
           <div className="grid grid-cols-2 gap-1.5">
             {termoCompare.rows
               .filter(r => r.key !== "descansos" || r.today > 0 || r.yesterday > 0)
               .slice(0, 4)
               .map(row => {
+                const rowColor =
+                  row.key === "limite"
+                    ? RUTA_BANDA_META.limite.color
+                    : row.key === "concentrado"
+                      ? RUTA_BANDA_META.concentrado.color
+                      : row.key === "descansos"
+                        ? "#10b981"
+                        : row.key === "bloques"
+                          ? "#38BDF8"
+                          : GOLD;
+                const rowIcon =
+                  row.key === "limite" || row.key === "concentrado"
+                    ? RUTA_BANDA_META[row.key as "limite" | "concentrado"].icon
+                    : row.key === "descansos"
+                      ? "♡"
+                      : row.key === "bloques"
+                        ? "▣"
+                        : "◈";
                 const up = row.betterWhenHigher ? row.delta > 0 : false;
                 const down = row.betterWhenHigher ? row.delta < 0 : false;
                 const deltaColor = row.key === "descansos"
@@ -3915,21 +3949,38 @@ export default function Planeacion() {
                     : row.delta > 0
                       ? `+${row.delta}`
                       : `${row.delta}`;
+                const maxVal = Math.max(row.today, row.yesterday, 1);
+                const todayPct = Math.round((row.today / maxVal) * 100);
                 return (
                   <div
                     key={row.key}
-                    className="px-2 py-1.5 rounded-lg"
-                    style={{ backgroundColor: "rgba(255,255,255,0.04)" }}
+                    className="px-2 py-2 rounded-lg border relative overflow-hidden"
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.04)",
+                      borderColor: `${rowColor}25`,
+                    }}
                   >
-                    <p className="text-[7px] text-slate-500 truncate">{row.label}</p>
-                    <div className="flex items-baseline justify-between gap-1">
+                    <div
+                      className="absolute left-0 top-0 bottom-0 w-0.5"
+                      style={{ backgroundColor: rowColor }}
+                    />
+                    <div className="flex items-center gap-1 mb-1">
+                      <span className="text-[10px]" style={{ color: rowColor }}>{rowIcon}</span>
+                      <p className="text-[7px] text-slate-400 truncate leading-tight">{row.label}</p>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-1 mb-1.5">
                       <span className="text-sm font-black text-white tabular-nums">{row.today}</span>
                       <span className="text-[9px] font-bold tabular-nums" style={{ color: deltaColor }}>
                         {termoCompare.hasYesterday ? deltaText : "—"}
                       </span>
                     </div>
                     {termoCompare.hasYesterday && (
-                      <p className="text-[6px] text-slate-600">ayer {row.yesterday}</p>
+                      <div className="space-y-0.5">
+                        <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.06)" }}>
+                          <div className="h-full rounded-full" style={{ width: `${todayPct}%`, backgroundColor: rowColor }} />
+                        </div>
+                        <p className="text-[6px] text-slate-600">ayer {row.yesterday}</p>
+                      </div>
                     )}
                   </div>
                 );
@@ -5808,13 +5859,8 @@ export default function Planeacion() {
 
         {showCierreJornada && (
           <CierreJornadaModal
-            vehicles={vehicles.filter(v => {
-              const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
-              const todayStart = getLimaDayStart().getTime();
-              return ts >= todayStart;
-            })}
+            vehicles={vehicles}
             segmentos={planilla?.segmentos || []}
-            dayStartMs={getLimaDayStart().getTime()}
             todayPoints={dailyPS}
             existingCierre={todayCierreJornada}
             onClose={() => setShowCierreJornada(false)}
@@ -5831,14 +5877,15 @@ export default function Planeacion() {
                   localFresh
                 );
                 const fecha = getLimaDateString();
-                const dayStartMs = getLimaDayStart().getTime();
+                const dayStartMs = getLimaDayStartMs();
+                const journalStartMs = getJournalDayStartMs();
                 const jornadaVehicles = vehicles.filter(v => {
                   const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
-                  return ts >= dayStartMs;
+                  return ts >= journalStartMs;
                 });
                 const balance = calcularBalanceConquistaJornada({
                   segmentos: planilla?.segmentos || [],
-                  vehiculos: jornadaVehicles,
+                  vehiculos: vehicles,
                   now: Date.now(),
                   dayStartMs,
                 });
@@ -8833,11 +8880,10 @@ function DepositoEnergeticoSection({ vehicles, planilla }: { vehicles: Vehicle[]
 }
 
 function CierreJornadaModal({
-  vehicles, segmentos, dayStartMs, todayPoints, existingCierre, onClose, onSeal, userId
+  vehicles, segmentos, todayPoints, existingCierre, onClose, onSeal, userId
 }: {
   vehicles: Vehicle[];
   segmentos: SegmentoV5[];
-  dayStartMs: number;
   todayPoints: number;
   existingCierre?: CierreJornadaLog | null;
   onClose: () => void;
@@ -8846,29 +8892,45 @@ function CierreJornadaModal({
 }) {
   const [isSealing, setIsSealing] = useState(false);
   const alreadySealed = Boolean(existingCierre?.selloEmitido ?? existingCierre);
+  const journalStartMs = getJournalDayStartMs();
+  const segmentDayStartMs = getLimaDayStartMs();
+
+  const jornadaVehicles = useMemo(
+    () =>
+      vehicles.filter(v => {
+        const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
+        return ts >= journalStartMs;
+      }),
+    [vehicles, journalStartMs]
+  );
+
   const balance = useMemo(
     () =>
       calcularBalanceConquistaJornada({
         segmentos,
         vehiculos: vehicles,
         now: Date.now(),
-        dayStartMs,
+        dayStartMs: segmentDayStartMs,
       }),
-    [segmentos, vehicles, dayStartMs]
+    [segmentos, vehicles, segmentDayStartMs]
   );
 
-  const totalVehicles = vehicles.length;
-  const completedVehicles = vehicles.filter(v => v.status === "cumplido").length;
-  const porcentajeDiaIdeal = totalVehicles > 0 ? Math.round((completedVehicles / totalVehicles) * 100) : 0;
+  const cumplidos = jornadaVehicles.filter(v => v.status === "cumplido").length;
+  const archivados = jornadaVehicles.filter(v => v.status === "archivado").length;
+  const activos = jornadaVehicles.filter(v => v.status === "activo").length;
+  const cerrados = cumplidos + archivados;
+  const segmentosManual = segmentos.filter(s => s.estado === "cerrado_manual").length;
+  const segmentosEntropia = segmentos.filter(s => s.estado === "entropia").length;
+  const porcentajeCumplidos = cerrados > 0 ? Math.round((cumplidos / cerrados) * 100) : 0;
   const flotaTypes: TipoFlota[] = ["tiempo", "situacion", "descanso", "verdad"];
   const flotaLabels: Record<TipoFlota, string> = { tiempo: "TIEMPO", situacion: "SITUACIÓN", descanso: "DESCANSO", verdad: "VERDAD" };
 
   const getMotivationalPhrase = () => {
-    if (porcentajeDiaIdeal >= 90) return "Dominio absoluto. El guerrero se forja en la constancia.";
-    if (porcentajeDiaIdeal >= 80) return "Jornada sólida. La disciplina habla por ti.";
-    if (porcentajeDiaIdeal >= 60) return "Avance real. Mañana, más profundo.";
-    if (porcentajeDiaIdeal >= 40) return "Hay terreno ganado. Reconoce lo hecho, corrige lo pendiente.";
-    return "La verdad duele, pero ilumina. Mañana es otro campo de batalla.";
+    if (cumplidos >= 5 || porcentajeCumplidos >= 90) return "Dominio absoluto. El guerrero se forja en la constancia.";
+    if (cumplidos >= 3 || porcentajeCumplidos >= 70) return "Jornada sólida. La disciplina habla por ti.";
+    if (cerrados > 0) return "Avance real. Reconoce lo hecho, corrige lo pendiente.";
+    if (todayPoints > 0) return `Ganaste ${todayPoints} PS hoy. El esfuerzo quedó registrado.`;
+    return "Cierra lo pendiente o sella para archivar el día.";
   };
 
   const selloTexto = getMotivationalPhrase();
@@ -8885,9 +8947,9 @@ function CierreJornadaModal({
         id: "cj_" + Date.now(),
         fecha: getLimaDateString(),
         totalPS: todayPoints,
-        porcentajeSoberania: porcentajeDiaIdeal,
-        segmentosCerradosManual: completedVehicles,
-        segmentosTotales: totalVehicles,
+        porcentajeSoberania: porcentajeCumplidos,
+        segmentosCerradosManual: segmentosManual,
+        segmentosTotales: segmentos.length,
         energiaOscuraEntries: [],
         energiaOscuraTotal: 0,
         energiaRecuperada: 0,
@@ -8896,9 +8958,9 @@ function CierreJornadaModal({
         bloqueadoNocturno: new Date().getHours() >= 22,
         timestamp: Date.now()
       };
-      (cierre as any).vehiculosCumplidos = completedVehicles;
-      (cierre as any).vehiculosTotales = totalVehicles;
-      (cierre as any).porcentajeDiaIdeal = porcentajeDiaIdeal;
+      (cierre as any).vehiculosCumplidos = cumplidos;
+      (cierre as any).vehiculosTotales = jornadaVehicles.length;
+      (cierre as any).porcentajeDiaIdeal = porcentajeCumplidos;
       (cierre as any).selloTexto = selloTexto;
       (cierre as any).cierreAt = Date.now();
       (cierre as any).conquistaMin = balance.conquistaMin;
@@ -8921,46 +8983,69 @@ function CierreJornadaModal({
 
         <BalanceConquistaPanel balance={balance} />
 
+        <div className="p-3 rounded-xl border space-y-2" style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Resumen del día (números)</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="p-2.5 rounded-lg text-center" style={{ backgroundColor: `${GOLD}10` }}>
+              <p className="text-[7px] uppercase text-slate-500">PS ganados</p>
+              <p className="text-2xl font-black tabular-nums" style={{ color: GOLD }} data-testid="text-total-ps">{todayPoints}</p>
+            </div>
+            <div className="p-2.5 rounded-lg text-center" style={{ backgroundColor: `${EMERALD}10` }}>
+              <p className="text-[7px] uppercase text-slate-500">Vehículos cumplidos</p>
+              <p className="text-2xl font-black tabular-nums text-white">{cumplidos}</p>
+              <p className="text-[8px] text-slate-500">{cerrados} cerrados · {activos} activos</p>
+            </div>
+            <div className="p-2.5 rounded-lg text-center" style={{ backgroundColor: "rgba(56,189,248,0.08)" }}>
+              <p className="text-[7px] uppercase text-slate-500">Segmentos cierre manual</p>
+              <p className="text-2xl font-black tabular-nums text-white">{segmentosManual}</p>
+              <p className="text-[8px] text-slate-500">de {segmentos.length} · entropía {segmentosEntropia}</p>
+            </div>
+            <div className="p-2.5 rounded-lg text-center" style={{ backgroundColor: "rgba(139,92,246,0.08)" }}>
+              <p className="text-[7px] uppercase text-slate-500">Tasa cumplimiento</p>
+              <p className="text-2xl font-black tabular-nums" style={{ color: EMERALD }} data-testid="text-porcentaje-dia">
+                {cerrados > 0 ? `${porcentajeCumplidos}%` : "—"}
+              </p>
+              <p className="text-[8px] text-slate-500">cumplidos / cerrados</p>
+            </div>
+          </div>
+        </div>
+
         <div>
-          <p className="text-[9px] font-bold uppercase tracking-widest mb-3" style={{ color: BLOOD }}>Balance de Voltaje</p>
+          <p className="text-[9px] font-bold uppercase tracking-widest mb-2 text-slate-400">Flota del día</p>
           <div className="grid grid-cols-2 gap-2">
             {flotaTypes.map(tipo => {
               const cfg = FLOTA_CONFIG[tipo];
-              const all = vehicles.filter(v => v.tipoFlota === tipo || (tipo === "verdad" && v.autoVerdad));
-              const done = all.filter(v => v.status === "cumplido" || v.status === "archivado").length;
-              const cumplidos = all.filter(v => v.status === "cumplido").length;
+              const all = jornadaVehicles.filter(v => v.tipoFlota === tipo || (tipo === "verdad" && v.autoVerdad));
+              const cumpl = all.filter(v => v.status === "cumplido").length;
+              const arch = all.filter(v => v.status === "archivado").length;
+              const act = all.filter(v => v.status === "activo").length;
               return (
-                <div key={tipo} className="p-3 rounded-xl border text-center" style={{ backgroundColor: `${cfg.color}08`, borderColor: `${cfg.color}25` }} data-testid={`card-balance-${tipo}`}>
-                  <span className="text-[9px] font-bold uppercase tracking-wider block mb-1" style={{ color: cfg.color }}>{cfg.label}</span>
-                  <span className="text-lg font-black" style={{ color: cfg.color }}>{done}/{all.length}</span>
-                  {tipo !== "verdad" && tipo !== "descanso" && cumplidos < done && (
-                    <span className="text-[8px] block" style={{ color: "rgba(255,255,255,0.3)" }}>✓{cumplidos} Cumplidos</span>
-                  )}
+                <div key={tipo} className="p-2.5 rounded-xl border" style={{ backgroundColor: `${cfg.color}08`, borderColor: `${cfg.color}25` }} data-testid={`card-balance-${tipo}`}>
+                  <span className="text-[9px] font-bold uppercase tracking-wider block mb-1.5" style={{ color: cfg.color }}>{cfg.label}</span>
+                  <div className="grid grid-cols-3 gap-1 text-center">
+                    <div>
+                      <p className="text-[6px] text-slate-600">✓</p>
+                      <p className="text-sm font-black text-white tabular-nums">{cumpl}</p>
+                    </div>
+                    <div>
+                      <p className="text-[6px] text-slate-600">Arch</p>
+                      <p className="text-sm font-black text-slate-400 tabular-nums">{arch}</p>
+                    </div>
+                    <div>
+                      <p className="text-[6px] text-slate-600">Act</p>
+                      <p className="text-sm font-black tabular-nums" style={{ color: cfg.color }}>{act}</p>
+                    </div>
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
 
-        <div className="text-center py-2">
-          <p className="text-[9px] font-bold uppercase tracking-widest mb-2" style={{ color: BLOOD }}>Escalamiento Porcentual</p>
-          <span className="text-4xl font-black" style={{
-            color: porcentajeDiaIdeal > 80 ? GOLD : porcentajeDiaIdeal > 50 ? EMERALD : BLOOD,
-            fontFamily: "'Playfair Display', Georgia, serif",
-            textShadow: `0 0 30px ${porcentajeDiaIdeal > 80 ? GOLD : porcentajeDiaIdeal > 50 ? EMERALD : BLOOD}50`
-          }} data-testid="text-porcentaje-dia">{porcentajeDiaIdeal}%</span>
-          <p className="text-[10px] text-slate-500 mt-1">% Día Ideal</p>
-        </div>
-
-        <div className="text-center p-3 rounded-xl border" style={{ backgroundColor: `${GOLD}08`, borderColor: `${GOLD}25` }}>
-          <p className="text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: GOLD }}>Total PS del Día</p>
-          <span className="text-3xl font-black" style={{ color: GOLD }} data-testid="text-total-ps">{todayPoints} PS</span>
-        </div>
-
-        <div className="text-center space-y-2 p-3 rounded-xl border" style={{ backgroundColor: `${BLOOD}06`, borderColor: `${BLOOD}20` }}>
-          <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: BLOOD }}>Sello de Jornada</p>
+        <div className="text-center p-3 rounded-xl border" style={{ backgroundColor: `${GOLD}06`, borderColor: `${GOLD}20` }}>
+          <p className="text-[9px] font-bold uppercase tracking-widest mb-1" style={{ color: GOLD }}>Sello de Jornada</p>
           <p className="text-[10px] text-slate-400 capitalize">{todayFormatted}</p>
-          <p className="text-sm italic leading-relaxed" style={{ color: porcentajeDiaIdeal > 80 ? GOLD : porcentajeDiaIdeal > 50 ? EMERALD : BLOOD, fontFamily: "'Playfair Display', Georgia, serif" }} data-testid="text-sello-motivacional">"{selloTexto}"</p>
+          <p className="text-sm leading-relaxed text-slate-300 mt-1" data-testid="text-sello-motivacional">{selloTexto}</p>
         </div>
 
         {alreadySealed && existingCierre && (

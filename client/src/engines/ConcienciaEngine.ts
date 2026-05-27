@@ -1,4 +1,4 @@
-import { getJournalDayStartMs } from "@/lib/segmentTime";
+import { getJournalDayStartMs, getLimaDayStartMs, segmentWindowMs } from "@/lib/segmentTime";
 
 export type NivelFatiga = 'Optimo' | 'Distraccion' | 'Confusion' | 'Aburrimiento' | 'Cansancio';
 
@@ -235,27 +235,8 @@ export interface BalanceConquistaJornada {
 }
 
 function segmentDurationMin(horaInicio: string, horaFin: string): number {
-  const ini = parseSegMinutes(horaInicio);
-  const fin = parseSegMinutes(horaFin);
-  return fin >= ini ? fin - ini : fin + 1440 - ini;
-}
-
-function segmentWindowMs(
-  horaInicio: string,
-  horaFin: string,
-  dayStartMs: number
-): { start: number; end: number } {
-  const dayStart = new Date(dayStartMs);
-  const [hi, mi] = (horaInicio || "0:0").split(":").map(Number);
-  const [hf, mf] = (horaFin || "0:0").split(":").map(Number);
-  const start = new Date(dayStart);
-  start.setHours(hi || 0, mi || 0, 0, 0);
-  const end = new Date(dayStart);
-  end.setHours(hf || 0, mf || 0, 0, 0);
-  if (end.getTime() <= start.getTime()) {
-    end.setDate(end.getDate() + 1);
-  }
-  return { start: start.getTime(), end: end.getTime() };
+  const { durationMin } = segmentWindowMs(horaInicio, horaFin, getLimaDayStartMs());
+  return durationMin;
 }
 
 /** Balance del día: tiempo conquistado vs centinela vs vacío, desglosado por segmento. */
@@ -266,7 +247,7 @@ export function calcularBalanceConquistaJornada(params: {
   dayStartMs?: number;
 }): BalanceConquistaJornada {
   const now = params.now ?? Date.now();
-  const dayStartMs = params.dayStartMs ?? getJournalDayStartMs(now);
+  const segmentDayStartMs = params.dayStartMs ?? getLimaDayStartMs(now);
 
   const jornadaVehiculos = filterVehiculosJornadaActual(params.vehiculos, now);
   const metricas = calcularMetricasAnilloConciencia({
@@ -283,7 +264,7 @@ export function calcularBalanceConquistaJornada(params: {
     const { start: winStart, end: winEnd } = segmentWindowMs(
       seg.horaInicio || "0:0",
       seg.horaFin || "0:0",
-      dayStartMs
+      segmentDayStartMs
     );
 
     let conquistaMin = 0;

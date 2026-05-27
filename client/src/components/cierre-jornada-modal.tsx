@@ -93,14 +93,9 @@ export function CierreJornadaModal() {
   useEffect(() => {
     if (!user) return;
     
-    console.log("[CierreJornada] Suscribiendo a puntos diarios para:", user.uid);
-    
     const unsubscribe = subscribeToDailyPoints(
       user.uid,
       (data) => {
-        console.log("[CierreJornada] Puntos recibidos:", data.total);
-        console.log("[CierreJornada] Logs del día:", data.logs.length);
-        data.logs.forEach(l => console.log(`  - ${l.source}: +${l.amount}`));
         setDailySovereigntyPoints(data.total);
         setDailyPointsLogs(data.logs);
       },
@@ -215,18 +210,9 @@ export function CierreJornadaModal() {
     
     setIsLoading(true);
     try {
-      // REFRESH FRESCO: Obtener puntos actualizados de Firebase
-      console.log("[CierreJornada] Haciendo refresh fresco de puntos...");
       const freshPoints = await getDailyPoints(user.uid);
       setDailySovereigntyPoints(freshPoints.total);
       setDailyPointsLogs(freshPoints.logs);
-      
-      console.log("========== CIERRE JORNADA FRONTEND ==========");
-      console.log("Enviando al servidor:");
-      console.log("- dailyPointsLogs FRESCOS:", freshPoints.logs.length);
-      console.log("- dailySovereigntyPoints TOTAL:", freshPoints.total);
-      freshPoints.logs.forEach(l => console.log(`  * ${l.source}: +${l.amount}`));
-      console.log("=============================================");
       
       const response = await fetch("/api/cierre-jornada", {
         method: "POST",
@@ -244,10 +230,7 @@ export function CierreJornadaModal() {
       });
       
       const data = await response.json();
-      console.log("Respuesta del servidor - dailyPS:", data.dailyPS);
       
-      // SIEMPRE usar el valor del frontend (que viene del log de puntos real)
-      // El servidor solo genera el texto, los puntos vienen del frontend
       data.dailyPS = Math.max(data.dailyPS || 0, freshPoints.total);
       
       setCierreData(data);

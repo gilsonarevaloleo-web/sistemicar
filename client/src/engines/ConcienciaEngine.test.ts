@@ -4,10 +4,11 @@ import {
   calcularMetricasAnilloConciencia,
   calcularBalanceConquistaJornada,
 } from "./ConcienciaEngine";
-import { getJournalDayStartMs } from "../lib/segmentTime";
+import { getJournalDayStartMs, getLimaDayStartMs } from "../lib/segmentTime";
 
 const now = new Date("2026-05-18T14:00:00").getTime();
 const journalStart = getJournalDayStartMs(now);
+const limaDayStart = getLimaDayStartMs(now);
 
 const segmentos = [{ horaInicio: "9:00", horaFin: "11:00" }]; // 120 min jornada
 
@@ -101,7 +102,7 @@ describe("calcularBalanceConquistaJornada", () => {
       segmentos: [{ nombre: "Maana", horaInicio: "9:00", horaFin: "11:00" }],
       vehiculos: [],
       now,
-      dayStartMs: journalStart,
+      dayStartMs: limaDayStart,
     });
     assert.equal(b.jornadaMin, 120);
     assert.equal(b.conquistaMin, 0);
@@ -111,7 +112,7 @@ describe("calcularBalanceConquistaJornada", () => {
   });
 
   it("atribuye conquista y centinela al segmento correcto", () => {
-    const segStart = journalStart + 4 * 3600000;
+    const segStart = limaDayStart + 9 * 3600000;
     const b = calcularBalanceConquistaJornada({
       segmentos: [{ nombre: "Bloque", horaInicio: "9:00", horaFin: "11:00" }],
       vehiculos: [
@@ -131,7 +132,7 @@ describe("calcularBalanceConquistaJornada", () => {
         },
       ],
       now: segStart + 120 * 60000,
-      dayStartMs: journalStart,
+      dayStartMs: limaDayStart,
     });
     assert.ok(b.conquistaMin >= 45);
     assert.ok(b.entropiaMin >= 20);
