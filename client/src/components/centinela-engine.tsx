@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuthContext } from "@/App";
 import {
   getLocalVehicles,
+  reconcileGhostActiveVehicles,
   reconcileStaleCentinelaInFirestore,
   subscribeToPlanilla,
   subscribeToVehicles,
@@ -20,12 +21,13 @@ import {
   getCentinelaSegmentGate,
   isCentinelaBlockedByVehicles,
   isCentinelaSuppressed,
+  maybeReleaseStaleSuppression,
   resetCentinelaTimerState,
 } from "@/lib/centinelaEngine";
 
 const CENTINELA_MAX_AGE_MS = 8 * 3600 * 1000;
 
-/** Motor global del Centinela ? corre en toda la app, no solo en Planificaci?n. */
+/** Motor global del Centinela — corre en toda la app, no solo en Planificación. */
 export function CentinelaEngine() {
   const { user } = useAuthContext();
   const [planillaFecha, setPlanillaFecha] = useState(() => getJournalDateString());
@@ -70,6 +72,8 @@ export function CentinelaEngine() {
       Notification.requestPermission().catch(() => {});
     }
 
+    maybeReleaseStaleSuppression();
+
     const resetTimer = () => {
       noVehicleSince.current = 0;
       resetCentinelaTimerState();
@@ -91,13 +95,13 @@ export function CentinelaEngine() {
             });
             await updateVehicleStatus(user.uid, activeCentinela.id, "archivado");
             if ("Notification" in window && Notification.permission === "granted") {
-              new Notification("? SISTEMICAR ? Centinela Cerrado", {
-                body: `Sesi?n anterior cerrada autom?ticamente. Duraci?n registrada: ${dur} min.`,
+              new Notification("SISTEMICAR - Centinela Cerrado", {
+                body: `Sesión anterior cerrada automáticamente. Duración registrada: ${dur} min.`,
                 icon: "/favicon.ico",
                 silent: false,
               });
             }
-            console.log("[Centinela] Auto-cerrado. Duraci?n:", dur, "min");
+            console.log("[Centinela] Auto-cerrado. Duración:", dur, "min");
           } catch (e) {
             console.error("[Centinela autoclose]", e);
           }
@@ -154,8 +158,22 @@ export function CentinelaEngine() {
       if (closedIds.length > 0) {
         console.log("[Centinela] Limpiados obsoletos:", closedIds.join(", "));
       }
+      const ghostClosed = await reconcileGhostActiveVehicles(user.uid);
+      if (ghostClosed.length > 0) {
+        console.log("[Centinela] Ghost activos cerrados:", ghostClosed.join(", "));
+      }
+
       if (hasActiveRemote) {
-        console.log("[Centinela] Ya hay uno activo en la nube ? esperando sync local");
+        const localCentinela = vehiclesRef.current.some(v => v.autoVerdad && v.status === "activo");
+        if (!localCentinela) {
+          emitCentinelaUi({
+            esperaSec: 0,
+            blockReason: "Centinela activo en la nube — sincronizando…",
+          });
+          console.log("[Centinela] Remote activo sin sync local — esperando");
+          return;
+        }
+        console.log("[Centinela] Ya hay uno activo en la nube — esperando sync local");
         return;
       }
 
@@ -173,8 +191,8 @@ export function CentinelaEngine() {
       if (isCentinelaSuppressed()) return;
       if (isCentinelaBlockedByVehicles(vehiclesRef.current)) return;
 
-      const centinelaAperturaAt = since;
-      console.log("[Centinela] Activando tras", Math.round(elapsedWait / 1000), "s sin veh?culos");
+      const centinelaAperturaAt = Date.now();
+      console.log("[Centinela] Activando tras", Math.round(elapsedWait / 1000), "s sin vehículos");
       await activateCentinelaVehicle(user.uid, centinelaAperturaAt);
       resetTimer();
     };
@@ -190,6 +208,7 @@ export function CentinelaEngine() {
     }
 
     void checkExpiredCentinela();
+    void reconcileGhostActiveVehicles(user.uid);
     void tickUi();
 
     const uiInterval = setInterval(() => { void tickUi(); }, 1000);
@@ -199,7 +218,7 @@ export function CentinelaEngine() {
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      console.log("[Centinela] App visible ? reevaluando");
+      console.log("[Centinela] App visible — reevaluando");
       void checkExpiredCentinela();
       lastCheck.current = 0;
       setTimeout(() => forceCheckRef.current?.(), 3000);

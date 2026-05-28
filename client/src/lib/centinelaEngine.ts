@@ -25,15 +25,28 @@ const STUB_EJES = {
   limite: { text: "", trifecta: "omitir" as const },
 };
 
+const SUPPRESS_AT_KEY = "sistemicar_centinela_suppressed_at";
+
 let suppressed = false;
 
 export function suppressCentinela(): void {
   suppressed = true;
-  emitCentinelaUi({ esperaSec: 0, blockReason: "Preparando lanzamientoù" });
+  try { sessionStorage.setItem(SUPPRESS_AT_KEY, Date.now().toString()); } catch { }
+  emitCentinelaUi({ esperaSec: 0, blockReason: "Preparando lanzamiento" });
 }
 
 export function releaseCentinela(): void {
   suppressed = false;
+  try { sessionStorage.removeItem(SUPPRESS_AT_KEY); } catch { }
+}
+
+/** Libera suppress si quedÔøΩ atascado tras un lanzamiento interrumpido. */
+export function maybeReleaseStaleSuppression(maxAgeMs = 60_000): void {
+  if (!suppressed) return;
+  try {
+    const t = parseInt(sessionStorage.getItem(SUPPRESS_AT_KEY) || "0", 10);
+    if (t > 0 && Date.now() - t > maxAgeMs) releaseCentinela();
+  } catch { }
 }
 
 export function isCentinelaSuppressed(): boolean {
@@ -74,7 +87,7 @@ function findFirstJournalSegment(
   )[0];
 }
 
-/** Evalùa si el centinela puede activarse segùn segmentos y hora (dùa-jornada desde 05:00). */
+/** EvalÔøΩa si el centinela puede activarse segÔøΩn segmentos y hora (dÔøΩa-jornada desde 05:00). */
 export function getCentinelaSegmentGate(
   planilla: Planilla | null,
   nowMs: number = Date.now()
@@ -90,7 +103,7 @@ export function getCentinelaSegmentGate(
   const segActivo = planilla.segmentos.find(s => s.estado === "activo");
   if (segActivo) {
     if (segActivo.centinelaEnabled === false) {
-      return { allowed: false, reason: `Centinela desactivado en ù${segActivo.nombre}ù` };
+      return { allowed: false, reason: `Centinela desactivado en "${segActivo.nombre}"` };
     }
     return { allowed: true, segContext: segActivo };
   }
@@ -98,7 +111,7 @@ export function getCentinelaSegmentGate(
   const covering = findSegmentCoveringNow(planilla.segmentos, nowMs);
   if (covering) {
     if (covering.centinelaEnabled === false) {
-      return { allowed: false, reason: `Centinela desactivado en ù${covering.nombre}ù` };
+      return { allowed: false, reason: `Centinela desactivado en "${covering.nombre}"` };
     }
     return { allowed: true, segContext: covering };
   }
@@ -117,7 +130,7 @@ export function getCentinelaSegmentGate(
     }
   }
 
-  // Tras las 05:00 sin vehùculos: centinela aunque el primer segmento aùn no haya empezado
+  // Tras las 05:00 sin vehÔøΩculos: centinela aunque el primer segmento aÔøΩn no haya empezado
   return { allowed: true, segContext: first };
 }
 
@@ -125,7 +138,7 @@ export function isCentinelaBlockedByVehicles(vehicles: Vehicle[]): boolean {
   return vehicles.some(v => v.status === "activo" && !v.autoVerdad);
 }
 
-/** Cierra centinelas activos cuando hay trabajo consciente (evita entropÌa fantasma en el anillo). */
+/** Cierra centinelas activos cuando hay trabajo consciente (evita entropÔøΩa fantasma en el anillo). */
 export async function archiveActiveCentinelasWhenBlocked(
   userId: string,
   vehicles: Vehicle[]
@@ -144,7 +157,7 @@ export async function archiveActiveCentinelasWhenBlocked(
       await updateVehicle(userId, av.id, { cierreAt: now, duracionFinal: dur });
       await updateVehicleStatus(userId, av.id, "archivado");
       closedIds.push(av.id);
-      console.log(`[Centinela] Cerrado por vehÌculo consciente activo: ${av.id} (${dur} min)`);
+      console.log(`[Centinela] Cerrado por vehÔøΩculo consciente activo: ${av.id} (${dur} min)`);
     } catch (e) {
       console.warn("[Centinela] archiveActiveCentinelasWhenBlocked:", av.id, e);
     }
@@ -177,7 +190,7 @@ export function computeCentinelaUiState(
   inMemorySince: number
 ): { ui: CentinelaUiState; since: number } {
   if (suppressed) {
-    return { ui: { esperaSec: 0, blockReason: "Preparando lanzamientoù" }, since: 0 };
+    return { ui: { esperaSec: 0, blockReason: "Preparando lanzamiento" }, since: 0 };
   }
 
   if (vehicles.some(v => v.autoVerdad && v.status === "activo")) {
@@ -190,7 +203,16 @@ export function computeCentinelaUiState(
   }
 
   if (isCentinelaBlockedByVehicles(vehicles)) {
-    return { ui: { esperaSec: 0, blockReason: null }, since: 0 };
+    const active = vehicles.find(v => v.status === "activo" && !v.autoVerdad);
+    return {
+      ui: {
+        esperaSec: 0,
+        blockReason: active
+          ? `VehÔøΩculo activo: ${active.titulo}`
+          : "Hay un vehÔøΩculo consciente activo",
+      },
+      since: 0,
+    };
   }
 
   const since = ensureCentinelaTimerStarted(now, inMemorySince);
@@ -222,8 +244,8 @@ export async function activateCentinelaVehicle(
   });
 
   if ("Notification" in window && Notification.permission === "granted") {
-    new Notification("? SISTEMICAR ù Modo Centinela Activado", {
-      body: "Ningùn vehùculo activo. El centinela registra el vacùo.",
+    new Notification("SISTEMICAR - Modo Centinela Activado", {
+      body: "NingÔøΩn vehÔøΩculo activo. El centinela registra el vacÔøΩo.",
       icon: "/favicon.ico",
       silent: false,
     });

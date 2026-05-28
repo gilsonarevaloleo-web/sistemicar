@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Home, Plus } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Home, Plus } from "lucide-react";
 import type { DetalleSubTarea } from "@/lib/persistence";
 import {
   CASA_SITUACION_PRESETS,
@@ -70,7 +70,7 @@ export function SituacionCasaPanel({
           Casa
           {hechas > 0 ? (
             <span className="font-mono tabular-nums" style={{ color: VERDE }}>
-              ×{hechas}
+              Ã—{hechas}
             </span>
           ) : total > 0 ? (
             <span className="font-mono tabular-nums opacity-70">{total} pend.</span>
@@ -86,7 +86,7 @@ export function SituacionCasaPanel({
           onClick={e => e.stopPropagation()}
         >
           <p className="text-[7px] text-slate-500 leading-snug pt-2 mb-1.5 px-0.5">
-            Ideas y acciones repetitivas — sin cronómetro ni minutos. La cantidad hecha te motiva a seguir con lo mismo.
+            Ideas y acciones repetitivas â€” sin cronÃ³metro ni minutos. La cantidad hecha te motiva a seguir con lo mismo.
           </p>
 
           {conResultado.length > 0 && (
@@ -113,12 +113,12 @@ export function SituacionCasaPanel({
                       color: VERDE,
                       border: "1px solid rgba(34,197,94,0.25)",
                     }}
-                    title={`${g.hechas} de ${g.total} · ${g.texto}`}
+                    title={`${g.hechas} de ${g.total} Â· ${g.texto}`}
                     data-testid={`casa-count-${subTareaId}-${g.texto.replace(/\s+/g, "-")}`}
                   >
                     <span className="truncate max-w-[120px]">{g.texto}</span>
                     <span className="font-mono tabular-nums" style={{ color: GOLD }}>
-                      ×{g.hechas}
+                      Ã—{g.hechas}
                     </span>
                   </span>
                 ))}
@@ -147,7 +147,7 @@ export function SituacionCasaPanel({
                       + {preset}
                       {n > 0 && (
                         <span className="font-mono tabular-nums normal-case" style={{ color: GOLD }}>
-                          ×{n}
+                          Ã—{n}
                         </span>
                       )}
                     </button>
@@ -161,7 +161,7 @@ export function SituacionCasaPanel({
                   onKeyDown={e => {
                     if (e.key === "Enter") submitDraft();
                   }}
-                  placeholder="Idea o acción propia…"
+                  placeholder="Idea o acciÃ³n propiaâ€¦"
                   className="flex-1 px-2 py-1 rounded bg-black/40 border text-white text-[9px] placeholder:text-slate-700 focus:outline-none"
                   style={{ borderColor: "rgba(148,163,184,0.25)", fontFamily: "JetBrains Mono, monospace" }}
                   data-testid={`input-casa-${subTareaId}`}
@@ -205,7 +205,7 @@ export function SituacionCasaPanel({
                         backgroundColor: d.entregado ? `${VERDE}20` : "transparent",
                       }}
                     >
-                      {d.entregado && <span className="text-[8px]" style={{ color: VERDE }}>?</span>}
+                      {d.entregado && <Check size={8} style={{ color: VERDE }} strokeWidth={3} />}
                     </span>
                     <span className="text-[9px] w-3 flex-shrink-0 tabular-nums" style={{ color: PLATA }}>
                       {dIdx + 1}.
@@ -236,7 +236,7 @@ export function SituacionCasaPanel({
                 className="text-[8px] text-center py-1"
                 style={{ color: "rgba(148,163,184,0.35)", fontFamily: "JetBrains Mono, monospace" }}
               >
-                — sin ideas en la Casa —
+                â€” sin ideas en la Casa â€”
               </p>
             )
           )}

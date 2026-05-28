@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import type { TimelineClockArc } from "@/engines/ConcienciaEngine";
 
 interface SegmentoLite {
   horaInicio: string;
@@ -9,9 +10,8 @@ interface SegmentoLite {
 
 interface AnilloConcienciaProps {
   planificacionPct: number;
-  /** Arco violeta (conquista) dentro del presupuesto compartido de jornada */
-  conquistaArcPct: number;
-  /** Arco rojo (entropía / centinela) — opuesto a conquista en el mismo anillo */
+  timelineArcs?: TimelineClockArc[];
+  conquistaArcPct?: number;
   entropiaArcPct?: number;
   /** @deprecated use conquistaArcPct */
   conquistaPct?: number;
@@ -37,12 +37,20 @@ function arcPath(cx: number, cy: number, r: number, startDeg: number, endDeg: nu
   const y1 = cy + r * Math.sin(start);
   const x2 = cx + r * Math.cos(end);
   const y2 = cy + r * Math.sin(end);
-  const large = endDeg - startDeg > 180 ? 1 : 0;
+  const span = endDeg - startDeg;
+  const large = span > 180 ? 1 : 0;
   return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
 }
 
+const TRACK_BG = "rgba(30, 35, 48, 0.95)";
+const PURPLE = "#8B5CF6";
+const BLOOD = "#FF3131";
+const GOLD = "#D4AF37";
+const CYAN = "#00FFC3";
+
 export default function AnilloConciencia({
   planificacionPct,
+  timelineArcs = [],
   conquistaArcPct,
   entropiaArcPct: entropiaArcPctProp,
   conquistaPct,
@@ -54,23 +62,21 @@ export default function AnilloConciencia({
   const resolvedConquista = conquistaArcPct ?? conquistaPct ?? 0;
   const resolvedEntropia = entropiaArcPctProp ?? entropiaPct ?? 0;
 
-  const GOLD = "#D4AF37";
-  const CYAN = "#00FFC3";
-  const BLOOD = "#FF3131";
-
   const cx = size / 2;
   const cy = size / 2;
 
-  const relojR = size * 0.455;
+  // De afuera hacia adentro: segmentos → reloj 24h → plan → conquista/entropía
+  const segR = size * 0.455;
+  const timelineR = size * 0.405;
   const outerR = size * 0.375;
   const innerR = size * 0.265;
+
   const strokeW = size * 0.055;
-  const relojSW = size * 0.05;
+  const segSW = size * 0.05;
+  const timelineSW = size * 0.048;
 
-  const circumference = (r: number) => 2 * Math.PI * r;
-  const outerCirc = circumference(outerR);
-  const innerCirc = circumference(innerR);
-
+  const outerCirc = 2 * Math.PI * outerR;
+  const innerCirc = 2 * Math.PI * innerR;
   const outerDash = (planificacionPct / 100) * outerCirc;
   const conquistaDash = (Math.min(100, resolvedConquista) / 100) * innerCirc;
   const entropiaDash = (Math.min(100, resolvedEntropia) / 100) * innerCirc;
@@ -80,11 +86,15 @@ export default function AnilloConciencia({
   const entropiaLabel = Math.round(resolvedEntropia);
   const fillLabel = Math.round(Math.min(100, resolvedConquista + resolvedEntropia));
 
-  const PURPLE = "#8B5CF6";
   const planColor = planLabel >= 70 ? CYAN : planLabel >= 40 ? GOLD : "#6b7280";
-  const conquColor = PURPLE;
   const showEntropia = resolvedEntropia > 0;
   const showConquista = resolvedConquista > 0;
+
+  const fondoArcs = timelineArcs.filter(a => a.kind === "fondo");
+  const entropiaTimelineArcs = timelineArcs.filter(a => a.kind === "entropia");
+  const conquistaTimelineArcs = timelineArcs.filter(a => a.kind === "conquista");
+
+  const hourMarks = [12, 15, 18, 21, 0, 3, 6, 9];
 
   const segDataRaw = segmentos
     .map(s => {
@@ -117,7 +127,7 @@ export default function AnilloConciencia({
       : "transparent";
 
     segArcs.push({
-      path: arcPath(cx, cy, relojR, startDeg, endDeg),
+      path: arcPath(cx, cy, segR, startDeg, endDeg),
       color,
       glow,
       isActive: s.estado === "activo",
@@ -129,14 +139,15 @@ export default function AnilloConciencia({
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} overflow="visible">
 
-          <circle cx={cx} cy={cy} r={relojR} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={relojSW} />
+          {/* 1. Anillo exterior: segmentos planificados */}
+          <circle cx={cx} cy={cy} r={segR} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={segSW} />
           {segArcs.map((arc, i) => (
             <motion.path
-              key={i}
+              key={`seg-${i}`}
               d={arc.path}
               fill="none"
               stroke={arc.color}
-              strokeWidth={relojSW}
+              strokeWidth={segSW}
               strokeLinecap="butt"
               initial={{ pathLength: 0, opacity: 0 }}
               animate={{ pathLength: 1, opacity: 1 }}
@@ -152,17 +163,79 @@ export default function AnilloConciencia({
           ))}
           {segArcs.filter(a => a.isActive).map((arc, i) => (
             <motion.path
-              key={`active-glow-${i}`}
+              key={`seg-glow-${i}`}
               d={arc.path}
               fill="none"
               stroke={CYAN}
-              strokeWidth={relojSW * 0.6}
+              strokeWidth={segSW * 0.6}
               strokeLinecap="butt"
               animate={{ opacity: [0.3, 0.9, 0.3] }}
               transition={{ duration: 1.8, repeat: Infinity }}
             />
           ))}
 
+          {/* 2. Reloj madre 24h — fondo + rojo + morado */}
+          {fondoArcs.map((_, i) => (
+            <circle
+              key={`fondo-${i}`}
+              cx={cx} cy={cy} r={timelineR}
+              fill="none"
+              stroke={TRACK_BG}
+              strokeWidth={timelineSW}
+            />
+          ))}
+          {hourMarks.map(h => {
+            const deg = (h === 12 ? 0 : ((h * 60 - 720) + 1440) % 1440 / 1440) * 360;
+            const rad = toRad(deg - 90);
+            const inner = timelineR - timelineSW / 2 - 1;
+            const outer = timelineR + timelineSW / 2 + 1;
+            const isMain = h === 12 || h === 0 || h === 6 || h === 18;
+            return (
+              <g key={`h-${h}`}>
+                <line
+                  x1={cx + inner * Math.cos(rad)}
+                  y1={cy + inner * Math.sin(rad)}
+                  x2={cx + outer * Math.cos(rad)}
+                  y2={cy + outer * Math.sin(rad)}
+                  stroke={isMain ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.1)"}
+                  strokeWidth={isMain ? 1.2 : 0.6}
+                />
+              </g>
+            );
+          })}
+          {entropiaTimelineArcs.map((arc, i) => (
+            <motion.path
+              key={`tl-ent-${i}`}
+              d={arcPath(cx, cy, timelineR, arc.startDeg, arc.endDeg)}
+              fill="none"
+              stroke={BLOOD}
+              strokeWidth={timelineSW}
+              strokeLinecap="butt"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ duration: 0.5, delay: i * 0.03, ease: "easeOut" }}
+              style={{ filter: `drop-shadow(0 0 3px ${BLOOD}70)` }}
+            />
+          ))}
+          {conquistaTimelineArcs.map((arc, i) => (
+            <motion.path
+              key={`tl-conq-${i}`}
+              d={arcPath(cx, cy, timelineR, arc.startDeg, arc.endDeg)}
+              fill="none"
+              stroke={PURPLE}
+              strokeWidth={conquistaPulse ? timelineSW * 1.12 : timelineSW}
+              strokeLinecap="butt"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: conquistaPulse ? [1, 0.7, 1] : 1 }}
+              transition={{
+                pathLength: { duration: 0.5, delay: i * 0.03, ease: "easeOut" },
+                opacity: conquistaPulse ? { duration: 0.8, repeat: Infinity } : { duration: 0 },
+              }}
+              style={{ filter: `drop-shadow(0 0 4px ${PURPLE}80)` }}
+            />
+          ))}
+
+          {/* 3. Anillo planificación */}
           <circle cx={cx} cy={cy} r={outerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeW} />
           <motion.circle
             cx={cx} cy={cy} r={outerR} fill="none"
@@ -175,7 +248,7 @@ export default function AnilloConciencia({
             style={{ filter: `drop-shadow(0 0 4px ${planColor}60)` }}
           />
 
-          {/* Anillo interno compartido: conquista (horario) vs entropía (antihorario) */}
+          {/* 4. Anillo interior: conquista vs entropía agregados */}
           <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeW} />
           {showEntropia && (
             <motion.circle
@@ -192,7 +265,7 @@ export default function AnilloConciencia({
           {showConquista && (
             <motion.circle
               cx={cx} cy={cy} r={innerR} fill="none"
-              stroke={conquColor}
+              stroke={PURPLE}
               strokeWidth={conquistaPulse ? strokeW * 1.35 : strokeW}
               strokeLinecap="round"
               strokeDasharray={`${conquistaDash} ${innerCirc}`}
@@ -208,11 +281,33 @@ export default function AnilloConciencia({
               }}
               style={{
                 filter: conquistaPulse
-                  ? `drop-shadow(0 0 10px ${conquColor})`
-                  : `drop-shadow(0 0 4px ${conquColor}60)`,
+                  ? `drop-shadow(0 0 10px ${PURPLE})`
+                  : `drop-shadow(0 0 4px ${PURPLE}60)`,
               }}
             />
           )}
+
+          {/* Aguja hora actual (reloj 24h) */}
+          {(() => {
+            const now = new Date();
+            const min = now.getHours() * 60 + now.getMinutes();
+            const deg = ((min - 720 + 1440) % 1440 / 1440) * 360;
+            const rad = toRad(deg - 90);
+            const needleLen = timelineR - timelineSW * 0.5;
+            return (
+              <line
+                x1={cx}
+                y1={cy}
+                x2={cx + needleLen * Math.cos(rad)}
+                y2={cy + needleLen * Math.sin(rad)}
+                stroke="rgba(255,255,255,0.45)"
+                strokeWidth={1}
+                strokeLinecap="round"
+              />
+            );
+          })()}
+
+          <circle cx={cx} cy={cy} r={2.5} fill="rgba(255,255,255,0.55)" />
 
           <text x={cx} y={cy - 8} textAnchor="middle" fill={planColor}
             fontSize={size * 0.13} fontFamily="JetBrains Mono, monospace" fontWeight="bold">
@@ -222,7 +317,7 @@ export default function AnilloConciencia({
             fontSize={size * 0.05} fontFamily="JetBrains Mono, monospace">
             PLAN
           </text>
-          <text x={cx} y={cy + 20} textAnchor="middle" fill={showEntropia && !showConquista ? BLOOD : conquColor}
+          <text x={cx} y={cy + 20} textAnchor="middle" fill={showEntropia && !showConquista ? BLOOD : PURPLE}
             fontSize={size * 0.09} fontFamily="JetBrains Mono, monospace" fontWeight="bold">
             {showEntropia && showConquista ? fillLabel : showEntropia ? entropiaLabel : conquLabel}%
           </text>
@@ -246,7 +341,7 @@ export default function AnilloConciencia({
           </div>
         )}
         <div className="flex items-center gap-1">
-          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: conquColor, boxShadow: `0 0 4px ${conquColor}` }} />
+          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: PURPLE, boxShadow: `0 0 4px ${PURPLE}` }} />
           <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.4)" }}>Conquista {conquLabel}%</span>
         </div>
         {segmentos.length > 0 && (
@@ -255,6 +350,10 @@ export default function AnilloConciencia({
             <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.4)" }}>Segmentos</span>
           </div>
         )}
+        <div className="flex items-center gap-1">
+          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: TRACK_BG, border: "1px solid rgba(255,255,255,0.12)" }} />
+          <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.3)" }}>24h</span>
+        </div>
       </div>
     </div>
   );

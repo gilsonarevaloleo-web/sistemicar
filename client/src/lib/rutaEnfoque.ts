@@ -1,4 +1,4 @@
-/** Banda de la ruta de enfoque (cuenta atr�s por unidades restantes). */
+/** Banda de la ruta de enfoque (cuenta atrás por unidades restantes). */
 export type RutaBandaId = "fluido" | "concentrado" | "limite";
 
 export interface RutaEnfoqueUmbrales {
@@ -20,9 +20,9 @@ export interface RutaEnfoqueState {
 }
 
 export const RUTA_BANDA_META: Record<RutaBandaId, { label: string; icon: string; color: string }> = {
-  fluido: { label: "Fluido", icon: "?", color: "#38BDF8" },
-  concentrado: { label: "Concentrado", icon: "?", color: "#A855F7" },
-  limite: { label: "Al límite", icon: "?", color: "#f87171" },
+  fluido: { label: "Fluido", icon: "~", color: "#38BDF8" },
+  concentrado: { label: "Concentrado", icon: "●", color: "#A855F7" },
+  limite: { label: "Al límite", icon: "▲", color: "#f87171" },
 };
 
 /** Umbrales enteros: fluido = ceil(N/2), concentrado = ceil(N/4). */
@@ -44,7 +44,7 @@ export function createRutaEnfoqueState(N: number): RutaEnfoqueState {
   };
 }
 
-/** Banda actual seg�n unidades restantes (enteras). */
+/** Banda actual según unidades restantes (enteras). */
 export function getRutaBandaActual(restantes: number, umbrales: RutaEnfoqueUmbrales): RutaBandaId {
   const r = Math.max(0, Math.floor(restantes));
   if (r > umbrales.fluido) return "fluido";
@@ -133,7 +133,7 @@ export function mergeRutaCruzadaFromSubs(
   };
 }
 
-/** PS ruta: 0 / 2 / 5 / 8 seg�n bandas declaradas coherentes con lo cruzado autom�ticamente. */
+/** PS ruta: 0 / 2 / 5 / 8 según bandas declaradas coherentes con lo cruzado automáticamente. */
 export function computeRutaEnfoquePS(
   declarada: RutaBandaId[],
   cruzada: RutaCruzadaSnapshot
@@ -157,5 +157,5 @@ export function computeRutaEnfoquePSFromSubs(
 
 export function formatRutaPreview(N: number): string {
   const u = computeRutaUmbrales(N);
-  return `${N} ? ${u.fluido} ? | ${u.fluido} ? ${u.concentrado} ? | ${u.concentrado} ? 0 ?`;
+  return `${N} → ${u.fluido} ~ | ${u.fluido} → ${u.concentrado} ● | ${u.concentrado} → 0 ▲`;
 }

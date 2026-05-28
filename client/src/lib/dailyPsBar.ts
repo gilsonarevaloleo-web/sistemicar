@@ -1,7 +1,7 @@
-/** Barra PS del d�a: ayer = 100%, escala visual hasta 120%. */
+/** Barra PS del día: ayer = 100%, escala visual hasta 120%. */
 
 export const DAILY_PS_BAR_MAX_PCT = 120;
-/** Referencia si ayer fue 0 PS (evita divisi�n por cero). */
+/** Referencia si ayer fue 0 PS (evita división por cero). */
 export const DAILY_PS_REFERENCE_FALLBACK = 50;
 
 export type DailyPsBarModel = {
@@ -46,14 +46,14 @@ export function computeDailyPsBarModel(
   if (!atOrAbove100) {
     statusText = `Faltan ${remainingTo100} PS para tu 100%`;
   } else if (!atOrAbove120) {
-    statusText = `${pctOfReference}% de ayer � faltan ${remainingTo120} PS para 120%`;
+    statusText = `${pctOfReference}% de ayer — faltan ${remainingTo120} PS para 120%`;
   } else {
-    statusText = `�${pctOfReference}%! Superaste el 120% de ayer`;
+    statusText = `${pctOfReference}% — superaste el 120% de ayer`;
   }
 
   const referenceLabel = usingFallbackReference
-    ? `Ayer 0 PS � referencia ${fallbackReference} PS = 100%`
-    : `Ayer ${safeYesterday} PS = 100% � meta 120% = ${target120Ps} PS`;
+    ? `Ayer 0 PS — referencia ${fallbackReference} PS = 100%`
+    : `Ayer ${safeYesterday} PS = 100% · meta 120% = ${target120Ps} PS`;
 
   return {
     todayPs: safeToday,

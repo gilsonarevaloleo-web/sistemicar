@@ -10,7 +10,7 @@ import { speakUbicacionQueue, speakUbicacionSingle } from "./speechQueue";
 
 function trimSubText(text: string, max = 48): string {
   const t = text.trim();
-  return t.length > max ? `${t.slice(0, max)}�` : t;
+  return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
 export function fireSituacion2MinAlert(params: {
@@ -24,8 +24,8 @@ export function fireSituacion2MinAlert(params: {
   void playSituacion2MinBell();
   vibrateSituacion2Min();
   notifySituacionAlert({
-    title: `? 2 min � ${params.vehicleTitulo}`,
-    body: `Quedan 2 minutos para la fila: �${fila}�. Prep�rate.`,
+    title: `2 min — ${params.vehicleTitulo}`,
+    body: `Quedan 2 minutos para la fila: «${fila}». Prepárate.`,
     tag: `situacion-2m-${params.vehicleId}-${params.tagKey}`,
     vehicleId: params.vehicleId,
   });
@@ -44,10 +44,12 @@ export function fireSituacionCupoAlert(params: {
   void playSituacionCupoSiren();
   vibrateSituacionCupo();
   notifySituacionAlert({
-    title: params.escalation ? `?? Cupo � ${params.vehicleTitulo} (recordatorio)` : `?? Cupo � ${params.vehicleTitulo}`,
+    title: params.escalation
+      ? `Cupo — ${params.vehicleTitulo} (recordatorio)`
+      : `Cupo — ${params.vehicleTitulo}`,
     body: params.escalation
-      ? `A�n pendiente: �${fila}�. Marca Cumplido o Incumplido.`
-      : `Cupo alcanzado en �${fila}�. Marca Cumplido o Incumplido.`,
+      ? `Aún pendiente: «${fila}». Marca Cumplido o Incumplido.`
+      : `Cupo alcanzado en «${fila}». Marca Cumplido o Incumplido.`,
     tag: `situacion-cupo-${params.vehicleId}-${params.tagKey}${params.escalation ? "-esc" : ""}`,
     requireInteraction: !params.escalation,
     vehicleId: params.vehicleId,
@@ -57,7 +59,7 @@ export function fireSituacionCupoAlert(params: {
   }
 }
 
-/** Anuncia por voz la fila activa del desglose situacional (cron�metro). */
+/** Anuncia por voz la fila activa del desglose situacional (cronómetro). */
 export function speakSituacionFilaEnFoco(filaTexto: string, opts?: { intro?: boolean }): void {
   const fila = trimSubText(filaTexto, 56);
   if (!fila) return;

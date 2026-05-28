@@ -53,6 +53,22 @@ export interface VehiculoAnilloLite {
   aperturaAt?: number;
   cierreAt?: number;
   duracionFinal?: number;
+  completedAt?: number | Date;
+}
+
+export type TimelineArcKind = "conquista" | "entropia" | "fondo";
+
+export interface TimelineClockArc {
+  startDeg: number;
+  endDeg: number;
+  kind: TimelineArcKind;
+}
+
+export interface TimelineDayStats {
+  conquistaMin: number;
+  entropiaMin: number;
+  vacioMin: number;
+  centinelaMin: number;
 }
 
 export interface SegmentoAnilloLite {
@@ -92,7 +108,12 @@ function overlapMinutes(
   return Math.max(0, (end - start) / 60000);
 }
 
-function vehicleSessionRange(
+function completedAtMs(v: VehiculoAnilloLite): number | undefined {
+  if (!v.completedAt) return undefined;
+  return v.completedAt instanceof Date ? v.completedAt.getTime() : v.completedAt;
+}
+
+export function vehicleSessionRange(
   v: VehiculoAnilloLite,
   now: number
 ): { start: number; end: number } | null {
@@ -103,12 +124,187 @@ function vehicleSessionRange(
     end = now;
   } else if (v.cierreAt) {
     end = v.cierreAt;
-  } else if (v.duracionFinal != null) {
+  } else if (v.duracionFinal != null && v.duracionFinal > 0) {
     end = start + v.duracionFinal * 60000;
   } else {
-    return null;
+    const completed = completedAtMs(v);
+    if (completed && completed > start) {
+      end = completed;
+    } else if (v.status === "cumplido" || v.status === "archivado") {
+      end = start + 60000;
+    } else {
+      return null;
+    }
   }
   return end > start ? { start, end } : null;
+}
+
+type MsInterval = { start: number; end: number };
+
+function clipInterval(interval: MsInterval, winStart: number, winEnd: number): MsInterval | null {
+  const start = Math.max(interval.start, winStart);
+  const end = Math.min(interval.end, winEnd);
+  return end > start ? { start, end } : null;
+}
+
+function mergeMsIntervals(intervals: MsInterval[]): MsInterval[] {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+  const merged: MsInterval[] = [{ ...sorted[0] }];
+  for (let i = 1; i < sorted.length; i++) {
+    const cur = sorted[i];
+    const last = merged[merged.length - 1];
+    if (cur.start <= last.end) {
+      last.end = Math.max(last.end, cur.end);
+    } else {
+      merged.push({ ...cur });
+    }
+  }
+  return merged;
+}
+
+function subtractMsIntervals(base: MsInterval[], subtract: MsInterval[]): MsInterval[] {
+  let result = [...base];
+  for (const sub of subtract) {
+    const next: MsInterval[] = [];
+    for (const interval of result) {
+      if (sub.end <= interval.start || sub.start >= interval.end) {
+        next.push(interval);
+        continue;
+      }
+      if (sub.start > interval.start) {
+        next.push({ start: interval.start, end: sub.start });
+      }
+      if (sub.end < interval.end) {
+        next.push({ start: sub.end, end: interval.end });
+      }
+    }
+    result = next;
+  }
+  return result;
+}
+
+/** 12:00 arriba en reloj 24h calendario Lima. */
+export function msToClockDeg(ms: number, dayStartMs: number): number {
+  const minutesFromMidnight = (ms - dayStartMs) / 60000;
+  const minutesFromNoon = ((minutesFromMidnight - 720) + 1440) % 1440;
+  return (minutesFromNoon / 1440) * 360;
+}
+
+function intervalToClockArc(interval: MsInterval, dayStartMs: number, kind: TimelineArcKind): TimelineClockArc {
+  let startDeg = msToClockDeg(interval.start, dayStartMs);
+  let endDeg = msToClockDeg(interval.end, dayStartMs);
+  if (endDeg <= startDeg) endDeg += 360;
+  return { startDeg, endDeg, kind };
+}
+
+export function filterVehiculosCalendarioHoy(
+  vehiculos: VehiculoAnilloLite[],
+  now: number = Date.now()
+): VehiculoAnilloLite[] {
+  const dayStartMs = getLimaDayStartMs(now);
+  const dayEndMs = dayStartMs + 86400000;
+  return vehiculos.filter(v => {
+    const session = vehicleSessionRange(v, now);
+    if (!session) return false;
+    return session.end > dayStartMs && session.start < dayEndMs;
+  });
+}
+
+/** Reloj madre 24h: morado = consciente, rojo = vacío + Centinela, fondo = track completo. */
+export function computeTimelineClockArcs(params: {
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): TimelineClockArc[] {
+  const now = params.now ?? Date.now();
+  const dayStartMs = getLimaDayStartMs(now);
+  const dayEndMs = dayStartMs + 86400000;
+  const livedEnd = Math.min(now, dayEndMs);
+
+  const arcs: TimelineClockArc[] = [
+    { startDeg: 0, endDeg: 360, kind: "fondo" },
+  ];
+
+  if (livedEnd <= dayStartMs) return arcs;
+
+  const livedWindow: MsInterval = { start: dayStartMs, end: livedEnd };
+  const todayVehicles = filterVehiculosCalendarioHoy(params.vehiculos, now);
+
+  const consciousRaw = todayVehicles
+    .filter(v => !v.autoVerdad)
+    .map(v => vehicleSessionRange(v, now))
+    .filter((s): s is MsInterval => s != null)
+    .map(s => clipInterval(s, dayStartMs, livedEnd))
+    .filter((s): s is MsInterval => s != null);
+
+  const centinelaRaw = todayVehicles
+    .filter(v => v.autoVerdad)
+    .map(v => vehicleSessionRange(v, now))
+    .filter((s): s is MsInterval => s != null)
+    .map(s => clipInterval(s, dayStartMs, livedEnd))
+    .filter((s): s is MsInterval => s != null);
+
+  const consciousMerged = mergeMsIntervals(consciousRaw);
+  const centinelaMerged = mergeMsIntervals(centinelaRaw);
+  const centinelaNet = subtractMsIntervals(centinelaMerged, consciousMerged);
+  const covered = mergeMsIntervals([...consciousMerged, ...centinelaNet]);
+  const vacioIntervals = subtractMsIntervals([livedWindow], covered);
+
+  for (const interval of [...centinelaNet, ...vacioIntervals]) {
+    arcs.push(intervalToClockArc(interval, dayStartMs, "entropia"));
+  }
+  for (const interval of consciousMerged) {
+    arcs.push(intervalToClockArc(interval, dayStartMs, "conquista"));
+  }
+
+  return arcs;
+}
+
+export function computeTimelineDayStats(params: {
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): TimelineDayStats {
+  const now = params.now ?? Date.now();
+  const dayStartMs = getLimaDayStartMs(now);
+  const livedEnd = Math.min(now, dayStartMs + 86400000);
+  if (livedEnd <= dayStartMs) {
+    return { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 };
+  }
+
+  const todayVehicles = filterVehiculosCalendarioHoy(params.vehiculos, now);
+  const consciousMerged = mergeMsIntervals(
+    todayVehicles
+      .filter(v => !v.autoVerdad)
+      .map(v => vehicleSessionRange(v, now))
+      .filter((s): s is MsInterval => s != null)
+      .map(s => clipInterval(s, dayStartMs, livedEnd))
+      .filter((s): s is MsInterval => s != null)
+  );
+  const centinelaMerged = mergeMsIntervals(
+    todayVehicles
+      .filter(v => v.autoVerdad)
+      .map(v => vehicleSessionRange(v, now))
+      .filter((s): s is MsInterval => s != null)
+      .map(s => clipInterval(s, dayStartMs, livedEnd))
+      .filter((s): s is MsInterval => s != null)
+  );
+  const centinelaNet = subtractMsIntervals(centinelaMerged, consciousMerged);
+  const covered = mergeMsIntervals([...consciousMerged, ...centinelaNet]);
+  const vacioIntervals = subtractMsIntervals([{ start: dayStartMs, end: livedEnd }], covered);
+
+  const sumMin = (intervals: MsInterval[]) =>
+    intervals.reduce((acc, i) => acc + (i.end - i.start) / 60000, 0);
+
+  const conquistaMin = sumMin(consciousMerged);
+  const centinelaMin = sumMin(centinelaNet);
+  const vacioMin = sumMin(vacioIntervals);
+
+  return {
+    conquistaMin: Math.round(conquistaMin * 10) / 10,
+    centinelaMin: Math.round(centinelaMin * 10) / 10,
+    vacioMin: Math.round(vacioMin * 10) / 10,
+    entropiaMin: Math.round((centinelaMin + vacioMin) * 10) / 10,
+  };
 }
 
 function sessionMinutesInWindow(

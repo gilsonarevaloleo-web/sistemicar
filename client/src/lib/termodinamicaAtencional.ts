@@ -2,6 +2,10 @@ import type { FocusBandEvent, FocusBandId } from "./focusBandLedger";
 import type { SegmentoV5, SovereigntyPointsLog, SubVehiculo, Vehicle } from "./persistence";
 import { computeRutaEnfoquePS } from "./rutaEnfoque";
 import type { RutaBandaId } from "./rutaEnfoque";
+import { computeDisciplinaDia } from "./disciplinaEngine";
+import type { DisciplinaDia } from "./disciplinaEngine";
+export type { DisciplinaDia, SegmentoDisciplina } from "./disciplinaEngine";
+import { getLimaDayStartMs } from "./segmentTime";
 
 export interface PsDesglose {
   panoramico: number;
@@ -39,6 +43,7 @@ export interface PlanillaDailySnapshot {
   segmentosEntropia: number;
   segmentosTotales: number;
   bloquesCompletados: number;
+  disciplina?: DisciplinaDia;
 }
 
 const BANDA_RANK: Record<FocusBandId, number> = {
@@ -149,18 +154,18 @@ export function classifyPsSource(source: string): keyof Omit<PsDesglose, "total"
     s.includes("profundidad") ||
     s.includes("enfoque") ||
     s.includes("concentrado") ||
-    s.includes("l�mite") ||
+    s.includes("límite") ||
     s.includes("limite")
   ) {
     return "espectro";
   }
   if (s.includes("introspecci")) return "introspeccion";
   if (
-    s.includes("veh�culo") ||
+    s.includes("vehículo") ||
     s.includes("vehiculo") ||
     s.includes("desglosador") ||
     s.includes("ciclo") ||
-    s.includes("misi�n") ||
+    s.includes("misión") ||
     s.includes("mision")
   ) {
     return "vehiculos";
@@ -321,6 +326,12 @@ export function buildDailySnapshot(params: {
 
   const bloquesCompletados = countBloquesCompletados(vehicles, dayStartMs);
 
+  const disciplina = computeDisciplinaDia({
+    segmentos,
+    vehicles,
+    dayStartMs: getLimaDayStartMs(),
+  });
+
   return {
     id: `snap_${fecha}_${Date.now()}`,
     fecha,
@@ -339,6 +350,7 @@ export function buildDailySnapshot(params: {
     segmentosEntropia: entropiaSeg,
     segmentosTotales: totalSeg,
     bloquesCompletados,
+    disciplina,
   };
 }
 
@@ -363,7 +375,7 @@ export type TermodinamicaCompareModel = {
 const PROFUNDIDAD_LABEL: Record<FocusBandId, string> = {
   fluido: "Fluido",
   concentrado: "Concentrado",
-  limite: "Al l�mite",
+  limite: "Al límite",
 };
 
 function compareRow(
@@ -385,7 +397,7 @@ export function computeTermodinamicaCompare(
   const tEsp = today.espectroBloques;
 
   const rows: TermodinamicaCompareRow[] = [
-    compareRow("limite", "Bloques al l�mite", tEsp.limite, yEsp?.limite ?? 0),
+    compareRow("limite", "Bloques al límite", tEsp.limite, yEsp?.limite ?? 0),
     compareRow("concentrado", "Bloques concentrados", tEsp.concentrado, yEsp?.concentrado ?? 0),
     compareRow("bloques", "Bloques completados", today.bloquesCompletados, yesterday?.bloquesCompletados ?? 0),
     compareRow(
@@ -413,7 +425,7 @@ export function computeTermodinamicaCompare(
 
   let headline: string;
   if (!hasYesterday) {
-    headline = `Hoy: ${PROFUNDIDAD_LABEL[profundidadHoy]} � ${today.bloquesCompletados} bloque${today.bloquesCompletados !== 1 ? "s" : ""}`;
+    headline = `Hoy: ${PROFUNDIDAD_LABEL[profundidadHoy]} · ${today.bloquesCompletados} bloque${today.bloquesCompletados !== 1 ? "s" : ""}`;
   } else if (rankHoy > rankAyer) {
     headline = `Profundidad superior a ayer (${PROFUNDIDAD_LABEL[profundidadHoy]})`;
   } else if (wins >= 2) {
@@ -424,20 +436,20 @@ export function computeTermodinamicaCompare(
   } else if (today.bloquesCompletados === yesterday!.bloquesCompletados && rankHoy === rankAyer) {
     headline = "Mismo ritmo estructural que ayer";
   } else {
-    headline = "Ayer fue m�s intenso � el cuerpo tambi�n cuenta";
+    headline = "Ayer fue más intenso — el cuerpo también cuenta";
   }
 
   let motivacion: string;
   if (!hasYesterday) {
-    motivacion = "Sella la jornada hoy para que ma�ana tengas referencia.";
+    motivacion = "Sella la jornada hoy para que mañana tengas referencia.";
   } else if (rankHoy >= rankAyer && today.segmentosCerradosManual >= (yesterday?.segmentosCerradosManual ?? 0)) {
-    motivacion = "Tu cartograf�a panor�mica y tu espectro van al comp�s.";
+    motivacion = "Tu cartografía panorámica y tu espectro van al compás.";
   } else if (tEsp.descansosCuerpo > (yEsp?.descansosCuerpo ?? 0)) {
-    motivacion = "Escuchaste al cuerpo � eso tambi�n es soberan�a.";
+    motivacion = "Escuchaste al cuerpo — eso también es soberanía.";
   } else if (wins > 0) {
     motivacion = "Compites contigo de ayer, bloque a bloque. Sigue.";
   } else {
-    motivacion = "Un d�a m�s ligero no borra el progreso. Ma�ana otra puerta.";
+    motivacion = "Un día más ligero no borra el progreso. Mañana otra puerta.";
   }
 
   return {

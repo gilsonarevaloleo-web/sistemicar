@@ -28,6 +28,7 @@ export {
 import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
 import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
 import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
+import { mergePlantillasRutina } from "./plantillasRutinaMerge";
 import {
   type ModuleAccessInput,
   type ModuleId,
@@ -483,6 +484,8 @@ export interface SubTarea {
   duracionRealSec?: number;
   /** Timestamp de cierre cumplido/fallado en cronómetro situacional. */
   cerradaAt?: number;
+  /** Minutos ganados acumulados (chip dopamina en cola; no infla cupo base). */
+  minutosGanadosAcum?: number;
 }
 
 export interface SubVehiculo {
@@ -586,6 +589,9 @@ export interface Vehicle {
   estadoEnergia?: "optima" | "baja";
   energiaDiffPct?: number;
   segmentoOrigen?: string;
+  segmentoId?: string;
+  segmentoMontadoId?: string;
+  segmentoMontadoNombre?: string;
   segmentosCruzados?: number;
   rendimientoConsciente?: "igual" | "mejor" | "peor";
   recordSugerido?: number;
@@ -610,6 +616,8 @@ export interface Vehicle {
     bloqueInicioAt?: number;
     /** Suma de PS de profundidad (+5/h de bloque) ya entregados en este vehículo activo. */
     depthBlockPsGranted?: number;
+    /** Minutos adelantados vs plan cuando no hay cola que reciba ganancia. */
+    saldoAdelantoMin?: number;
   } | null;
   /** PS de profundidad por duración real del desglosador de tiempo (sesión); curva progresiva 5→6→8→12… sin tope. */
   desglosadorBloqueDepthPsGranted?: number;
@@ -795,6 +803,55 @@ export async function reconcileStaleCentinelaInFirestore(userId: string): Promis
     console.warn("[Centinela] reconcileStaleCentinelaInFirestore:", e);
     return { closedIds: [], hasActiveRemote: false };
   }
+}
+
+/** Cierra vehículos conscientes activos obsoletos que bloquean al Centinela. */
+export async function reconcileGhostActiveVehicles(userId: string): Promise<string[]> {
+  const { getJournalDayStartMs } = await import("./segmentTime");
+  const now = Date.now();
+  const dayStartMs = getJournalDayStartMs(now);
+  const closedIds: string[] = [];
+
+  const closeGhost = async (vehicleId: string, aperturaAt: number) => {
+    const cierreAt = now;
+    const duracionFinal = Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
+    try {
+      notifyVehicleClosed(vehicleId);
+      await updateVehicle(userId, vehicleId, { cierreAt, duracionFinal, cierreManual: false });
+      await updateVehicleStatus(userId, vehicleId, "archivado");
+      closedIds.push(vehicleId);
+      console.log(`[Centinela] Ghost activo cerrado: ${vehicleId} (${duracionFinal} min)`);
+    } catch (e) {
+      console.warn("[Centinela] reconcileGhostActiveVehicles:", vehicleId, e);
+    }
+  };
+
+  for (const v of getLocalVehicles()) {
+    if (v.status !== "activo" || v.autoVerdad) continue;
+    if (wasVehicleRecentlyClosed(v.id)) continue;
+    const apertura = v.aperturaAt || v.createdAt?.getTime?.() || 0;
+    const stale = apertura === 0 || apertura < dayStartMs || now - apertura > 12 * 3600_000;
+    if (stale) await closeGhost(v.id, apertura || now - 60000);
+  }
+
+  if (isFirebaseConfigured() && db) {
+    try {
+      const path = getPrivatePath(userId, "vehicles");
+      const snap = await getDocs(collection(db, path));
+      for (const d of snap.docs) {
+        const r = d.data() as { status?: string; autoVerdad?: boolean; aperturaAt?: number };
+        if (r.status !== "activo" || r.autoVerdad) continue;
+        if (wasVehicleRecentlyClosed(d.id)) continue;
+        const apertura = r.aperturaAt ?? 0;
+        const stale = apertura === 0 || apertura < dayStartMs || now - apertura > 12 * 3600_000;
+        if (stale) await closeGhost(d.id, apertura || now - 60000);
+      }
+    } catch (e) {
+      console.warn("[Centinela] reconcileGhostActiveVehicles Firebase:", e);
+    }
+  }
+
+  return closedIds;
 }
 
 export function subscribeToVehicles(
@@ -1034,6 +1091,16 @@ export async function updateVehicleStatus(
   if (status !== "activo" && status !== "pendiente") {
     notifyVehicleClosed(vehicleId);
   }
+  const localVehicle = getLocalVehicles().find(v => v.id === vehicleId);
+  const closeFields =
+    status !== "activo" && status !== "pendiente" && localVehicle
+      ? {
+          ...(localVehicle.cierreAt != null ? { cierreAt: localVehicle.cierreAt } : {}),
+          ...(localVehicle.duracionFinal != null ? { duracionFinal: localVehicle.duracionFinal } : {}),
+          ...(localVehicle.cierreManual != null ? { cierreManual: localVehicle.cierreManual } : {}),
+        }
+      : {};
+
   const updateLocally = () => {
     const vehicles = getLocalVehicles().map(v => 
       v.id === vehicleId 
@@ -1051,6 +1118,7 @@ export async function updateVehicleStatus(
       const { updateDoc } = await import("firebase/firestore");
       await updateDoc(doc(db, path, vehicleId), { 
         status,
+        ...closeFields,
         ...(status === "cumplido" ? { completedAt: serverTimestamp() } : {})
       });
       console.log(`[updateVehicleStatus] OK → ${vehicleId} ahora es ${status}`);
@@ -1084,7 +1152,7 @@ export async function deleteVehicle(userId: string, vehicleId: string): Promise<
 export async function updateVehicle(
   userId: string,
   vehicleId: string,
-  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted" | "desglosadorPausa" | "interrupcionActiva" | "excluirDeHistorial" | "vehiculoPadreDesglosadorId">>
+  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentoOrigen" | "segmentoId" | "segmentoMontadoId" | "segmentoMontadoNombre" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted" | "desglosadorPausa" | "interrupcionActiva" | "excluirDeHistorial" | "vehiculoPadreDesglosadorId">>
 ): Promise<void> {
   const updateLocally = () => {
     const vehicles = getLocalVehicles().map(v =>
@@ -2750,7 +2818,7 @@ export function subscribeToDailyPoints(
     fetchDebounce = setTimeout(() => {
       fetchDebounce = undefined;
       void fetchAllDailyPoints();
-    }, 2000);
+    }, 300);
   };
 
   const refreshForDayChange = () => {
@@ -6196,76 +6264,121 @@ export interface PlantillaRutina {
   creadaAt: any;
 }
 
-const PLANTILLAS_LOCAL_KEY = "sistemicar_plantillas_rutina_v1";
+const PLANTILLAS_LOCAL_KEY_LEGACY = "sistemicar_plantillas_rutina_v1";
 
-function getLocalPlantillas(): PlantillaRutina[] {
+function getPlantillasLocalKey(userId: string): string {
+  return `sistemicar_plantillas_rutina_${userId}`;
+}
+
+function getLocalPlantillas(userId: string): PlantillaRutina[] {
   try {
-    const data = localStorage.getItem(PLANTILLAS_LOCAL_KEY);
+    const key = getPlantillasLocalKey(userId);
+    let data = localStorage.getItem(key);
+    if (!data) {
+      const legacy = localStorage.getItem(PLANTILLAS_LOCAL_KEY_LEGACY);
+      if (legacy) {
+        localStorage.setItem(key, legacy);
+        data = legacy;
+      }
+    }
     return data ? JSON.parse(data) : [];
   } catch { return []; }
 }
 
-function saveLocalPlantillas(plantillas: PlantillaRutina[]): void {
-  try { localStorage.setItem(PLANTILLAS_LOCAL_KEY, JSON.stringify(plantillas)); } catch { }
+function saveLocalPlantillas(userId: string, plantillas: PlantillaRutina[]): void {
+  try { localStorage.setItem(getPlantillasLocalKey(userId), JSON.stringify(plantillas)); } catch { }
+}
+
+function emitMergedPlantillas(userId: string, remote: PlantillaRutina[]): PlantillaRutina[] {
+  const merged = mergePlantillasRutina(getLocalPlantillas(userId), remote);
+  saveLocalPlantillas(userId, merged);
+  return merged;
 }
 
 export async function getPlantillasRutina(userId: string): Promise<PlantillaRutina[]> {
+  const local = getLocalPlantillas(userId);
   if (isFirebaseConfigured() && db) {
     try {
       const path = getPrivatePath(userId, "plantillasRutina");
       const snapshot = await getDocs(collection(db, path));
-      if (!snapshot.empty) {
-        const plantillas = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PlantillaRutina));
-        saveLocalPlantillas(plantillas);
-        return plantillas;
-      }
+      const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PlantillaRutina));
+      return emitMergedPlantillas(userId, remote);
     } catch { }
   }
-  return getLocalPlantillas();
+  return local;
 }
 
 export function subscribePlantillasRutina(
   userId: string,
   onData: (plantillas: PlantillaRutina[]) => void
 ): () => void {
+  let remoteCache: PlantillaRutina[] = [];
+
+  const notify = () => {
+    onData(emitMergedPlantillas(userId, remoteCache));
+  };
+
+  const onLocalUpdate = (e: Event) => {
+    const detail = (e as CustomEvent<{ userId?: string }>).detail;
+    if (detail?.userId && detail.userId !== userId) return;
+    notify();
+  };
+
+  notify();
+  window.addEventListener("plantillas-rutina-updated", onLocalUpdate);
+
   if (!isFirebaseConfigured() || !db) {
-    onData(getLocalPlantillas());
-    return () => {};
+    return () => window.removeEventListener("plantillas-rutina-updated", onLocalUpdate);
   }
+
   try {
-    onData(getLocalPlantillas());
     const path = getPrivatePath(userId, "plantillasRutina");
-    return onSnapshot(collection(db, path), (snapshot) => {
-      const plantillas = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PlantillaRutina));
-      saveLocalPlantillas(plantillas);
-      onData(plantillas);
+    const unsubFirebase = onSnapshot(collection(db, path), (snapshot) => {
+      remoteCache = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PlantillaRutina));
+      notify();
     });
-  } catch { return () => {}; }
+    return () => {
+      window.removeEventListener("plantillas-rutina-updated", onLocalUpdate);
+      unsubFirebase();
+    };
+  } catch {
+    return () => window.removeEventListener("plantillas-rutina-updated", onLocalUpdate);
+  }
 }
 
 export async function addPlantillaRutina(userId: string, plantilla: Omit<PlantillaRutina, "id" | "creadaAt">): Promise<PlantillaRutina> {
   const id = `rutina_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const nueva: PlantillaRutina = { ...plantilla, id, creadaAt: new Date().toISOString() };
-  const current = getLocalPlantillas();
-  saveLocalPlantillas([...current, nueva]);
+  const current = getLocalPlantillas(userId);
+  saveLocalPlantillas(userId, [...current, nueva]);
+  window.dispatchEvent(new CustomEvent("plantillas-rutina-updated", { detail: { userId } }));
 
   if (isFirebaseConfigured() && db) {
-    try {
-      const path = getPrivatePath(userId, "plantillasRutina");
-      await setDoc(doc(db, path, id), { ...plantilla, creadaAt: serverTimestamp() });
-    } catch { }
+    void (async () => {
+      try {
+        const path = getPrivatePath(userId, "plantillasRutina");
+        await setDoc(doc(db, path, id), { ...plantilla, creadaAt: serverTimestamp() });
+      } catch (error) {
+        console.error("[addPlantillaRutina] Error Firebase:", error);
+      }
+    })();
   }
   return nueva;
 }
 
 export async function deletePlantillaRutina(userId: string, plantillaId: string): Promise<void> {
-  const current = getLocalPlantillas().filter(p => p.id !== plantillaId);
-  saveLocalPlantillas(current);
+  const current = getLocalPlantillas(userId).filter(p => p.id !== plantillaId);
+  saveLocalPlantillas(userId, current);
+  window.dispatchEvent(new CustomEvent("plantillas-rutina-updated", { detail: { userId } }));
   if (isFirebaseConfigured() && db) {
-    try {
-      const path = getPrivatePath(userId, "plantillasRutina");
-      await deleteDoc(doc(db, path, plantillaId));
-    } catch { }
+    void (async () => {
+      try {
+        const path = getPrivatePath(userId, "plantillasRutina");
+        await deleteDoc(doc(db, path, plantillaId));
+      } catch (error) {
+        console.error("[deletePlantillaRutina] Error Firebase:", error);
+      }
+    })();
   }
 }
 

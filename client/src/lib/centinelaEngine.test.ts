@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { getCentinelaSegmentGate } from "./centinelaEngine.ts";
+import { getCentinelaSegmentGate, computeCentinelaUiState } from "./centinelaEngine.ts";
 import type { Planilla } from "./persistence.ts";
 import {
   getJournalDateString,
@@ -50,7 +50,7 @@ describe("getCentinelaSegmentGate", () => {
       planilla([
         {
           id: "s1",
-          nombre: "Mañana",
+          nombre: "Maï¿½ana",
           horaInicio: "07:00",
           horaFin: "12:00",
           color: "#fff",
@@ -71,7 +71,7 @@ describe("getCentinelaSegmentGate", () => {
       planilla([
         {
           id: "s1",
-          nombre: "Mañana",
+          nombre: "Maï¿½ana",
           horaInicio: "05:00",
           horaFin: "12:00",
           color: "#fff",
@@ -85,5 +85,13 @@ describe("getCentinelaSegmentGate", () => {
       journalStart + 60000
     );
     assert.equal(gate.allowed, false);
+  });
+
+  it("blockReason cuando hay vehiculo consciente activo", () => {
+    const { ui } = computeCentinelaUiState(null, [
+      { id: "v1", titulo: "Tarea X", status: "activo", autoVerdad: false } as any,
+    ], Date.now(), 0);
+    assert.ok(ui.blockReason);
+    assert.match(ui.blockReason!, /activo/i);
   });
 });

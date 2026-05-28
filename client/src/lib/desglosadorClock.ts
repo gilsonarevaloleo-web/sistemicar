@@ -113,3 +113,31 @@ export function formatElapsedHHMMSS(totalSec: number): string {
   const s = totalSec % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
+
+export type SubCloseVerdict = "gain" | "loss" | "neutral" | "noRef";
+
+const SUB_CLOSE_NEUTRAL_SEC = 5;
+
+/** Veredicto al cerrar sub desglosador tiempo vs referencia sugerida. */
+export function computeSubCloseVerdict(sub: SubVehiculo): {
+  verdict: SubCloseVerdict;
+  deltaSec: number;
+  refSec: number | null;
+  realSec: number | null;
+} {
+  const refSec = suggestedSec(sub);
+  const realSec = sub.duracionFinal ?? null;
+  if (refSec == null || realSec == null) {
+    return { verdict: "noRef", deltaSec: 0, refSec, realSec };
+  }
+  const deltaSec = realSec - refSec;
+  if (Math.abs(deltaSec) <= SUB_CLOSE_NEUTRAL_SEC) {
+    return { verdict: "neutral", deltaSec, refSec, realSec };
+  }
+  return {
+    verdict: deltaSec < 0 ? "gain" : "loss",
+    deltaSec,
+    refSec,
+    realSec,
+  };
+}

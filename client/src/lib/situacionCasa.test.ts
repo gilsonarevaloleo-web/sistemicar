@@ -9,13 +9,13 @@ function item(texto: string, entregado: boolean, id = texto): DetalleSubTarea {
 describe("groupCasaByTexto", () => {
   it("agrupa por texto y cuenta hechas", () => {
     const items = [
-      item("Una idea m·s", true, "a"),
-      item("Una idea m·s", true, "b"),
+      item("Una idea m√°s", true, "a"),
+      item("Una idea m√°s", true, "b"),
       item("Otra", false, "c"),
       item("Escribir mensaje", true, "d"),
     ];
     expect(groupCasaByTexto(items)).toEqual([
-      { texto: "Una idea m·s", total: 2, hechas: 2 },
+      { texto: "Una idea m√°s", total: 2, hechas: 2 },
       { texto: "Escribir mensaje", total: 1, hechas: 1 },
       { texto: "Otra", total: 1, hechas: 0 },
     ]);

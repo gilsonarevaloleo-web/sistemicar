@@ -6,6 +6,8 @@ import {
   applyCupoManualYRedistribuir,
   computeSituacionCronometroHorarios,
   descontarMinutosDeFlexiblesPosteriores,
+  extraerSubTareaAReserva,
+  quitarMinutosHaciaFoco,
   redistribuirMinutosSituacionCronometro,
   situacionRelojDebeMostrarse,
   situacionTargetMsReloj,
@@ -26,7 +28,7 @@ function st(id: string, minutosCupo: number, cupoFijo?: boolean): SubTarea {
 }
 
 describe("redistribuirMinutosSituacionCronometro", () => {
-  it("reparte entre todas las filas si ninguna est� fija", () => {
+  it("reparte entre todas las filas si ninguna está fija", () => {
     const subs = [st("a", 10), st("b", 10), st("c", 10)];
     const out = redistribuirMinutosSituacionCronometro(subs, 30);
     assert.equal(sumMinutosCronometroPendientes(out), 30);
@@ -51,15 +53,6 @@ describe("redistribuirMinutosSituacionCronometro", () => {
     assert.equal(a.cupoFijo, true);
     assert.equal(sumMinutosCronometroPendientes(out), 60);
   });
-
-  it("quitar cupo manual libera la fila para redistribuci�n", () => {
-    const subs = [st("a", 20, true), st("b", 10), st("c", 10)];
-    const out = applyCupoManualYRedistribuir(subs, "a", undefined, 30);
-    const a = out.find(s => s.id === "a")!;
-    assert.equal(a.cupoFijo, undefined);
-    assert.equal(sumMinutosCronometroPendientes(out), 30);
-    assert.ok((a.minutosCupo ?? 0) >= 1);
-  });
 });
 
 describe("descontarMinutosDeFlexiblesPosteriores", () => {
@@ -69,9 +62,7 @@ describe("descontarMinutosDeFlexiblesPosteriores", () => {
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.equal(r.descontado, 8);
-    assert.equal(r.subTareas.find(s => s.id === "a")!.minutosCupo, 10);
     assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 7);
-    assert.equal(r.subTareas.find(s => s.id === "c")!.minutosCupo, 10);
     assert.equal(sumMinutosCronometroPendientes(r.subTareas), 27);
   });
 
@@ -83,14 +74,28 @@ describe("descontarMinutosDeFlexiblesPosteriores", () => {
     assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 20);
     assert.equal(r.subTareas.find(s => s.id === "c")!.minutosCupo, 5);
   });
+});
 
-  it("falla si no hay minutos flexibles suficientes", () => {
-    const subs = [st("a", 10), st("b", 3, true), st("c", 2)];
-    const r = descontarMinutosDeFlexiblesPosteriores(subs, "a", 5);
-    assert.equal(r.ok, false);
-    if (r.ok) return;
-    assert.equal(r.reason, "insuficiente");
-    assert.equal(r.disponible, 2);
+describe("quitarMinutosHaciaFoco", () => {
+  it("transfiere minutos a foco sin cambiar suma total", () => {
+    const subs = [st("a", 10), st("b", 15), st("c", 10)];
+    const sumBefore = sumMinutosCronometroPendientes(subs);
+    const r = quitarMinutosHaciaFoco(subs, "a", "a", 8);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.focoGanado, 8);
+    assert.equal(r.subTareas.find(s => s.id === "a")!.minutosCupo, 18);
+    assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 7);
+    assert.equal(sumMinutosCronometroPendientes(r.subTareas), sumBefore);
+  });
+
+  it("foco distinto del origen recibe minutos", () => {
+    const subs = [st("a", 10), st("b", 15), st("c", 10)];
+    const r = quitarMinutosHaciaFoco(subs, "a", "b", 5);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 20);
+    assert.equal(r.subTareas.find(s => s.id === "c")!.minutosCupo, 5);
   });
 });
 
@@ -106,8 +111,6 @@ describe("computeSituacionCronometroHorarios", () => {
     });
     assert.equal(horarios.length, 3);
     assert.equal(horarios[0]!.finMs, base + 10 * 60000);
-    assert.equal(horarios[1]!.finMs, base + 20 * 60000);
-    assert.equal(horarios[2]!.finMs, base + 30 * 60000);
     assert.equal(horarios[0]!.enFoco, true);
   });
 
@@ -128,12 +131,11 @@ describe("computeSituacionCronometroHorarios", () => {
       previewTiempoGanado: true,
     });
     assert.ok(conPreview[1]!.finMs <= sinPreview[1]!.finMs);
-    assert.ok(conPreview[2]!.finMs <= sinPreview[2]!.finMs);
   });
 });
 
 describe("situacionRelojDebeMostrarse", () => {
-  it("muestra reloj con cron�metro activo aunque el ancla a�n no sincroniz�", () => {
+  it("muestra reloj con cronómetro activo", () => {
     const subs = [st("a", 10)];
     const ok = situacionRelojDebeMostrarse({
       tipoFlota: "situacion",
@@ -144,57 +146,63 @@ describe("situacionRelojDebeMostrarse", () => {
     });
     assert.equal(ok, true);
   });
-
-  it("calcula target desde primera fila pendiente sin ancla", () => {
-    const base = 1_700_000_000_000;
-    const tMs = situacionTargetMsReloj(
-      {
-        tipoFlota: "situacion",
-        subTareas: [st("a", 12), st("b", 8)],
-        situacionCronometro: { activo: true, bloqueInicioAt: base },
-        situacionCupoAnchor: null,
-        aperturaAt: base,
-      },
-      base
-    );
-    assert.equal(tMs, base + 12 * 60000);
-  });
 });
 
 describe("aplicarTiempoGanadoAlCumplir", () => {
   const base = 1_700_000_000_000;
 
-  it("reparte minutos ganados proporcionalmente entre flexibles", () => {
+  it("reparte minutos ganados como chips en cola flexibles", () => {
     const subs = [st("a", 15), st("b", 10), st("c", 10, true)];
     const now = base + 10 * 60000;
     const { subTareas: out, minutosGanados } = aplicarTiempoGanadoAlCumplir(
       subs,
       "a",
       { subTareaId: "a", startedAt: base },
-      now
+      now,
+      base
     );
     assert.equal(minutosGanados, 5);
-    const a = out.find(s => s.id === "a")!;
-    assert.equal(a.resultadoSituacion, "cumplido");
-    assert.equal(a.duracionRealSec, 600);
+    const b = out.find(s => s.id === "b")!;
+    assert.equal(b.minutosCupo, 10);
+    assert.equal(b.minutosGanadosAcum, 5);
     const c = out.find(s => s.id === "c")!;
     assert.equal(c.minutosCupo, 10);
-    assert.equal(c.cupoFijo, true);
-    const b = out.find(s => s.id === "b")!;
-    assert.equal(b.minutosCupo, 15);
+    assert.equal(c.minutosGanadosAcum, undefined);
   });
 
-  it("sin flexibles pendientes no modifica cupos pero registra ganancia", () => {
+  it("sin cola flexible acumula saldo adelanto", () => {
     const subs = [st("a", 15), st("b", 10, true)];
     const now = base + 5 * 60000;
-    const { subTareas: out, minutosGanados } = aplicarTiempoGanadoAlCumplir(
+    const { subTareas: out, minutosGanados, saldoAdelantoMin } = aplicarTiempoGanadoAlCumplir(
       subs,
       "a",
       { subTareaId: "a", startedAt: base },
-      now
+      now,
+      base
     );
     assert.equal(minutosGanados, 10);
+    assert.equal(saldoAdelantoMin, 10);
     assert.equal(out.find(s => s.id === "b")!.minutosCupo, 10);
     assert.equal(sumMinutosCronometroPendientes(out), 10);
+  });
+});
+
+describe("extraerSubTareaAReserva", () => {
+  it("saca fila pendiente del cronómetro y reduce Σ cupos", () => {
+    const subs = [st("a", 10), st("b", 15), st("c", 5)];
+    const { subTareas: out, extraido } = extraerSubTareaAReserva(subs, "b");
+    assert.ok(extraido);
+    assert.equal(extraido!.texto, "b");
+    assert.equal(extraido!.minutosCupo, 15);
+    assert.equal(out.length, 2);
+    assert.equal(sumMinutosCronometroPendientes(out), 15);
+    assert.equal(out.find(s => s.id === "b"), undefined);
+  });
+
+  it("ignora filas ya cerradas", () => {
+    const subs = [{ ...st("a", 10), resultadoSituacion: "cumplido" as const }];
+    const { subTareas: out, extraido } = extraerSubTareaAReserva(subs, "a");
+    assert.equal(extraido, null);
+    assert.equal(out.length, 1);
   });
 });

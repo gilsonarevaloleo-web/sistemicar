@@ -25,12 +25,21 @@ describe("mergeSovereigntyPointsLogs", () => {
     assert.equal(merged.length, 2);
   });
 
-  it("conserva ids únicos sin colisión de ventana", () => {
+  it("conserva ids ï¿½nicos sin colisiï¿½n de ventana", () => {
     const merged = mergeSovereigntyPointsLogs([
       log("a", 10, 1000),
       log("b", 5, 2000),
     ]);
     assert.equal(merged.length, 2);
     assert.equal(merged.reduce((s, l) => s + l.amount, 0), 15);
+  });
+
+  it("log reciï¿½n creado suma al total del dï¿½a tras merge", () => {
+    const ms = Date.UTC(2026, 4, 18, 12, 0, 0);
+    const merged = mergeSovereigntyPointsLogs([
+      log("sp_new_segment_close", 2, ms),
+    ]);
+    assert.equal(merged.length, 1);
+    assert.equal(merged.reduce((s, l) => s + l.amount, 0), 2);
   });
 });
