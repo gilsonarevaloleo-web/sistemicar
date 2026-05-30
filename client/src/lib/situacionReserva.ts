@@ -138,6 +138,19 @@ export async function addSituacionReserva(userId: string, item: NuevaSituacionRe
       userId,
       createdAt: serverTimestamp(),
     });
+    const created: SituacionReservaItem = {
+      id: docRef.id,
+      userId,
+      texto: payload.texto,
+      reservadaAt: payload.reservadaAt,
+      ...(item.origenVehiculoTitulo ? { origenVehiculoTitulo: item.origenVehiculoTitulo } : {}),
+      ...(item.origenVehiculoId ? { origenVehiculoId: item.origenVehiculoId } : {}),
+      ...(item.minutosCupo != null && item.minutosCupo > 0 ? { minutosCupo: item.minutosCupo } : {}),
+      ...(item.detalles?.length ? { detalles: item.detalles } : {}),
+      estado: payload.estado as SituacionReservaEstado,
+    };
+    const withoutDup = getAllLocalReserva().filter(i => i.id !== docRef.id);
+    saveAllLocalReserva([created, ...withoutDup]);
     return docRef.id;
   }
 
@@ -159,6 +172,11 @@ export async function updateSituacionReservaEstado(
   estado: SituacionReservaEstado,
   extra?: { retomadaAt?: number; retomadaEnVehiculoId?: string }
 ): Promise<void> {
+  const all = getAllLocalReserva().map(i =>
+    i.id === reservaId && i.userId === userId ? { ...i, estado, ...extra } : i
+  );
+  saveAllLocalReserva(all);
+
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "situacionReserva");
     await updateDoc(doc(db, path, reservaId), {
@@ -166,15 +184,7 @@ export async function updateSituacionReservaEstado(
       ...(extra?.retomadaAt != null ? { retomadaAt: extra.retomadaAt } : {}),
       ...(extra?.retomadaEnVehiculoId ? { retomadaEnVehiculoId: extra.retomadaEnVehiculoId } : {}),
     });
-    return;
   }
-
-  const all = getAllLocalReserva().map(i =>
-    i.id === reservaId && i.userId === userId
-      ? { ...i, estado, ...extra }
-      : i
-  );
-  saveAllLocalReserva(all);
 }
 
 export async function deleteSituacionReserva(userId: string, reservaId: string): Promise<void> {

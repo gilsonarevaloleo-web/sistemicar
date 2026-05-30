@@ -50,13 +50,21 @@ export const calcularAnilloSoberania = (
 export interface VehiculoAnilloLite {
   autoVerdad?: boolean;
   status?: string;
+  tipoFlota?: string;
   aperturaAt?: number;
   cierreAt?: number;
   duracionFinal?: number;
   completedAt?: number | Date;
 }
 
-export type TimelineArcKind = "conquista" | "entropia" | "fondo";
+export type TimelineArcKind = "conquista" | "entropia" | "fondo" | "reposo";
+
+export type AnilloPointerMode = "reposo" | "conquista" | "entropia" | "calibracion" | "neutro";
+
+/** Contingencia sin segmentos: umbral a las 06:00 AM (360 min desde medianoche). */
+export const UMBRAL_CONTINGENCIA_MIN = 6 * 60;
+
+const MINUTOS_DIA = 1440;
 
 export interface TimelineClockArc {
   startDeg: number;
@@ -184,11 +192,50 @@ function subtractMsIntervals(base: MsInterval[], subtract: MsInterval[]): MsInte
   return result;
 }
 
-/** 12:00 arriba en reloj 24h calendario Lima. */
+/** Grados en reloj 24h: 00:00 arriba, sentido horario; 100% = 1440 min. */
+export function clockMinutesToDeg(totalMinutes: number): number {
+  const m = ((totalMinutes % MINUTOS_DIA) + MINUTOS_DIA) % MINUTOS_DIA;
+  return m * 0.25;
+}
+
+/** Puntero en tiempo real Lima: (Horas × 15) + (Minutos × 0.25). */
+export function nowToClockDeg(nowMs: number = Date.now()): number {
+  const dayStartMs = getLimaDayStartMs(nowMs);
+  const min = (nowMs - dayStartMs) / 60000;
+  const sec = ((nowMs - dayStartMs) % 60000) / 1000;
+  return clockMinutesToDeg(min) + sec * (0.25 / 60);
+}
+
+/** Convierte instante Lima (ms desde medianoche del día calendario) a grados del reloj. */
 export function msToClockDeg(ms: number, dayStartMs: number): number {
   const minutesFromMidnight = (ms - dayStartMs) / 60000;
-  const minutesFromNoon = ((minutesFromMidnight - 720) + 1440) % 1440;
-  return (minutesFromNoon / 1440) * 360;
+  return clockMinutesToDeg(minutesFromMidnight);
+}
+
+/** Hora de inicio del primer segmento planificado (Umbral de Conciencia). */
+export function getUmbralConcienciaMin(segmentos: SegmentoAnilloLite[]): number {
+  if (segmentos.length === 0) return UMBRAL_CONTINGENCIA_MIN;
+  let min = MINUTOS_DIA;
+  for (const s of segmentos) {
+    const ini = parseSegMinutes(s.horaInicio || "");
+    if (ini < min) min = ini;
+  }
+  return min;
+}
+
+function getNowMinutesLima(nowMs: number, dayStartMs: number): number {
+  return Math.max(0, Math.min(MINUTOS_DIA, Math.floor((nowMs - dayStartMs) / 60000)));
+}
+
+function hasVoluntaryOverlapInWindow(
+  sessions: MsInterval[],
+  winStart: number,
+  winEnd: number
+): boolean {
+  for (const s of sessions) {
+    if (overlapMinutes(s.start, s.end, winStart, winEnd) > 0) return true;
+  }
+  return false;
 }
 
 function intervalToClockArc(interval: MsInterval, dayStartMs: number, kind: TimelineArcKind): TimelineClockArc {
@@ -211,99 +258,218 @@ export function filterVehiculosCalendarioHoy(
   });
 }
 
-/** Reloj madre 24h: morado = consciente, rojo = vacío + Centinela, fondo = track completo. */
+/**
+ * Reloj 24h bio-adaptativo:
+ * - Reposo neutro antes del Umbral (primer segmento o 06:00 sin segmentos).
+ * - Morado = vehículo voluntario (conquista de atención).
+ * - Rojo = bloque planificado iniciado sin activación voluntaria.
+ * - Huecos sin planificación = solo pista apagada (sin rojo).
+ */
 export function computeTimelineClockArcs(params: {
   vehiculos: VehiculoAnilloLite[];
+  segmentos?: SegmentoAnilloLite[];
   now?: number;
 }): TimelineClockArc[] {
   const now = params.now ?? Date.now();
   const dayStartMs = getLimaDayStartMs(now);
   const dayEndMs = dayStartMs + 86400000;
-  const livedEnd = Math.min(now, dayEndMs);
+  const nowMs = Math.min(now, dayEndMs);
+  const nowMin = getNowMinutesLima(nowMs, dayStartMs);
+  const segmentos = params.segmentos ?? [];
+  const hasSegments = segmentos.length > 0;
+  const umbralMin = getUmbralConcienciaMin(segmentos);
 
-  const arcs: TimelineClockArc[] = [
-    { startDeg: 0, endDeg: 360, kind: "fondo" },
-  ];
+  const arcs: TimelineClockArc[] = [{ startDeg: 0, endDeg: 360, kind: "fondo" }];
 
-  if (livedEnd <= dayStartMs) return arcs;
+  const reposoEndMin = Math.min(nowMin, umbralMin);
+  if (reposoEndMin > 0) {
+    arcs.push({
+      startDeg: 0,
+      endDeg: clockMinutesToDeg(reposoEndMin),
+      kind: "reposo",
+    });
+  }
 
-  const livedWindow: MsInterval = { start: dayStartMs, end: livedEnd };
+  if (nowMin < umbralMin) return arcs;
+
+  if (!hasSegments) return arcs;
+
+  const livedStartMs = dayStartMs + umbralMin * 60000;
+  const livedEndMs = nowMs;
+  if (livedEndMs <= livedStartMs) return arcs;
+
   const todayVehicles = filterVehiculosCalendarioHoy(params.vehiculos, now);
-
-  const consciousRaw = todayVehicles
+  const voluntarySessions = todayVehicles
     .filter(v => !v.autoVerdad)
     .map(v => vehicleSessionRange(v, now))
     .filter((s): s is MsInterval => s != null)
-    .map(s => clipInterval(s, dayStartMs, livedEnd))
+    .map(s => clipInterval(s, livedStartMs, livedEndMs))
     .filter((s): s is MsInterval => s != null);
 
-  const centinelaRaw = todayVehicles
-    .filter(v => v.autoVerdad)
-    .map(v => vehicleSessionRange(v, now))
-    .filter((s): s is MsInterval => s != null)
-    .map(s => clipInterval(s, dayStartMs, livedEnd))
-    .filter((s): s is MsInterval => s != null);
-
-  const consciousMerged = mergeMsIntervals(consciousRaw);
-  const centinelaMerged = mergeMsIntervals(centinelaRaw);
-  const centinelaNet = subtractMsIntervals(centinelaMerged, consciousMerged);
-  const covered = mergeMsIntervals([...consciousMerged, ...centinelaNet]);
-  const vacioIntervals = subtractMsIntervals([livedWindow], covered);
-
-  for (const interval of [...centinelaNet, ...vacioIntervals]) {
-    arcs.push(intervalToClockArc(interval, dayStartMs, "entropia"));
-  }
+  const consciousMerged = mergeMsIntervals(voluntarySessions);
   for (const interval of consciousMerged) {
     arcs.push(intervalToClockArc(interval, dayStartMs, "conquista"));
+  }
+
+  const entropyRaw: MsInterval[] = [];
+  for (const seg of segmentos) {
+    const { start, end } = segmentWindowMs(
+      seg.horaInicio || "00:00",
+      seg.horaFin || "00:00",
+      dayStartMs
+    );
+    const evalStart = Math.max(start, livedStartMs);
+    const evalEnd = Math.min(end, nowMs);
+    if (evalEnd <= evalStart) continue;
+    if (!hasVoluntaryOverlapInWindow(voluntarySessions, evalStart, evalEnd)) {
+      entropyRaw.push({ start: evalStart, end: evalEnd });
+    }
+  }
+
+  const entropyMerged = mergeMsIntervals(entropyRaw);
+  const entropyNet = subtractMsIntervals(entropyMerged, consciousMerged);
+  for (const interval of entropyNet) {
+    arcs.push(intervalToClockArc(interval, dayStartMs, "entropia"));
   }
 
   return arcs;
 }
 
+export interface AnilloEstadoVivo {
+  deg: number;
+  mode: AnilloPointerMode;
+  umbralMin: number;
+  sinSegmentos: boolean;
+  centerGuide?: string;
+}
+
+/** Estado del puntero y mensaje central (Modo Calibración / reposo / entropía / conquista). */
+export function computeAnilloEstado(params: {
+  segmentos: SegmentoAnilloLite[];
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): AnilloEstadoVivo {
+  const now = params.now ?? Date.now();
+  const dayStartMs = getLimaDayStartMs(now);
+  const nowMs = Math.min(now, dayStartMs + 86400000);
+  const nowMin = getNowMinutesLima(nowMs, dayStartMs);
+  const segmentos = params.segmentos;
+  const hasSegments = segmentos.length > 0;
+  const umbralMin = getUmbralConcienciaMin(segmentos);
+  const deg = nowToClockDeg(nowMs);
+
+  if (nowMin < umbralMin) {
+    return { deg, mode: "reposo", umbralMin, sinSegmentos: !hasSegments };
+  }
+
+  if (!hasSegments) {
+    return {
+      deg,
+      mode: "calibracion",
+      umbralMin,
+      sinSegmentos: true,
+      centerGuide: "Fundá tu primer vehículo situacional para calibrar el día.",
+    };
+  }
+
+  const todayVehicles = filterVehiculosCalendarioHoy(params.vehiculos, now);
+  const situacionActiva = todayVehicles.some(
+    v => !v.autoVerdad && v.tipoFlota === "situacion" && v.status === "activo"
+  );
+  const cualquierVoluntarioActivo = todayVehicles.some(
+    v => !v.autoVerdad && v.status === "activo"
+  );
+
+  if (situacionActiva || cualquierVoluntarioActivo) {
+    return { deg, mode: "conquista", umbralMin, sinSegmentos: false };
+  }
+
+  for (const seg of segmentos) {
+    const { start, end } = segmentWindowMs(
+      seg.horaInicio || "00:00",
+      seg.horaFin || "00:00",
+      dayStartMs
+    );
+    if (nowMs < start) continue;
+    const evalEnd = Math.min(end, nowMs);
+    const voluntary = todayVehicles
+      .filter(v => !v.autoVerdad)
+      .map(v => vehicleSessionRange(v, now))
+      .filter((s): s is MsInterval => s != null);
+    if (!hasVoluntaryOverlapInWindow(voluntary, start, evalEnd)) {
+      return { deg, mode: "entropia", umbralMin, sinSegmentos: false };
+    }
+  }
+
+  return { deg, mode: "neutro", umbralMin, sinSegmentos: false };
+}
+
 export function computeTimelineDayStats(params: {
   vehiculos: VehiculoAnilloLite[];
+  segmentos?: SegmentoAnilloLite[];
   now?: number;
 }): TimelineDayStats {
   const now = params.now ?? Date.now();
   const dayStartMs = getLimaDayStartMs(now);
-  const livedEnd = Math.min(now, dayStartMs + 86400000);
-  if (livedEnd <= dayStartMs) {
+  const nowMs = Math.min(now, dayStartMs + 86400000);
+  const nowMin = getNowMinutesLima(nowMs, dayStartMs);
+  const segmentos = params.segmentos ?? [];
+  const umbralMin = getUmbralConcienciaMin(segmentos);
+
+  if (nowMin < umbralMin) {
+    return { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 };
+  }
+
+  if (segmentos.length === 0) {
+    return { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 };
+  }
+
+  const livedStartMs = dayStartMs + umbralMin * 60000;
+  const livedEndMs = nowMs;
+  if (livedEndMs <= livedStartMs) {
     return { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 };
   }
 
   const todayVehicles = filterVehiculosCalendarioHoy(params.vehiculos, now);
-  const consciousMerged = mergeMsIntervals(
-    todayVehicles
-      .filter(v => !v.autoVerdad)
-      .map(v => vehicleSessionRange(v, now))
-      .filter((s): s is MsInterval => s != null)
-      .map(s => clipInterval(s, dayStartMs, livedEnd))
-      .filter((s): s is MsInterval => s != null)
-  );
-  const centinelaMerged = mergeMsIntervals(
-    todayVehicles
-      .filter(v => v.autoVerdad)
-      .map(v => vehicleSessionRange(v, now))
-      .filter((s): s is MsInterval => s != null)
-      .map(s => clipInterval(s, dayStartMs, livedEnd))
-      .filter((s): s is MsInterval => s != null)
-  );
-  const centinelaNet = subtractMsIntervals(centinelaMerged, consciousMerged);
-  const covered = mergeMsIntervals([...consciousMerged, ...centinelaNet]);
-  const vacioIntervals = subtractMsIntervals([{ start: dayStartMs, end: livedEnd }], covered);
+  const voluntarySessions = todayVehicles
+    .filter(v => !v.autoVerdad)
+    .map(v => vehicleSessionRange(v, now))
+    .filter((s): s is MsInterval => s != null)
+    .map(s => clipInterval(s, livedStartMs, livedEndMs))
+    .filter((s): s is MsInterval => s != null);
+
+  const consciousMerged = mergeMsIntervals(voluntarySessions);
+
+  const entropyRaw: MsInterval[] = [];
+  for (const seg of segmentos) {
+    const { start, end } = segmentWindowMs(
+      seg.horaInicio || "00:00",
+      seg.horaFin || "00:00",
+      dayStartMs
+    );
+    const evalStart = Math.max(start, livedStartMs);
+    const evalEnd = Math.min(end, nowMs);
+    if (evalEnd <= evalStart) continue;
+    if (!hasVoluntaryOverlapInWindow(voluntarySessions, evalStart, evalEnd)) {
+      entropyRaw.push({ start: evalStart, end: evalEnd });
+    }
+  }
+  const entropyMerged = mergeMsIntervals(entropyRaw);
+  const entropyNet = subtractMsIntervals(entropyMerged, consciousMerged);
 
   const sumMin = (intervals: MsInterval[]) =>
     intervals.reduce((acc, i) => acc + (i.end - i.start) / 60000, 0);
 
   const conquistaMin = sumMin(consciousMerged);
-  const centinelaMin = sumMin(centinelaNet);
-  const vacioMin = sumMin(vacioIntervals);
+  const entropiaMin = sumMin(entropyNet);
+  const livedMin = (livedEndMs - livedStartMs) / 60000;
+  const vacioMin = Math.max(0, livedMin - conquistaMin - entropiaMin);
 
   return {
     conquistaMin: Math.round(conquistaMin * 10) / 10,
-    centinelaMin: Math.round(centinelaMin * 10) / 10,
+    centinelaMin: 0,
     vacioMin: Math.round(vacioMin * 10) / 10,
-    entropiaMin: Math.round((centinelaMin + vacioMin) * 10) / 10,
+    entropiaMin: Math.round(entropiaMin * 10) / 10,
   };
 }
 
@@ -382,14 +548,19 @@ export function calcularMetricasAnilloConciencia(params: {
   const now = params.now ?? Date.now();
 
   const minutosPlaneados = sumMinutosPlaneados(params.segmentos);
-  const jornadaMin = minutosPlaneados || 1440;
-  const planificacionPct = Math.min(100, (minutosPlaneados / 1440) * 100);
+  const umbralMin = getUmbralConcienciaMin(params.segmentos);
+  const nowMin = getNowMinutesLima(now, getLimaDayStartMs(now));
+  const ventanaVivaMin = Math.max(1, nowMin - umbralMin);
+  const jornadaMin = minutosPlaneados > 0 ? minutosPlaneados : ventanaVivaMin;
+  const planificacionPct = Math.min(100, (minutosPlaneados / MINUTOS_DIA) * 100);
 
-  const jornadaVehiculos = filterVehiculosJornadaActual(params.vehiculos, now);
-  const { conquistaMin, entropiaMin } = computeConquistaEntropiaMinutos({
-    vehiculos: jornadaVehiculos,
+  const dayStats = computeTimelineDayStats({
+    vehiculos: params.vehiculos,
+    segmentos: params.segmentos,
     now,
   });
+  const conquistaMin = dayStats.conquistaMin;
+  const entropiaMin = dayStats.entropiaMin;
 
   const totalMin = conquistaMin + entropiaMin;
   const fillPct = Math.min(100, (totalMin / jornadaMin) * 100);

@@ -4918,6 +4918,8 @@ export interface SegmentoV5 {
   cerradoAt?: number; // timestamp when closed
   reflexion?: string;
   centinelaEnabled?: boolean; // undefined/true = activo (backward compat); false = desactivado
+  /** Hub Proyectos y Centros: proyecto o centro al que se vincula este bloque de tiempo. */
+  proyectoVinculadoId?: string;
 }
 
 export interface Planilla {
@@ -6253,6 +6255,7 @@ export interface SegmentoTemplate {
   horaFin: string;
   color: string;
   icono: string;
+  proyectoVinculadoId?: string;
 }
 
 export interface PlantillaRutina {
@@ -6394,6 +6397,7 @@ export async function applyPlantillaToday(userId: string, plantilla: PlantillaRu
     estado: "pendiente",
     eventos: [],
     psGanados: 0,
+    ...(t.proyectoVinculadoId ? { proyectoVinculadoId: t.proyectoVinculadoId } : {}),
   }));
   const planilla: Planilla = {
     id: `planilla_${fecha}_${Date.now()}`,

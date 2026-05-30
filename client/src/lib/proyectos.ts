@@ -1,5 +1,5 @@
 import type { FocusBandId } from "./focusBandLedger";
-import type { SubTarea, SubVehiculo, Vehicle } from "./persistence";
+import type { SubTarea, SubVehiculo, Vehicle, TipoFlota } from "./persistence";
 import { maxBanda, inferBandaBloque } from "./termodinamicaAtencional";
 import type { RutaCruzadaSnapshot } from "./rutaEnfoque";
 
@@ -36,6 +36,14 @@ export interface ProyectoPeldano {
   updatedAt: number;
 }
 
+export interface ProyectoMetricasFlota {
+  minutosPorFlota: Partial<Record<TipoFlota, number>>;
+  psPorFlota: Partial<Record<TipoFlota, number>>;
+  ultimoSegmentoId?: string;
+  ultimoSegmentoNombre?: string;
+  ultimaActualizacionAt?: number;
+}
+
 export interface Proyecto {
   id: string;
   titulo: string;
@@ -48,6 +56,8 @@ export interface Proyecto {
   peldanosConquistados: number;
   profundidadMaxima?: FocusBandId;
   minutosTotales?: number;
+  /** Acumulado desde segmentos vinculados en Planificación (sin peldaño). */
+  metricasSegmentoVinculado?: ProyectoMetricasFlota;
 }
 
 const PROYECTOS_KEY = "sistemicar_proyectos";
@@ -415,6 +425,55 @@ export function computeProyectoStats(peldanos: ProyectoPeldano[]) {
     profundidadMaxima: profundidad,
     ultimoConquistado: [...conquistados].sort((a, b) => (b.cerradoAt ?? 0) - (a.cerradoAt ?? 0))[0] ?? null,
   };
+}
+
+/** Volcado automático de métricas de flota durante un segmento vinculado. */
+export async function registrarActividadFlotaEnProyecto(
+  userId: string,
+  proyectoId: string,
+  act: {
+    tipoFlota: TipoFlota;
+    tipoFlotaReal?: TipoFlota;
+    minutos?: number;
+    ps?: number;
+    segmentoId?: string;
+    segmentoNombre?: string;
+    vehicleId?: string;
+    ejeSaludRecuperacion?: boolean;
+  }
+): Promise<void> {
+  const list = getLocalProyectos(userId);
+  const idx = list.findIndex(p => p.id === proyectoId);
+  if (idx === -1) return;
+
+  const prev = list[idx].metricasSegmentoVinculado ?? {
+    minutosPorFlota: {},
+    psPorFlota: {},
+  };
+  const minutos = Math.max(0, act.minutos ?? 0);
+  const ps = Math.max(0, act.ps ?? 0);
+  const tipoHub = act.tipoFlota;
+
+  const minutosPorFlota = { ...prev.minutosPorFlota };
+  const psPorFlota = { ...prev.psPorFlota };
+  minutosPorFlota[tipoHub] = (minutosPorFlota[tipoHub] ?? 0) + minutos;
+  psPorFlota[tipoHub] = (psPorFlota[tipoHub] ?? 0) + ps;
+
+  const updated: Proyecto = {
+    ...list[idx],
+    minutosTotales: (list[idx].minutosTotales ?? 0) + minutos,
+    metricasSegmentoVinculado: {
+      minutosPorFlota,
+      psPorFlota,
+      ultimoSegmentoId: act.segmentoId ?? prev.ultimoSegmentoId,
+      ultimoSegmentoNombre: act.segmentoNombre ?? prev.ultimoSegmentoNombre,
+      ultimaActualizacionAt: Date.now(),
+    },
+    updatedAt: Date.now(),
+  };
+  list[idx] = updated;
+  saveLocalProyectos(userId, list);
+  void syncFirestoreProyecto(userId, updated);
 }
 
 export function subscribeToProyectos(userId: string, onData: () => void): () => void {

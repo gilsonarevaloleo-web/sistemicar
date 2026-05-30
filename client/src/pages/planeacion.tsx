@@ -260,7 +260,7 @@ import { ManualTriggerButton } from "@/components/master-manual-drawer";
 import AnilloConciencia from "@/components/AnilloConciencia";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
-import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, computeTimelineClockArcs, computeTimelineDayStats, formatMinutosJornada } from "@/engines/ConcienciaEngine";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, computeAnilloEstado, computeTimelineClockArcs, computeTimelineDayStats, formatMinutosJornada } from "@/engines/ConcienciaEngine";
 
 const GOLD = "#D4AF37";
 const AZURE = "#1E90FF";
@@ -3807,7 +3807,9 @@ export default function Planeacion() {
     const item = reservaActivas.find(r => r.id === reservaId);
     if (!item) return;
     const activos = vehicles.filter(v => v.status === "activo" && v.tipoFlota === "situacion");
-    const vehicle = pickSituacionVehicleTarget();
+    const vehicle =
+      (item.origenVehiculoId ? activos.find(v => v.id === item.origenVehiculoId) : undefined) ??
+      pickSituacionVehicleTarget();
     if (!vehicle) {
       toast.error(activos.length > 1 ? "Expande el vehículo situacional destino" : "Abre un vehículo situacional activo", {
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
@@ -3831,23 +3833,26 @@ export default function Planeacion() {
     };
     const subTareas = [...(vehicle.subTareas || []), newSub];
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicle.id ? { ...v, subTareas } : v));
-    setVehicles(vehiclesRef.current);
-    persistVehiclesRef();
+    setVehicles(prev => prev.map(v => (v.id === vehicle.id ? { ...v, subTareas } : v)));
     try {
-      await updateVehicle(user.uid, vehicle.id, { subTareas });
+      // Una sola persistencia: evita snapshot Firebase intermedio (lista libre) que pisaba el desglose con tiempo.
       await handleMoveSubTareasToCronometro(vehicle.id, [newSub.id]);
       await updateSituacionReservaEstado(user.uid, reservaId, "retomada_cron", {
         retomadaAt: Date.now(),
         retomadaEnVehiculoId: vehicle.id,
       });
       setExpandedId(vehicle.id);
-      toast.success("Retomada en cronómetro", {
+      toast.success("Retomada en desglose con tiempo", {
         description: item.texto,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 2800,
       });
     } catch (e) {
       console.error("[handleReservaACronometro]", e);
+      toast.error("No se pudo retomar en cronómetro", {
+        description: "Comprueba que el vehículo situacional siga activo e inténtalo de nuevo.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
     }
   };
 
@@ -4313,8 +4318,8 @@ export default function Planeacion() {
                     : row.key === "descansos"
                       ? "+"
                       : row.key === "bloques"
-                        ? "■"
-                        : "◆";
+                        ? "#"
+                        : "*";
                 const up = row.betterWhenHigher ? row.delta > 0 : false;
                 const down = row.betterWhenHigher ? row.delta < 0 : false;
                 const deltaColor = row.key === "descansos"
@@ -4620,8 +4625,9 @@ export default function Planeacion() {
             vehiculos: vehicles,
             now: nowMs,
           });
-          const timelineArcs = computeTimelineClockArcs({ vehiculos: vehicles, now: nowMs });
-          const dayStats = computeTimelineDayStats({ vehiculos: vehicles, now: nowMs });
+          const anilloEstado = computeAnilloEstado({ segmentos: segs, vehiculos: vehicles, now: nowMs });
+          const timelineArcs = computeTimelineClockArcs({ vehiculos: vehicles, segmentos: segs, now: nowMs });
+          const dayStats = computeTimelineDayStats({ vehiculos: vehicles, segmentos: segs, now: nowMs });
           const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
           return (
             <motion.div
@@ -4641,6 +4647,9 @@ export default function Planeacion() {
                 conquistaPulse={conquistaPulse}
                 size={130}
                 segmentos={segs}
+                pointerDeg={anilloEstado.deg}
+                pointerMode={anilloEstado.mode}
+                centerGuide={anilloEstado.centerGuide}
               />
               <div className="mt-2 grid grid-cols-3 gap-1 w-full text-center">
                 <div>
@@ -4966,20 +4975,34 @@ export default function Planeacion() {
         {rutinaBanner && (
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-            className="rounded-xl border p-3 flex items-center justify-between gap-3"
-            style={{ backgroundColor: `${GOLD}10`, borderColor: `${GOLD}40` }}
+            className="rounded-2xl border border-amber-700/30 shadow-[0_0_12px_rgba(245,158,11,0.08)] p-4 flex items-center justify-between gap-3 bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950"
             data-testid="banner-rutina"
           >
-            <div className="flex items-center gap-2 min-w-0">
-              <span style={{ color: GOLD, fontSize: 16 }}>⚡</span>
+            <div className="grid grid-cols-[auto_1fr] gap-2.5 items-center min-w-0">
+              <div className="w-2.5 h-2.5 rounded-full bg-amber-400/90 ring-2 ring-gray-800 shrink-0" />
               <div className="min-w-0">
-                <p className="text-[11px] font-bold truncate" style={{ color: GOLD }}>Rutina detectada: {rutinaBanner.nombre}</p>
-                <p className="text-[9px]" style={{ color: `${GOLD}80` }}>{rutinaBanner.segmentos.length} segmentos · {["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"][new Date().getDay()]}</p>
+                <p className="text-[11px] font-semibold tracking-wide text-gray-200 truncate">
+                  Rutina detectada: {rutinaBanner.nombre}
+                </p>
+                <p className="text-[9px] text-gray-500 tabular-nums">
+                  {rutinaBanner.segmentos.length} segmentos · {["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"][new Date().getDay()]}
+                </p>
               </div>
             </div>
-            <div className="flex gap-2 flex-shrink-0">
-              <button onClick={() => setRutinaBanner(null)} className="px-2 py-1 rounded text-[9px] font-bold" style={{ color: SLATE, backgroundColor: "rgba(255,255,255,0.04)" }}>Omitir</button>
-              <button onClick={() => cargarRutina(rutinaBanner)} className="px-3 py-1 rounded text-[9px] font-bold" style={{ backgroundColor: GOLD, color: "#000" }} data-testid="btn-cargar-rutina">Cargar</button>
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={() => setRutinaBanner(null)}
+                className="px-2.5 py-1 rounded-xl text-[9px] font-bold text-gray-500 border border-gray-800 bg-gray-900/40 hover:text-gray-300"
+              >
+                Omitir
+              </button>
+              <button
+                onClick={() => cargarRutina(rutinaBanner)}
+                className="px-3 py-1 rounded-xl text-[9px] font-bold text-amber-400 border border-amber-700/40 bg-amber-950/25 hover:bg-amber-950/40"
+                data-testid="btn-cargar-rutina"
+              >
+                Cargar
+              </button>
             </div>
           </motion.div>
         )}
@@ -4998,16 +5021,36 @@ export default function Planeacion() {
           <AnimatePresence>
             {expandedSegId === "segmentos" && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                <div className="px-4 pb-4 space-y-3 border-t" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+                <div className="px-4 pb-4 space-y-3 border-t border-gray-800/80">
                   <div className="flex justify-between items-center pt-2 gap-2 flex-wrap">
                     <div className="flex gap-1.5">
-                      <button onClick={() => setShowRutinasPanel(!showRutinasPanel)} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors" style={{ backgroundColor: `${GOLD}15`, color: GOLD }} data-testid="btn-rutinas-panel">
+                      <button
+                        onClick={() => setShowRutinasPanel(!showRutinasPanel)}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-colors border ${
+                          showRutinasPanel
+                            ? "border-gray-600 bg-gray-800/60 text-gray-200"
+                            : "border-gray-800 bg-gray-900/50 text-gray-400 hover:text-gray-200"
+                        }`}
+                        data-testid="btn-rutinas-panel"
+                      >
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                         Rutinas
-                        {plantillasRutina.length > 0 && <span className="text-[8px] px-1 rounded-full" style={{ backgroundColor: `${GOLD}30` }}>{plantillasRutina.length}</span>}
+                        {plantillasRutina.length > 0 && (
+                          <span className="text-[8px] px-1.5 py-0.5 rounded-md bg-gray-800 text-gray-400 border border-gray-700 tabular-nums">
+                            {plantillasRutina.length}
+                          </span>
+                        )}
                       </button>
                       {planilla && planilla.segmentos.length > 0 && (
-                        <button onClick={() => setShowGuardarRutina(!showGuardarRutina)} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors" style={{ backgroundColor: "rgba(255,255,255,0.06)", color: SLATE }} data-testid="btn-guardar-rutina">
+                        <button
+                          onClick={() => setShowGuardarRutina(!showGuardarRutina)}
+                          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-colors border ${
+                            showGuardarRutina
+                              ? "border-gray-600 bg-gray-800/60 text-gray-200"
+                              : "border-gray-800 bg-gray-900/50 text-gray-400 hover:text-gray-200"
+                          }`}
+                          data-testid="btn-guardar-rutina"
+                        >
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                           Guardar como rutina
                         </button>
@@ -5015,8 +5058,11 @@ export default function Planeacion() {
                     </div>
                     <button
                       onClick={() => setShowCrearSegmento(true)}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors"
-                      style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-colors border ${
+                        showCrearSegmento
+                          ? "border-gray-600 bg-gray-800/60 text-gray-200"
+                          : "border-gray-700 bg-gray-900/50 text-gray-300 hover:text-gray-100"
+                      }`}
                     >
                       <Plus size={12} /> Nuevo Segmento
                     </button>
@@ -5024,54 +5070,116 @@ export default function Planeacion() {
 
                   {/* PANEL: GUARDAR COMO RUTINA */}
                   {showGuardarRutina && planilla && planilla.segmentos.length > 0 && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="space-y-2 p-3 rounded-xl border" style={{ backgroundColor: `${GOLD}08`, borderColor: `${GOLD}30` }}>
-                      <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: GOLD }}>Guardar rutina · {planilla.segmentos.length} segmentos actuales</p>
-                      <input value={nuevaRutinaNombre} onChange={e => setNuevaRutinaNombre(e.target.value)} placeholder="Nombre de la rutina (ej: Semana de costura)" className="w-full p-2.5 rounded-lg bg-black/60 border text-white text-xs placeholder:text-slate-600 focus:outline-none" style={{ borderColor: nuevaRutinaNombre ? GOLD : "rgba(255,255,255,0.1)" }} />
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      className="space-y-3 p-4 rounded-2xl border border-gray-800 bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950"
+                      data-testid="panel-guardar-rutina"
+                    >
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-amber-400/90">
+                        Guardar rutina · {planilla.segmentos.length} segmentos actuales
+                      </p>
+                      <input
+                        value={nuevaRutinaNombre}
+                        onChange={e => setNuevaRutinaNombre(e.target.value)}
+                        placeholder="Nombre de la rutina (ej: Semana de costura)"
+                        className="w-full p-2.5 rounded-xl bg-gray-900/60 border border-gray-800 text-gray-200 text-xs placeholder:text-gray-600 focus:outline-none focus:border-gray-600"
+                      />
                       <div>
-                        <p className="text-[9px] text-slate-500 uppercase mb-1.5">Días activos</p>
+                        <p className="text-[9px] text-gray-500 uppercase tracking-wider mb-1.5">Días activos</p>
                         <div className="flex gap-1">
                           {["D","L","M","X","J","V","S"].map((d, i) => (
-                            <button key={i} onClick={() => setNuevaRutinaDias(prev => prev.includes(i) ? prev.filter(x => x !== i) : [...prev, i])}
-                              className="w-7 h-7 rounded-full text-[9px] font-black transition-all"
-                              style={{ backgroundColor: nuevaRutinaDias.includes(i) ? GOLD : "rgba(255,255,255,0.06)", color: nuevaRutinaDias.includes(i) ? "#000" : SLATE }}>
+                            <button
+                              key={i}
+                              onClick={() =>
+                                setNuevaRutinaDias(prev =>
+                                  prev.includes(i) ? prev.filter(x => x !== i) : [...prev, i]
+                                )
+                              }
+                              className={`w-7 h-7 rounded-full text-[9px] font-black transition-all border ${
+                                nuevaRutinaDias.includes(i)
+                                  ? "bg-amber-400/90 text-zinc-950 border-amber-500/50"
+                                  : "bg-gray-900/60 text-gray-500 border-gray-800 hover:border-gray-600"
+                              }`}
+                            >
                               {d}
                             </button>
                           ))}
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => setShowGuardarRutina(false)} className="flex-1 py-1.5 rounded text-[9px] text-slate-400 bg-white/5">Cancelar</button>
-                        <button onClick={guardarComoRutina} disabled={!nuevaRutinaNombre.trim() || nuevaRutinaDias.length === 0 || guardandoRutina} className="flex-1 py-1.5 rounded text-[9px] font-black disabled:opacity-40" style={{ backgroundColor: GOLD, color: "#000" }}>{guardandoRutina ? "Guardando…" : "Guardar"}</button>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={() => setShowGuardarRutina(false)}
+                          className="flex-1 py-2 rounded-xl text-[9px] font-bold text-gray-500 border border-gray-800 bg-gray-900/40 hover:bg-gray-900/60"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={guardarComoRutina}
+                          disabled={!nuevaRutinaNombre.trim() || nuevaRutinaDias.length === 0 || guardandoRutina}
+                          className="flex-1 py-2 rounded-xl text-[9px] font-bold text-amber-400 border border-amber-700/40 bg-amber-950/25 hover:bg-amber-950/40 disabled:opacity-40"
+                        >
+                          {guardandoRutina ? "Guardando…" : "Guardar"}
+                        </button>
                       </div>
                     </motion.div>
                   )}
 
                   {/* PANEL: GESTIÓN DE RUTINAS */}
                   {showRutinasPanel && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="space-y-2 p-3 rounded-xl border" style={{ backgroundColor: "rgba(0,0,0,0.3)", borderColor: `${GOLD}20` }}>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: GOLD }}>Mis Rutinas</p>
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      className="space-y-3 p-4 rounded-2xl border border-gray-800 bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950"
+                      data-testid="panel-rutinas"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[9px] font-bold uppercase tracking-widest text-amber-400/90">
+                          Mis Rutinas
+                        </p>
                         {notifPermission !== "granted" && notifPermission !== "unsupported" && (
-                          <button onClick={async () => { const ok = await requestNotificationPermission(); setNotifPermission(ok ? "granted" : "denied"); }}
-                            className="text-[8px] px-2 py-0.5 rounded font-bold" style={{ backgroundColor: `${VIOLET}20`, color: VIOLET }}>
-                            🔔 Activar alertas
+                          <button
+                            onClick={async () => {
+                              const ok = await requestNotificationPermission();
+                              setNotifPermission(ok ? "granted" : "denied");
+                            }}
+                            className="text-[8px] px-2 py-0.5 rounded-md font-bold border border-gray-700 text-gray-400 bg-gray-900/60 hover:text-gray-200"
+                          >
+                            Activar alertas
                           </button>
                         )}
-                        {notifPermission === "granted" && <span className="text-[8px]" style={{ color: EMERALD }}>🔔 Alertas activas</span>}
+                        {notifPermission === "granted" && (
+                          <span className="text-[8px] text-gray-500 uppercase tracking-wider">Alertas activas</span>
+                        )}
                       </div>
 
-                      {/* Vista semanal */}
-                      <div className="flex gap-0.5 mb-2">
+                      <div className="flex gap-0.5">
                         {["D","L","M","X","J","V","S"].map((d, i) => {
                           const hoy = new Date().getDay();
                           const matching = plantillasRutina.find(p => p.diasActivos.includes(i));
                           return (
-                            <div key={i} className="flex-1 rounded py-1 flex flex-col items-center gap-0.5" style={{ backgroundColor: i === hoy ? `${GOLD}15` : "rgba(255,255,255,0.03)", border: i === hoy ? `1px solid ${GOLD}40` : "1px solid transparent" }}>
-                              <span className="text-[8px] font-black" style={{ color: i === hoy ? GOLD : SLATE }}>{d}</span>
+                            <div
+                              key={i}
+                              className={`flex-1 rounded-lg py-1.5 flex flex-col items-center gap-0.5 border ${
+                                i === hoy
+                                  ? "bg-gray-800/50 border-gray-600"
+                                  : "bg-gray-900/40 border-gray-800"
+                              }`}
+                            >
+                              <span
+                                className={`text-[8px] font-black ${
+                                  i === hoy ? "text-gray-200" : "text-gray-500"
+                                }`}
+                              >
+                                {d}
+                              </span>
                               {matching ? (
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: GOLD }} title={matching.nombre} />
+                                <div
+                                  className="w-2 h-2 rounded-full bg-amber-400/80 ring-2 ring-gray-800"
+                                  title={matching.nombre}
+                                />
                               ) : (
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.08)" }} />
+                                <div className="w-2 h-2 rounded-full bg-gray-800" />
                               )}
                             </div>
                           );
@@ -5079,86 +5187,162 @@ export default function Planeacion() {
                       </div>
 
                       {plantillasRutina.length === 0 ? (
-                        <p className="text-[9px] text-slate-600 text-center py-1">Sin rutinas guardadas</p>
+                        <p className="text-[9px] text-gray-500 text-center py-2">Sin rutinas guardadas</p>
                       ) : (
-                        <div className="space-y-1.5">
-                          {plantillasRutina.map(r => (
-                            <div
-                              key={r.id}
-                              ref={el => { rutinaItemRefs.current[r.id] = el; }}
-                              className="flex items-center justify-between p-2 rounded-lg transition-colors"
-                              style={{
-                                backgroundColor: rutinaResaltadaId === r.id ? `${GOLD}18` : "rgba(255,255,255,0.04)",
-                                border: rutinaResaltadaId === r.id ? `2px solid ${GOLD}` : "1px solid rgba(255,255,255,0.06)",
-                              }}
-                            >
-                              <div className="min-w-0">
-                                <p className="text-[10px] font-bold truncate" style={{ color: "#e2e8f0" }}>{r.nombre}</p>
-                                <p className="text-[8px]" style={{ color: SLATE }}>
-                                  {r.segmentos.length} seg · {["D","L","M","X","J","V","S"].filter((_, i) => r.diasActivos.includes(i)).join(" ")}
-                                </p>
+                        <div className="space-y-2">
+                          {plantillasRutina.map(r => {
+                            const diasLabel = ["D","L","M","X","J","V","S"]
+                              .filter((_, i) => r.diasActivos.includes(i))
+                              .join(" ");
+                            const highlighted = rutinaResaltadaId === r.id;
+                            return (
+                              <div
+                                key={r.id}
+                                ref={el => { rutinaItemRefs.current[r.id] = el; }}
+                                className={`grid grid-cols-[auto_1fr_auto] gap-3 items-center p-3 rounded-2xl border transition-all bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950 ${
+                                  highlighted
+                                    ? "border-amber-700/40 shadow-[0_0_12px_rgba(245,158,11,0.1)]"
+                                    : "border-gray-800"
+                                }`}
+                              >
+                                <div
+                                  className={`w-2.5 h-2.5 rounded-full shrink-0 ring-2 ring-gray-800 ${
+                                    highlighted ? "bg-amber-400/90" : "bg-gray-600"
+                                  }`}
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-semibold tracking-wide text-gray-200 truncate">
+                                    {r.nombre}
+                                  </p>
+                                  <p className="text-[8px] text-gray-500 tabular-nums">
+                                    {r.segmentos.length} seg · {diasLabel}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    onClick={() => cargarRutina(r)}
+                                    disabled={cargandoRutinaId !== null}
+                                    className="px-2 py-0.5 rounded-md text-[8px] font-bold text-amber-400 border border-amber-700/40 bg-amber-950/20 hover:bg-amber-950/35 disabled:opacity-50"
+                                    data-testid={`btn-cargar-${r.id}`}
+                                  >
+                                    {cargandoRutinaId === r.id ? "Cargando…" : "Cargar"}
+                                  </button>
+                                  <button
+                                    onClick={() => eliminarRutina(r.id)}
+                                    className="w-6 h-6 rounded-md text-[10px] font-bold text-gray-500 border border-gray-800 bg-gray-900/60 hover:text-gray-300 hover:border-gray-600"
+                                    aria-label="Eliminar rutina"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
                               </div>
-                              <div className="flex gap-1.5 flex-shrink-0">
-                                <button
-                                  onClick={() => cargarRutina(r)}
-                                  disabled={cargandoRutinaId !== null}
-                                  className="px-2 py-0.5 rounded text-[8px] font-bold disabled:opacity-50"
-                                  style={{ backgroundColor: `${GOLD}20`, color: GOLD }}
-                                  data-testid={`btn-cargar-${r.id}`}
-                                >
-                                  {cargandoRutinaId === r.id ? "Cargando…" : "Cargar"}
-                                </button>
-                                <button onClick={() => eliminarRutina(r.id)} className="px-2 py-0.5 rounded text-[8px] font-bold" style={{ backgroundColor: `${BLOOD}15`, color: BLOOD }}>×</button>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </motion.div>
                   )}
 
                   {showCrearSegmento && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="space-y-2 p-3 rounded-xl border" style={{ backgroundColor: "rgba(0,0,0,0.4)", borderColor: `${BLOOD}30` }}>
-                      <input value={nuevoSegNombre} onChange={(e) => setNuevoSegNombre(e.target.value)} placeholder="Nombre del segmento" className="w-full p-3 rounded-lg bg-black/60 border text-white text-sm placeholder:text-slate-600 focus:outline-none" style={{ borderColor: nuevoSegNombre ? BLOOD : "rgba(255,255,255,0.1)" }} />
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      className="space-y-3 p-4 rounded-2xl border border-gray-800 bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950"
+                      data-testid="panel-nuevo-segmento"
+                    >
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">
+                        Nuevo segmento
+                      </p>
+                      <input
+                        value={nuevoSegNombre}
+                        onChange={(e) => setNuevoSegNombre(e.target.value)}
+                        placeholder="Nombre del segmento (ej: Costura, Planificación)"
+                        className="w-full p-3 rounded-xl bg-gray-900/60 border border-gray-800 text-gray-200 text-sm placeholder:text-gray-600 focus:outline-none focus:border-gray-600"
+                      />
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-[9px] text-slate-500 uppercase mb-1 block">Hora Inicio</label>
-                          <input type="time" value={nuevoSegHoraInicio} onChange={(e) => setNuevoSegHoraInicio(e.target.value)} className="w-full p-2 rounded-lg bg-black/60 border text-white text-sm focus:outline-none" style={{ borderColor: "rgba(255,255,255,0.1)" }} />
+                          <label className="text-[9px] text-gray-500 uppercase tracking-wider mb-1 block">
+                            Hora inicio
+                          </label>
+                          <input
+                            type="time"
+                            value={nuevoSegHoraInicio}
+                            onChange={(e) => setNuevoSegHoraInicio(e.target.value)}
+                            className="w-full p-2 rounded-xl bg-gray-900/60 border border-gray-800 text-gray-200 text-sm focus:outline-none focus:border-gray-600"
+                          />
                         </div>
                         <div>
-                          <label className="text-[9px] text-slate-500 uppercase mb-1 block">Hora Fin</label>
-                          <input type="time" value={nuevoSegHoraFin} onChange={(e) => setNuevoSegHoraFin(e.target.value)} className="w-full p-2 rounded-lg bg-black/60 border text-white text-sm focus:outline-none" style={{ borderColor: "rgba(255,255,255,0.1)" }} />
+                          <label className="text-[9px] text-gray-500 uppercase tracking-wider mb-1 block">
+                            Hora fin
+                          </label>
+                          <input
+                            type="time"
+                            value={nuevoSegHoraFin}
+                            onChange={(e) => setNuevoSegHoraFin(e.target.value)}
+                            className="w-full p-2 rounded-xl bg-gray-900/60 border border-gray-800 text-gray-200 text-sm focus:outline-none focus:border-gray-600"
+                          />
                         </div>
                       </div>
-                      <p className="text-[8px] text-slate-600">Duración máxima 24 h. Si la hora fin es anterior a inicio, el segmento cruza medianoche.</p>
+                      <p className="text-[8px] text-gray-500 leading-relaxed">
+                        Duración máxima 24 h. Si la hora fin es anterior a inicio, el segmento cruza medianoche.
+                      </p>
                       <div>
-                        <label className="text-[9px] text-slate-500 uppercase mb-1 block">Color</label>
+                        <label className="text-[9px] text-gray-500 uppercase tracking-wider mb-1.5 block">
+                          Color
+                        </label>
                         <div className="flex gap-1.5">
                           {SEGMENT_COLORS.map(c => (
-                            <button key={c} onClick={() => setNuevoSegColor(c)} className="w-6 h-6 rounded-full transition-all" style={{ backgroundColor: c, border: nuevoSegColor === c ? "2px solid white" : "2px solid transparent", transform: nuevoSegColor === c ? "scale(1.2)" : "scale(1)" }} />
+                            <button
+                              key={c}
+                              onClick={() => setNuevoSegColor(c)}
+                              className={`w-6 h-6 rounded-full transition-all ring-2 ${
+                                nuevoSegColor === c
+                                  ? "ring-gray-200 scale-110"
+                                  : "ring-gray-800 hover:ring-gray-600"
+                              }`}
+                              style={{ backgroundColor: c }}
+                            />
                           ))}
                         </div>
                       </div>
                       <button
                         onClick={() => setNuevoSegCentinelaEnabled(v => !v)}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold"
-                        style={{
-                          borderColor: nuevoSegCentinelaEnabled ? `${nuevoSegColor}60` : "rgba(255,255,255,0.1)",
-                          backgroundColor: nuevoSegCentinelaEnabled ? `${nuevoSegColor}12` : "rgba(255,255,255,0.03)",
-                          color: nuevoSegCentinelaEnabled ? nuevoSegColor : "rgba(255,255,255,0.25)"
-                        }}
+                        className="flex items-center gap-2 w-full px-3 py-2 rounded-xl border border-gray-800 bg-gray-900/40 transition-all hover:bg-gray-900/60"
                         data-testid="toggle-nuevo-seg-centinela"
                       >
-                        <Shield size={11} />
-                        Centinela {nuevoSegCentinelaEnabled ? "ACTIVO" : "INACTIVO"}
+                        <Shield
+                          size={11}
+                          className={nuevoSegCentinelaEnabled ? "text-gray-300" : "text-gray-600"}
+                        />
+                        <span className="text-xs font-bold uppercase tracking-wider flex-1 text-left text-gray-400">
+                          Centinela
+                        </span>
+                        <span
+                          className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border ${
+                            nuevoSegCentinelaEnabled
+                              ? "bg-gray-800 text-gray-300 border-gray-700"
+                              : "bg-gray-900/80 text-gray-500 border-gray-800"
+                          }`}
+                        >
+                          {nuevoSegCentinelaEnabled ? "ACTIVO" : "INACTIVO"}
+                        </span>
                       </button>
-                      <div className="flex gap-2">
-                        <button onClick={() => setShowCrearSegmento(false)} className="flex-1 py-2 rounded-lg text-xs text-slate-400 bg-white/5">Cancelar</button>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={() => setShowCrearSegmento(false)}
+                          className="flex-1 py-2 rounded-xl text-xs font-bold text-gray-500 border border-gray-800 bg-gray-900/40 hover:bg-gray-900/60"
+                        >
+                          Cancelar
+                        </button>
                         <button
                           onClick={addSegmento}
-                          disabled={segmentoProgramando || !nuevoSegNombre.trim() || !nuevoSegHoraInicio || !nuevoSegHoraFin}
-                          className="flex-1 py-2 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
-                          style={{ backgroundColor: BLOOD, color: "#fff" }}
+                          disabled={
+                            segmentoProgramando ||
+                            !nuevoSegNombre.trim() ||
+                            !nuevoSegHoraInicio ||
+                            !nuevoSegHoraFin
+                          }
+                          className="flex-1 py-2 rounded-xl text-xs font-bold text-gray-200 border border-gray-600 bg-gray-800/80 hover:bg-gray-700/80 disabled:opacity-50"
                         >
                           {segmentoProgramando ? "Programando…" : "Programar"}
                         </button>
@@ -5167,11 +5351,12 @@ export default function Planeacion() {
                   )}
 
                   {planilla && planilla.segmentos.length > 0 ? (
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       {planilla.segmentos.map((seg) => {
                         const isActive = seg.estado === "activo";
                         const isEntropia = seg.estado === "entropia";
                         const isClosedManual = seg.estado === "cerrado_manual";
+                        const isPendiente = seg.estado === "pendiente";
                         const nowMsSeg = Date.now();
                         const activarVentanaAbierta = isWithinSegmentTimeMargin(
                           nowMsSeg, seg.horaInicio, seg.horaFin, "inicio", 5
@@ -5181,39 +5366,55 @@ export default function Planeacion() {
                           : true;
                         const discSeg = disciplinaBySegmentId.get(seg.id);
                         const discBadge = discSeg ? disciplinaBadgeLabel(discSeg) : null;
+                        const dotColor = isActive
+                          ? EMERALD
+                          : isClosedManual
+                            ? "#64748b"
+                            : seg.color;
+                        const estadoBadge =
+                          isEntropia
+                            ? "ENTROPÍA"
+                            : isClosedManual
+                              ? "CERRADO"
+                              : isActive
+                                ? "ACTIVO"
+                                : isPendiente
+                                  ? "PENDIENTE"
+                                  : null;
+                        const cardClass = [
+                          "rounded-2xl border p-4 transition-all",
+                          "bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950",
+                          isEntropia
+                            ? "border-red-900/50 shadow-[0_0_15px_rgba(220,38,38,0.15)]"
+                            : isActive
+                              ? "border-emerald-900/40 shadow-[0_0_12px_rgba(16,185,129,0.08)]"
+                              : "border-gray-800",
+                        ].join(" ");
+                        const hasActions =
+                          (isActive && cierreVentanaAbierta) ||
+                          (isActive && !cierreVentanaAbierta && !!seg.horaFin) ||
+                          isPendiente;
                         return (
-                          <div key={seg.id} className="p-3 rounded-xl border transition-all" style={{
-                            backgroundColor: isActive ? `${EMERALD}08` : isEntropia ? `${BLOOD}08` : isClosedManual ? "rgba(100,116,139,0.05)" : "rgba(107,114,128,0.03)",
-                            borderColor: isActive ? `${EMERALD}40` : isEntropia ? `${BLOOD}40` : isClosedManual ? "rgba(100,116,139,0.2)" : "rgba(107,114,128,0.15)"
-                          }}>
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: isActive ? EMERALD : isEntropia ? BLOOD : isClosedManual ? SLATE : seg.color }} />
-                                <div>
-                                  <p className="text-xs font-bold" style={{ color: isActive ? EMERALD : isEntropia ? BLOOD : isClosedManual ? SLATE : "#e2e8f0" }}>{seg.nombre}</p>
-                                  <p className="text-[9px] text-slate-600">{seg.horaInicio} - {seg.horaFin}</p>
+                          <div key={seg.id} className={cardClass} data-testid={`segment-card-${seg.id}`}>
+                            <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center">
+                              <div className="flex items-center gap-2.5 shrink-0">
+                                <div
+                                  className="w-3 h-3 rounded-full ring-2 ring-gray-800/90 shrink-0"
+                                  style={{ backgroundColor: dotColor }}
+                                />
+                                <div className="flex flex-col text-xs text-gray-500 leading-tight tabular-nums">
+                                  <span>{seg.horaInicio}</span>
+                                  <span>{seg.horaFin}</span>
                                 </div>
+                              </div>
+
+                              <div className="min-w-0 flex items-center gap-2">
+                                <p className="text-gray-200 font-semibold tracking-wide truncate">
+                                  {seg.nombre}
+                                </p>
                                 {discBadge && (
                                   <span
-                                    className="text-[7px] font-black px-1.5 py-0.5 rounded uppercase shrink-0"
-                                    style={{
-                                      backgroundColor:
-                                        discBadge === "M!"
-                                          ? `${BLOOD}20`
-                                          : discBadge === "—"
-                                            ? "rgba(148,163,184,0.15)"
-                                            : discSeg && discSeg.scoreSegmento >= 70
-                                              ? `${EMERALD}20`
-                                              : "rgba(212,175,55,0.15)",
-                                      color:
-                                        discBadge === "M!"
-                                          ? BLOOD
-                                          : discBadge === "—"
-                                            ? SLATE
-                                            : discSeg && discSeg.scoreSegmento >= 70
-                                              ? EMERALD
-                                              : GOLD,
-                                    }}
+                                    className="text-[7px] font-black px-1.5 py-0.5 rounded uppercase shrink-0 border border-gray-800 bg-gray-900/80 text-gray-400"
                                     title={discSeg ? describeSegmentoDisciplina(discSeg) : undefined}
                                     data-testid={`segment-disciplina-${seg.id}`}
                                   >
@@ -5221,52 +5422,82 @@ export default function Planeacion() {
                                   </span>
                                 )}
                               </div>
-                              <div className="flex flex-col items-end gap-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap justify-end">
-                                  {isEntropia && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }}>ENTROPÍA</span>}
-                                  {isClosedManual && <span className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase" style={{ backgroundColor: "rgba(100,116,139,0.2)", color: SLATE }}>CERRADO</span>}
-                                  {isActive && cierreVentanaAbierta && (
-                                    <button onClick={() => cerrarSegmentoManual(seg.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: `${BLOOD}20`, color: BLOOD }} data-testid={`button-close-segment-${seg.id}`}>
-                                      <Square size={10} /> Cerrar (+2 PS)
-                                    </button>
-                                  )}
-                                  {isActive && !cierreVentanaAbierta && seg.horaFin && (
-                                    <span className="text-[7px] text-right max-w-[11rem] leading-tight" style={{ color: BLOOD }}>
-                                      Puerta sellada — entropía inminente si no cierras ±5 min de {seg.horaFin}
-                                    </span>
-                                  )}
-                                  {seg.estado === "pendiente" && (
-                                    activarVentanaAbierta ? (
-                                      <button onClick={() => activarSegmento(seg.id)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-colors" style={{ backgroundColor: `${EMERALD}20`, color: EMERALD }} data-testid={`button-start-segment-${seg.id}`}>
-                                        <Play size={10} /> Activar +2 PS
-                                      </button>
-                                    ) : (
-                                      <div className="flex flex-col items-end gap-0.5 max-w-[10.5rem]">
-                                        <span className="text-[7px] text-slate-500 text-right leading-tight">
-                                          Activar disponible ±5 min de {seg.horaInicio}
-                                        </span>
-                                        <span className="text-[8px] px-2 py-0.5 rounded-lg" style={{ color: "rgba(255,255,255,0.35)", backgroundColor: "rgba(255,255,255,0.04)" }} title={`Ventana: ${seg.horaInicio} ± 5 min`}>
-                                          🔒 Esperando horario
-                                        </span>
-                                      </div>
-                                    )
-                                  )}
-                                  {seg.psGanados > 0 && <span className="text-[9px] font-black" style={{ color: GOLD }}>+{seg.psGanados} PS</span>}
-                                </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                {estadoBadge && (
+                                  <span className="px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider bg-gray-900/90 text-gray-400 border border-gray-800">
+                                    {estadoBadge}
+                                  </span>
+                                )}
+                                {seg.psGanados > 0 && (
+                                  <span className="text-amber-400 font-bold text-xs tabular-nums whitespace-nowrap">
+                                    +{seg.psGanados} PS
+                                  </span>
+                                )}
                               </div>
                             </div>
+
+                            {hasActions && (
+                              <div className="mt-3 pt-3 border-t border-gray-800/80 flex flex-wrap items-center justify-end gap-2">
+                                {isActive && cierreVentanaAbierta && (
+                                  <button
+                                    onClick={() => cerrarSegmentoManual(seg.id)}
+                                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-red-900/40 text-red-300/90 bg-red-950/20 hover:bg-red-950/35"
+                                    data-testid={`button-close-segment-${seg.id}`}
+                                  >
+                                    <Square size={10} /> Cerrar (+2 PS)
+                                  </button>
+                                )}
+                                {isActive && !cierreVentanaAbierta && seg.horaFin && (
+                                  <span className="text-[7px] text-gray-500 text-right max-w-[14rem] leading-tight">
+                                    Puerta sellada — entropía inminente si no cierras ±5 min de {seg.horaFin}
+                                  </span>
+                                )}
+                                {isPendiente &&
+                                  (activarVentanaAbierta ? (
+                                    <button
+                                      onClick={() => activarSegmento(seg.id)}
+                                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-emerald-900/40 text-emerald-400/90 bg-emerald-950/20 hover:bg-emerald-950/35"
+                                      data-testid={`button-start-segment-${seg.id}`}
+                                    >
+                                      <Play size={10} /> Activar +2 PS
+                                    </button>
+                                  ) : (
+                                    <div className="flex flex-col items-end gap-0.5 max-w-[12rem]">
+                                      <span className="text-[7px] text-gray-500 text-right leading-tight">
+                                        Activar disponible ±5 min de {seg.horaInicio}
+                                      </span>
+                                      <span
+                                        className="text-[8px] px-2 py-0.5 rounded-md text-gray-500 bg-gray-900/60 border border-gray-800"
+                                        title={`Ventana: ${seg.horaInicio} ± 5 min`}
+                                      >
+                                        Esperando horario
+                                      </span>
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+
                             {isActive && seg.eventos.length > 0 && (
-                              <div className="mt-2 pt-2 border-t" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
-                                <p className="text-[8px] text-slate-600 uppercase mb-1">Eventos registrados:</p>
+                              <div className="mt-3 pt-3 border-t border-gray-800/80">
+                                <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-1.5">
+                                  Eventos registrados
+                                </p>
                                 <div className="flex flex-wrap gap-1">
                                   {seg.eventos.slice(-5).map((ev, i) => (
-                                    <span key={i} className="text-[8px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.05)", color: SLATE }}>{ev.componente} · {ev.hora}</span>
+                                    <span
+                                      key={i}
+                                      className="text-[8px] px-1.5 py-0.5 rounded-md bg-gray-900/70 text-gray-400 border border-gray-800"
+                                    >
+                                      {ev.componente} · {ev.hora}
+                                    </span>
                                   ))}
                                 </div>
                               </div>
                             )}
+
                             {!isClosedManual && !isEntropia && (
-                              <div className="mt-2 pt-2 border-t" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+                              <div className="mt-3 pt-3 border-t border-gray-800/80">
                                 <button
                                   onClick={async () => {
                                     if (!user || !planilla) return;
@@ -5275,32 +5506,36 @@ export default function Planeacion() {
                                       ...planilla,
                                       segmentos: planilla.segmentos.map(s =>
                                         s.id === seg.id ? { ...s, centinelaEnabled: newVal } : s
-                                      )
+                                      ),
                                     });
                                     try {
-                                      const updated = await updateSegmentoInPlanilla(user.uid, seg.id, { centinelaEnabled: newVal });
+                                      const updated = await updateSegmentoInPlanilla(user.uid, seg.id, {
+                                        centinelaEnabled: newVal,
+                                      });
                                       setPlanilla(updated);
                                     } catch {
                                       setPlanilla(planilla);
                                     }
                                   }}
-                                  className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border transition-all"
-                                  style={{
-                                    borderColor: seg.centinelaEnabled === false ? "rgba(255,255,255,0.08)" : `${seg.color}40`,
-                                    backgroundColor: seg.centinelaEnabled === false ? "rgba(255,255,255,0.03)" : `${seg.color}12`,
-                                    color: seg.centinelaEnabled === false ? "rgba(255,255,255,0.3)" : seg.color
-                                  }}
+                                  className="flex items-center gap-2 w-full px-3 py-2 rounded-xl border border-gray-800 bg-gray-900/40 transition-all hover:bg-gray-900/60"
                                   data-testid={`toggle-centinela-${seg.id}`}
                                 >
-                                  <Shield size={13} />
-                                  <span className="text-[10px] font-bold uppercase tracking-wider flex-1 text-left">
+                                  <Shield
+                                    size={13}
+                                    className={
+                                      seg.centinelaEnabled === false ? "text-gray-600" : "text-gray-300"
+                                    }
+                                  />
+                                  <span className="text-[10px] font-bold uppercase tracking-wider flex-1 text-left text-gray-400">
                                     Centinela
                                   </span>
-                                  <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full"
-                                    style={{
-                                      backgroundColor: seg.centinelaEnabled === false ? "rgba(255,255,255,0.06)" : `${seg.color}25`,
-                                      color: seg.centinelaEnabled === false ? "rgba(255,255,255,0.25)" : seg.color
-                                    }}>
+                                  <span
+                                    className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border ${
+                                      seg.centinelaEnabled === false
+                                        ? "bg-gray-900/80 text-gray-500 border-gray-800"
+                                        : "bg-gray-800 text-gray-300 border-gray-700"
+                                    }`}
+                                  >
                                     {seg.centinelaEnabled === false ? "INACTIVO" : "ACTIVO"}
                                   </span>
                                 </button>
@@ -5310,14 +5545,16 @@ export default function Planeacion() {
                         );
                       })}
                       {planilla.segmentos.filter(s => s.estado === "entropia").length > 0 && (
-                        <div className="p-3 rounded-xl border" style={{ backgroundColor: "#1a000010", borderColor: "#7f1d1d" }}>
+                        <div className="p-4 rounded-2xl border border-red-900/50 shadow-[0_0_15px_rgba(220,38,38,0.12)] bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950">
                           <div className="flex items-center gap-2 mb-1">
-                            <Lock size={12} style={{ color: "#7f1d1d" }} />
-                            <span className="text-[9px] font-black uppercase" style={{ color: "#7f1d1d" }}>
-                              SEGMENTOS EN ENTROPÍA: {planilla.segmentos.filter(s => s.estado === "entropia").length}
+                            <Lock size={12} className="text-gray-500" />
+                            <span className="text-[9px] font-black uppercase tracking-wider text-gray-400">
+                              Segmentos en entropía: {planilla.segmentos.filter(s => s.estado === "entropia").length}
                             </span>
                           </div>
-                          <p className="text-[9px] text-slate-500">Cada entropía = 0 PS. Registro de atención perdida — entrena la conciencia panorámica.</p>
+                          <p className="text-[9px] text-gray-500 leading-relaxed">
+                            Cada entropía = 0 PS. Registro de atención perdida — entrena la conciencia panorámica.
+                          </p>
                         </div>
                       )}
                       <div ref={segmentosListEndRef} className="h-0 w-full scroll-mt-4" aria-hidden />

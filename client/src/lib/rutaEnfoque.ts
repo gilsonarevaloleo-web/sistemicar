@@ -19,10 +19,11 @@ export interface RutaEnfoqueState {
   cruzado: RutaCruzadaSnapshot;
 }
 
+/** Iconos ASCII: evitan "????" en fuentes Windows sin glifos Unicode. */
 export const RUTA_BANDA_META: Record<RutaBandaId, { label: string; icon: string; color: string }> = {
   fluido: { label: "Fluido", icon: "~", color: "#38BDF8" },
-  concentrado: { label: "Concentrado", icon: "●", color: "#A855F7" },
-  limite: { label: "Al límite", icon: "▲", color: "#f87171" },
+  concentrado: { label: "Concentrado", icon: "o", color: "#A855F7" },
+  limite: { label: "Al límite", icon: "^", color: "#f87171" },
 };
 
 /** Umbrales enteros: fluido = ceil(N/2), concentrado = ceil(N/4). */

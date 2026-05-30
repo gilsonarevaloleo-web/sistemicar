@@ -53,7 +53,7 @@ function sortSegmentos(segmentos: SegmentoV5[]): SegmentoV5[] {
   );
 }
 
-/** Veh�culo consciente que cuenta como entrada al trabajo. */
+/** Vehículo consciente que cuenta como entrada al trabajo. */
 export function isTrabajoConsciente(v: Vehicle): boolean {
   return !v.autoVerdad && v.tipoFlota !== "descanso";
 }
@@ -139,7 +139,7 @@ function buildEstudioTipos(vehicles: Vehicle[], segmentos: SegmentoV5[], dayStar
     .sort((a, b) => b.count - a.count);
 }
 
-/** Disciplina del d�a: minutos hasta entrar al trabajo y score por segmento. */
+/** Disciplina del día: minutos hasta entrar al trabajo y score por segmento. */
 export function computeDisciplinaDia(params: {
   segmentos: SegmentoV5[];
   vehicles: Vehicle[];
@@ -276,23 +276,23 @@ export function computeDisciplinaDia(params: {
 
 export function describeSegmentoDisciplina(sd: SegmentoDisciplina): string {
   if (sd.sinEntrada) return "Sin entrada al trabajo en este ciclo";
-  if (sd.primerEntradaAt == null && sd.enCurso) return "Ciclo en curso � a�n sin entrada";
+  if (sd.primerEntradaAt == null && sd.enCurso) return "Ciclo en curso — aún sin entrada";
   if (sd.primerEntradaAt == null) return "En curso";
-  const tipo = sd.primerEntradaTipo.tipoReloj ?? sd.primerEntradaTipo.tipoFlota ?? "veh�culo";
+  const tipo = sd.primerEntradaTipo.tipoReloj ?? sd.primerEntradaTipo.tipoFlota ?? "vehículo";
   const desdeInicio =
     sd.deltaDesdeInicioMin != null ? `+${sd.deltaDesdeInicioMin} min desde inicio` : "";
   const desdePuerta =
     sd.deltaDesdePuertaMin != null ? `+${sd.deltaDesdePuertaMin} min desde puerta` : "";
   const partes = [desdeInicio, desdePuerta, tipo].filter(Boolean);
   if (sd.montaje) partes.push("montaje situacional");
-  return partes.join(" � ");
+  return partes.join(" · ");
 }
 
 export function disciplinaBadgeLabel(sd: SegmentoDisciplina): string | null {
   if (sd.montaje && sd.enCurso) return "M!";
-  if (sd.sinEntrada) return "�";
+  if (sd.sinEntrada) return "—";
   if (sd.deltaDesdeInicioMin != null) return `+${sd.deltaDesdeInicioMin}`;
-  if (sd.enCurso) return "�";
+  if (sd.enCurso) return "…";
   return null;
 }
 
@@ -301,7 +301,7 @@ export function formatEstudioTipoChip(e: EstudioTipoVehiculo): string {
     e.tipoReloj && e.tipoReloj !== "-"
       ? e.tipoReloj
       : e.tipoFlota;
-  return `${label}�${e.count}`;
+  return `${label} · ${e.count}`;
 }
 
 export function computeDisciplinaCompare(
@@ -313,22 +313,22 @@ export function computeDisciplinaCompare(
     ? today.indiceDisciplina - yesterday!.indiceDisciplina
     : null;
 
-  const headline = `�ndice ${today.indiceDisciplina} � ${today.entradasTotales} entradas al trabajo`;
+  const headline = `Índice ${today.indiceDisciplina} · ${today.entradasTotales} entradas al trabajo`;
 
   let motivacion: string;
   if (today.deltaMedioDesdeInicioMin != null) {
-    motivacion = `? medio ${today.deltaMedioDesdeInicioMin} min desde inicio programado`;
+    motivacion = `Δ medio ${today.deltaMedioDesdeInicioMin} min desde inicio programado`;
     if (today.deltaMedioDesdePuertaMin != null) {
-      motivacion += ` � ${today.deltaMedioDesdePuertaMin} min desde puerta`;
+      motivacion += ` · ${today.deltaMedioDesdePuertaMin} min desde puerta`;
     }
   } else {
     motivacion = "Minutos hasta entrar al trabajo (puerta atencional + ciclo).";
   }
 
   if (deltaIndice != null && deltaIndice > 0) {
-    motivacion += ` � +${deltaIndice} vs ayer.`;
+    motivacion += ` · +${deltaIndice} vs ayer.`;
   } else if (deltaIndice != null && deltaIndice < 0) {
-    motivacion += ` � ${deltaIndice} vs ayer.`;
+    motivacion += ` · ${deltaIndice} vs ayer.`;
   }
 
   return { headline, motivacion, deltaIndice };
@@ -340,7 +340,7 @@ export type DisciplinaSeriePoint = {
   label: string;
 };
 
-/** Serie para gr�fico de l�nea (snapshots + hoy en vivo). */
+/** Serie para gráfico de línea (snapshots + hoy en vivo). */
 export function buildDisciplinaSerie(
   snapshots: Array<{ fecha: string; disciplina?: DisciplinaDia }>,
   todayLive?: DisciplinaDia,

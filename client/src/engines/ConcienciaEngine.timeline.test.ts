@@ -1,78 +1,118 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  clockMinutesToDeg,
+  computeAnilloEstado,
   computeTimelineClockArcs,
   computeTimelineDayStats,
-  msToClockDeg,
-  vehicleSessionRange,
+  getUmbralConcienciaMin,
+  nowToClockDeg,
+  UMBRAL_CONTINGENCIA_MIN,
 } from "./ConcienciaEngine.ts";
 import { getLimaDayStartMs } from "../lib/segmentTime.ts";
 
-describe("msToClockDeg", () => {
-  it("12:00 Lima queda arriba (0 grados)", () => {
-    const dayStart = getLimaDayStartMs(Date.UTC(2026, 4, 18, 17, 0, 0)); // noon Lima May 18
-    const noon = dayStart + 12 * 3600000;
-    assert.ok(Math.abs(msToClockDeg(noon, dayStart)) < 0.01);
+describe("clockMinutesToDeg / puntero 24h", () => {
+  it("00:00 arriba (0°)", () => {
+    assert.equal(clockMinutesToDeg(0), 0);
+  });
+
+  it("07:00 = 105° (7×15 + 0×0.25)", () => {
+    assert.equal(clockMinutesToDeg(7 * 60), 105);
+  });
+
+  it("12:00 = 180° (medio día abajo)", () => {
+    assert.equal(clockMinutesToDeg(12 * 60), 180);
   });
 });
 
-describe("computeTimelineClockArcs", () => {
+describe("Umbral de Conciencia", () => {
+  it("sin segmentos usa 06:00", () => {
+    assert.equal(getUmbralConcienciaMin([]), UMBRAL_CONTINGENCIA_MIN);
+  });
+
+  it("toma la hora de inicio más temprana", () => {
+    assert.equal(
+      getUmbralConcienciaMin([
+        { horaInicio: "09:00", horaFin: "12:00" },
+        { horaInicio: "07:30", horaFin: "09:00" },
+      ]),
+      7 * 60 + 30
+    );
+  });
+});
+
+describe("computeTimelineClockArcs bio-adaptativo", () => {
   const dayStart = getLimaDayStartMs(Date.UTC(2026, 4, 18, 17, 0, 0));
-  const now = dayStart + 15 * 3600000; // 15:00
 
   it("incluye arco fondo 24h", () => {
-    const arcs = computeTimelineClockArcs({ vehiculos: [], now });
+    const arcs = computeTimelineClockArcs({ vehiculos: [], segmentos: [], now: dayStart + 10 * 3600000 });
     assert.ok(arcs.some(a => a.kind === "fondo" && a.endDeg - a.startDeg >= 359));
   });
 
-  it("sesion consciente genera arco morado en franja horaria", () => {
-    const apertura = dayStart + 10 * 3600000;
-    const cierre = dayStart + 10.5 * 3600000;
+  it("antes del umbral solo reposo, sin entropía roja", () => {
+    const now = dayStart + 5 * 3600000;
     const arcs = computeTimelineClockArcs({
+      vehiculos: [],
+      segmentos: [{ horaInicio: "08:00", horaFin: "10:00" }],
+      now,
+    });
+    assert.ok(arcs.some(a => a.kind === "reposo"));
+    assert.equal(arcs.filter(a => a.kind === "entropia").length, 0);
+  });
+
+  it("sin segmentos tras 06:00 no genera rojo (modo calibración)", () => {
+    const now = dayStart + 8 * 3600000;
+    const arcs = computeTimelineClockArcs({ vehiculos: [], segmentos: [], now });
+    assert.equal(arcs.filter(a => a.kind === "entropia").length, 0);
+    const stats = computeTimelineDayStats({ vehiculos: [], segmentos: [], now });
+    assert.equal(stats.entropiaMin, 0);
+  });
+
+  it("bloque planificado sin vehículo genera entropía roja", () => {
+    const now = dayStart + 9 * 3600000;
+    const arcs = computeTimelineClockArcs({
+      vehiculos: [],
+      segmentos: [{ horaInicio: "08:00", horaFin: "12:00" }],
+      now,
+    });
+    assert.ok(arcs.some(a => a.kind === "entropia"));
+  });
+
+  it("vehículo voluntario genera arco morado", () => {
+    const apertura = dayStart + 8 * 3600000 + 15 * 60000;
+    const cierre = dayStart + 9 * 3600000;
+    const arcs = computeTimelineClockArcs({
+      segmentos: [{ horaInicio: "08:00", horaFin: "12:00" }],
       vehiculos: [{
         autoVerdad: false,
         status: "cumplido",
         aperturaAt: apertura,
         cierreAt: cierre,
-        duracionFinal: 30,
+        duracionFinal: 45,
       }],
-      now,
+      now: dayStart + 10 * 3600000,
     });
-    const conquista = arcs.filter(a => a.kind === "conquista");
-    assert.ok(conquista.length >= 1);
-  });
-
-  it("vac�o del dia vivido genera arco rojo", () => {
-    const arcs = computeTimelineClockArcs({ vehiculos: [], now });
-    const rojo = arcs.filter(a => a.kind === "entropia");
-    assert.ok(rojo.length >= 1);
-    const stats = computeTimelineDayStats({ vehiculos: [], now });
-    assert.ok(stats.vacioMin > 0);
-    assert.equal(stats.conquistaMin, 0);
-  });
-
-  it("centinela solapado con consciente no duplica rojo", () => {
-    const apertura = dayStart + 10 * 3600000;
-    const stats = computeTimelineDayStats({
-      vehiculos: [
-        { autoVerdad: false, status: "activo", aperturaAt: apertura },
-        { autoVerdad: true, status: "activo", aperturaAt: apertura },
-      ],
-      now: apertura + 3600000,
-    });
-    assert.ok(stats.conquistaMin >= 59);
-    assert.equal(stats.centinelaMin, 0);
+    assert.ok(arcs.some(a => a.kind === "conquista"));
   });
 });
 
-describe("vehicleSessionRange fallback", () => {
-  it("usa duracionFinal si falta cierreAt", () => {
-    const start = Date.UTC(2026, 4, 18, 15, 0, 0);
-    const range = vehicleSessionRange(
-      { autoVerdad: false, status: "cumplido", aperturaAt: start, duracionFinal: 45 },
-      start + 3600000
-    );
-    assert.ok(range);
-    assert.equal(range!.end - range!.start, 45 * 60000);
+describe("computeAnilloEstado", () => {
+  const dayStart = getLimaDayStartMs(Date.UTC(2026, 4, 18, 17, 0, 0));
+
+  it("modo calibración sin segmentos después de 06:00", () => {
+    const now = dayStart + 7 * 3600000;
+    const st = computeAnilloEstado({ segmentos: [], vehiculos: [], now });
+    assert.equal(st.mode, "calibracion");
+    assert.ok(st.centerGuide);
+  });
+
+  it("modo reposo antes del primer segmento", () => {
+    const now = dayStart + 6 * 3600000;
+    const st = computeAnilloEstado({
+      segmentos: [{ horaInicio: "08:00", horaFin: "10:00" }],
+      vehiculos: [],
+      now,
+    });
+    assert.equal(st.mode, "reposo");
   });
 });
