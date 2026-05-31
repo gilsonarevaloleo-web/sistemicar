@@ -1,4 +1,4 @@
-/** Utilidades de horario para segmentos del d�a (zona Lima, ventanas que cruzan medianoche). */
+/** Utilidades de horario para segmentos del día (ventanas que cruzan medianoche). */
 
 export const MAX_SEGMENT_DURATION_MIN = 24 * 60;
 
@@ -17,7 +17,13 @@ export function segmentTimeToMinutes(t: string): number {
   return parsed.h * 60 + parsed.m;
 }
 
-/** Inicio del d�a calendario Lima (UTC-5) en ms. */
+/** Medianoche del día calendario local (reloj del navegador / inputs type=time). */
+export function getLocalDayStartMs(fromMs: number = Date.now()): number {
+  const d = new Date(fromMs);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Inicio del día calendario Lima (UTC-5) en ms. */
 export function getLimaDayStartMs(fromMs: number = Date.now()): number {
   const LIMA_OFFSET_MS = -5 * 60 * 60 * 1000;
   const nowLima = new Date(fromMs + LIMA_OFFSET_MS);
@@ -27,6 +33,11 @@ export function getLimaDayStartMs(fromMs: number = Date.now()): number {
     nowLima.getUTCSeconds() * 1000 +
     nowLima.getUTCMilliseconds();
   return fromMs - msSinceMidnight;
+}
+
+/** Día calendario para el anillo y segmentos (hora local del usuario). */
+export function getClockDayStartMs(fromMs: number = Date.now()): number {
+  return getLocalDayStartMs(fromMs);
 }
 
 /** Inicio del día-jornada (después de dormir). Por defecto 05:00 Lima. */
@@ -70,7 +81,7 @@ export function segmentClockMs(hora: string, dayStartMs: number): number {
   return dayStartMs + (parsed.h * 60 + parsed.m) * 60000;
 }
 
-/** Ventana [inicio, fin] del segmento dentro del d�a planificado (fin puede ser al d�a siguiente). */
+/** Ventana [inicio, fin] del segmento dentro del día planificado (fin puede ser al día siguiente). */
 export function segmentWindowMs(
   horaInicio: string,
   horaFin: string,
@@ -88,7 +99,7 @@ export function segmentWindowMs(
 }
 
 export function segmentDurationMinutes(horaInicio: string, horaFin: string): number {
-  return segmentWindowMs(horaInicio, horaFin, getLimaDayStartMs()).durationMin;
+  return segmentWindowMs(horaInicio, horaFin, getClockDayStartMs()).durationMin;
 }
 
 export function validateSegmentTimes(
@@ -96,14 +107,14 @@ export function validateSegmentTimes(
   horaFin: string
 ): { ok: true; durationMin: number } | { ok: false; error: string } {
   if (!parseSegmentTime(horaInicio) || !parseSegmentTime(horaFin)) {
-    return { ok: false, error: "Horario inv�lido (usa HH:mm)" };
+    return { ok: false, error: "Horario inválido (usa HH:mm)" };
   }
-  const { durationMin } = segmentWindowMs(horaInicio, horaFin, getLimaDayStartMs());
+  const { durationMin } = segmentWindowMs(horaInicio, horaFin, getClockDayStartMs());
   if (durationMin < 1) {
-    return { ok: false, error: "La duraci�n debe ser al menos 1 minuto" };
+    return { ok: false, error: "La duración debe ser al menos 1 minuto" };
   }
   if (durationMin > MAX_SEGMENT_DURATION_MIN) {
-    return { ok: false, error: "Un segmento no puede durar m�s de 24 horas" };
+    return { ok: false, error: "Un segmento no puede durar más de 24 horas" };
   }
   return { ok: true, durationMin };
 }
@@ -115,7 +126,7 @@ export function isPastSegmentEnd(
   marginMin = 5,
   dayStartMs?: number
 ): boolean {
-  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
+  const dayStart = dayStartMs ?? getClockDayStartMs(nowMs);
   const { end } = segmentWindowMs(horaInicio, horaFin, dayStart);
   return nowMs >= end + marginMin * 60000;
 }
@@ -127,7 +138,7 @@ export function isPastSegmentAutoStart(
   delayMin = 6,
   dayStartMs?: number
 ): boolean {
-  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
+  const dayStart = dayStartMs ?? getClockDayStartMs(nowMs);
   const { start } = segmentWindowMs(horaInicio, horaFin, dayStart);
   return nowMs >= start + delayMin * 60000;
 }
@@ -140,7 +151,7 @@ export function isWithinSegmentTimeMargin(
   marginMin = 5,
   dayStartMs?: number
 ): boolean {
-  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
+  const dayStart = dayStartMs ?? getClockDayStartMs(nowMs);
   const { start, end } = segmentWindowMs(horaInicio, horaFin, dayStart);
   const targetMs = target === "inicio" ? start : end;
   return Math.abs(nowMs - targetMs) <= marginMin * 60000;

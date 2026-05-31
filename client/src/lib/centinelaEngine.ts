@@ -40,7 +40,7 @@ export function releaseCentinela(): void {
   try { sessionStorage.removeItem(SUPPRESS_AT_KEY); } catch { }
 }
 
-/** Libera suppress si qued� atascado tras un lanzamiento interrumpido. */
+/** Libera suppress si quedó atascado tras un lanzamiento interrumpido. */
 export function maybeReleaseStaleSuppression(maxAgeMs = 60_000): void {
   if (!suppressed) return;
   try {
@@ -87,7 +87,7 @@ function findFirstJournalSegment(
   )[0];
 }
 
-/** Eval�a si el centinela puede activarse seg�n segmentos y hora (d�a-jornada desde 05:00). */
+/** Evalúa si el centinela puede activarse según segmentos y hora (día-jornada desde 05:00). */
 export function getCentinelaSegmentGate(
   planilla: Planilla | null,
   nowMs: number = Date.now()
@@ -130,7 +130,7 @@ export function getCentinelaSegmentGate(
     }
   }
 
-  // Tras las 05:00 sin veh�culos: centinela aunque el primer segmento a�n no haya empezado
+  // Tras las 05:00 sin vehículos: centinela aunque el primer segmento aún no haya empezado
   return { allowed: true, segContext: first };
 }
 
@@ -138,7 +138,7 @@ export function isCentinelaBlockedByVehicles(vehicles: Vehicle[]): boolean {
   return vehicles.some(v => v.status === "activo" && !v.autoVerdad);
 }
 
-/** Cierra centinelas activos cuando hay trabajo consciente (evita entrop�a fantasma en el anillo). */
+/** Cierra centinelas activos cuando hay trabajo consciente (evita entropía fantasma en el anillo). */
 export async function archiveActiveCentinelasWhenBlocked(
   userId: string,
   vehicles: Vehicle[]
@@ -157,7 +157,7 @@ export async function archiveActiveCentinelasWhenBlocked(
       await updateVehicle(userId, av.id, { cierreAt: now, duracionFinal: dur });
       await updateVehicleStatus(userId, av.id, "archivado");
       closedIds.push(av.id);
-      console.log(`[Centinela] Cerrado por veh�culo consciente activo: ${av.id} (${dur} min)`);
+      console.log(`[Centinela] Cerrado por vehículo consciente activo: ${av.id} (${dur} min)`);
     } catch (e) {
       console.warn("[Centinela] archiveActiveCentinelasWhenBlocked:", av.id, e);
     }
@@ -208,8 +208,8 @@ export function computeCentinelaUiState(
       ui: {
         esperaSec: 0,
         blockReason: active
-          ? `Veh�culo activo: ${active.titulo}`
-          : "Hay un veh�culo consciente activo",
+          ? `Vehículo activo: ${active.titulo}`
+          : "Hay un vehículo consciente activo",
       },
       since: 0,
     };
@@ -245,7 +245,7 @@ export async function activateCentinelaVehicle(
 
   if ("Notification" in window && Notification.permission === "granted") {
     new Notification("SISTEMICAR - Modo Centinela Activado", {
-      body: "Ning�n veh�culo activo. El centinela registra el vac�o.",
+      body: "Ningún vehículo activo. El centinela registra el vacío.",
       icon: "/favicon.ico",
       silent: false,
     });

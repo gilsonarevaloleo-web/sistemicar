@@ -49,20 +49,16 @@ function arcPath(cx: number, cy: number, r: number, startDeg: number, endDeg: nu
 }
 
 const TRACK_BG = "rgba(30, 35, 48, 0.95)";
-const REPOSO_BG = "rgba(30, 33, 40, 0.92)";
 const PURPLE = "#8B5CF6";
 const BLOOD = "#FF3131";
 const GOLD = "#D4AF37";
 const CYAN = "#00FFC3";
-const AMBER = "#f59e0b";
 const NEUTRAL_GRAY = "rgba(148, 163, 184, 0.55)";
 
 const POINTER_COLORS: Record<AnilloPointerMode, string> = {
-  reposo: NEUTRAL_GRAY,
-  neutro: NEUTRAL_GRAY,
+  libre: NEUTRAL_GRAY,
   conquista: PURPLE,
   entropia: BLOOD,
-  calibracion: AMBER,
 };
 
 export default function AnilloConciencia({
@@ -76,7 +72,7 @@ export default function AnilloConciencia({
   size = 140,
   segmentos = [],
   pointerDeg = 0,
-  pointerMode = "neutro",
+  pointerMode = "libre",
   centerGuide,
 }: AnilloConcienciaProps) {
   const resolvedConquista = conquistaArcPct ?? conquistaPct ?? 0;
@@ -106,12 +102,10 @@ export default function AnilloConciencia({
   const fillLabel = Math.round(Math.min(100, resolvedConquista + resolvedEntropia));
 
   const planColor = planLabel >= 70 ? CYAN : planLabel >= 40 ? GOLD : "#6b7280";
-  const showEntropia = resolvedEntropia > 0 && pointerMode !== "calibracion";
+  const showEntropia = resolvedEntropia > 0;
   const showConquista = resolvedConquista > 0;
-  const isCalibracion = pointerMode === "calibracion";
 
   const fondoArcs = timelineArcs.filter(a => a.kind === "fondo");
-  const reposoArcs = timelineArcs.filter(a => a.kind === "reposo");
   const entropiaTimelineArcs = timelineArcs.filter(a => a.kind === "entropia");
   const conquistaTimelineArcs = timelineArcs.filter(a => a.kind === "conquista");
 
@@ -186,16 +180,6 @@ export default function AnilloConciencia({
               fill="none"
               stroke={TRACK_BG}
               strokeWidth={timelineSW}
-            />
-          ))}
-          {reposoArcs.map((arc, i) => (
-            <path
-              key={`reposo-${i}`}
-              d={arcPath(cx, cy, timelineR, arc.startDeg, arc.endDeg)}
-              fill="none"
-              stroke={REPOSO_BG}
-              strokeWidth={timelineSW}
-              strokeLinecap="butt"
             />
           ))}
           {hourMarks.map(h => {
@@ -315,7 +299,7 @@ export default function AnilloConciencia({
             x2={cx + needleLen * Math.cos(needleRad)}
             y2={cy + needleLen * Math.sin(needleRad)}
             stroke={needleColor}
-            strokeWidth={pointerMode === "calibracion" ? 1.4 : 1.1}
+            strokeWidth={1.1}
             strokeLinecap="round"
             style={{
               filter:
@@ -323,74 +307,46 @@ export default function AnilloConciencia({
                   ? `drop-shadow(0 0 4px ${PURPLE})`
                   : pointerMode === "entropia"
                     ? `drop-shadow(0 0 4px ${BLOOD})`
-                    : pointerMode === "calibracion"
-                      ? `drop-shadow(0 0 4px ${AMBER})`
-                      : "none",
+                    : "none",
             }}
           />
 
           <circle cx={cx} cy={cy} r={2.5} fill={needleColor} opacity={0.85} />
 
-          {isCalibracion && centerGuide ? (
-            <>
-              <text
-                x={cx}
-                y={cy - 4}
-                textAnchor="middle"
-                fill={AMBER}
-                fontSize={size * 0.055}
-                fontFamily="JetBrains Mono, monospace"
-                fontWeight="bold"
-              >
-                CALIBRAR
-              </text>
-              <text
-                x={cx}
-                y={cy + 10}
-                textAnchor="middle"
-                fill="rgba(245,158,11,0.75)"
-                fontSize={size * 0.038}
-                fontFamily="system-ui, sans-serif"
-              >
-                {centerGuide.length > 42 ? `${centerGuide.slice(0, 40)}…` : centerGuide}
-              </text>
-            </>
-          ) : (
-            <>
-              <text
-                x={cx}
-                y={cy - 8}
-                textAnchor="middle"
-                fill={planColor}
-                fontSize={size * 0.13}
-                fontFamily="JetBrains Mono, monospace"
-                fontWeight="bold"
-              >
-                {planLabel}%
-              </text>
-              <text
-                x={cx}
-                y={cy + 8}
-                textAnchor="middle"
-                fill="rgba(255,255,255,0.22)"
-                fontSize={size * 0.05}
-                fontFamily="JetBrains Mono, monospace"
-              >
-                PLAN
-              </text>
-              <text
-                x={cx}
-                y={cy + 20}
-                textAnchor="middle"
-                fill={showEntropia && !showConquista ? BLOOD : PURPLE}
-                fontSize={size * 0.09}
-                fontFamily="JetBrains Mono, monospace"
-                fontWeight="bold"
-              >
-                {showEntropia && showConquista ? fillLabel : showEntropia ? entropiaLabel : conquLabel}%
-              </text>
-            </>
-          )}
+          <>
+            <text
+              x={cx}
+              y={cy - 8}
+              textAnchor="middle"
+              fill={planColor}
+              fontSize={size * 0.13}
+              fontFamily="JetBrains Mono, monospace"
+              fontWeight="bold"
+            >
+              {planLabel}%
+            </text>
+            <text
+              x={cx}
+              y={cy + 8}
+              textAnchor="middle"
+              fill="rgba(255,255,255,0.22)"
+              fontSize={size * 0.05}
+              fontFamily="JetBrains Mono, monospace"
+            >
+              PLAN
+            </text>
+            <text
+              x={cx}
+              y={cy + 20}
+              textAnchor="middle"
+              fill={showEntropia && !showConquista ? BLOOD : PURPLE}
+              fontSize={size * 0.09}
+              fontFamily="JetBrains Mono, monospace"
+              fontWeight="bold"
+            >
+              {showEntropia && showConquista ? fillLabel : showEntropia ? entropiaLabel : conquLabel}%
+            </text>
+          </>
         </svg>
       </div>
 
@@ -412,17 +368,9 @@ export default function AnilloConciencia({
           <span className="text-[7px] font-black uppercase tracking-widest text-slate-500">Conquista</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: REPOSO_BG, border: "1px solid rgba(255,255,255,0.08)" }} />
-          <span className="text-[7px] font-black uppercase tracking-widest text-slate-500">Reposo</span>
+          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NEUTRAL_GRAY, border: "1px solid rgba(255,255,255,0.08)" }} />
+          <span className="text-[7px] font-black uppercase tracking-widest text-slate-500">Libre</span>
         </div>
-        {isCalibracion && (
-          <div className="flex items-center gap-1">
-            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: AMBER }} />
-            <span className="text-[7px] font-black uppercase tracking-widest" style={{ color: AMBER }}>
-              Calibración
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );

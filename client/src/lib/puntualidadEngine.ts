@@ -103,7 +103,7 @@ function resolveEstado(vacio: boolean, montaje: boolean, evaluable: boolean): Se
   return "puntual";
 }
 
-/** Calcula puntualidad del d�a: vac�o (sin veh�culos en ventana) y montaje (situacional invade segmento). */
+/** Calcula puntualidad del día: vacío (sin vehículos en ventana) y montaje (situacional invade segmento). */
 export function computePuntualidadDia(params: {
   segmentos: SegmentoV5[];
   vehicles: Vehicle[];
@@ -183,17 +183,17 @@ export function computePuntualidadDia(params: {
 
 export function describeSegmentoPuntualidad(sp: SegmentoPuntualidad): string {
   if (sp.estado === "puntual") return "Cumplimiento en ventana";
-  if (sp.estado === "vacio") return "Ning�n veh�culo en ventana";
+  if (sp.estado === "vacio") return "Ningún vehículo en ventana";
   if (sp.estado === "montaje") {
     const origen = sp.montajeOrigenNombres.length
       ? sp.montajeOrigenNombres.join(", ")
       : "segmento anterior";
-    return `Situacional de ${origen} mont� este segmento`;
+    return `Situacional de ${origen} montó este segmento`;
   }
   if (sp.estado === "mixto") {
-    return "Montaje + sin veh�culos propios en ventana";
+    return "Montaje + sin vehículos propios en ventana";
   }
-  if (sp.enRiesgoVacio) return "Sin veh�culos a�n � ventana en curso";
+  if (sp.enRiesgoVacio) return "Sin vehículos aún · ventana en curso";
   return "En curso";
 }
 
@@ -222,16 +222,16 @@ export function computePuntualidadCompare(
     : null;
 
   const headline = hasYesterday
-    ? `${today.puntuales}/${today.evaluables || today.totalSegmentos} puntuales � ${today.puntualidadPct}%`
+    ? `${today.puntuales}/${today.evaluables || today.totalSegmentos} puntuales · ${today.puntualidadPct}%`
     : `${today.puntuales}/${today.evaluables || today.totalSegmentos} segmentos puntuales hoy`;
 
   let motivacion: string;
   if (!hasYesterday) {
-    motivacion = "Prop�sito (segmento) vs cumplimiento (veh�culo en ventana).";
+    motivacion = "Propósito (segmento) vs cumplimiento (vehículo en ventana).";
   } else if (deltaPct != null && deltaPct > 0) {
     motivacion = `+${deltaPct} pts vs ayer en puntualidad.`;
   } else if (deltaPct != null && deltaPct < 0) {
-    motivacion = `${deltaPct} pts vs ayer � revisa vac�os y montajes.`;
+    motivacion = `${deltaPct} pts vs ayer · revisa vacíos y montajes.`;
   } else {
     motivacion = "Misma puntualidad que ayer.";
   }

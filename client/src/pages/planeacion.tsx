@@ -260,6 +260,8 @@ import { ManualTriggerButton } from "@/components/master-manual-drawer";
 import AnilloConciencia from "@/components/AnilloConciencia";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
+import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
+import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
 import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, computeAnilloEstado, computeTimelineClockArcs, computeTimelineDayStats, formatMinutosJornada } from "@/engines/ConcienciaEngine";
 
 const GOLD = "#D4AF37";
@@ -959,10 +961,6 @@ export default function Planeacion() {
   const [anilloTick, setAnilloTick] = useState(0);
   const [conquistaPulse, setConquistaPulse] = useState(false);
   const conquistaPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hasCentinelaActivo = useMemo(
-    () => vehicles.some(v => v.autoVerdad && v.status === "activo"),
-    [vehicles]
-  );
 
   const triggerConquistaPulse = useCallback(() => {
     setConquistaPulse(true);
@@ -1036,6 +1034,7 @@ export default function Planeacion() {
   const [nuevoSegColor, setNuevoSegColor] = useState(SEGMENT_COLORS[0]);
   const [nuevoSegIcono, setNuevoSegIcono] = useState(SEGMENT_ICONS[0]);
   const [nuevoSegCentinelaEnabled, setNuevoSegCentinelaEnabled] = useState(true);
+  const [nuevoSegProyectoId, setNuevoSegProyectoId] = useState("");
   const [expandedSegId, setExpandedSegId] = useState<string | null>(null);
   const segmentosAutoExpandRef = useRef(false);
   // --- RUTINAS ---
@@ -1129,10 +1128,9 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    const ms = hasCentinelaActivo ? 10_000 : 60_000;
-    const interval = setInterval(() => setAnilloTick(t => t + 1), ms);
+    const interval = setInterval(() => setAnilloTick(t => t + 1), 1000);
     return () => clearInterval(interval);
-  }, [hasCentinelaActivo]);
+  }, []);
 
   useEffect(() => () => {
     if (conquistaPulseTimerRef.current) clearTimeout(conquistaPulseTimerRef.current);
@@ -1222,6 +1220,12 @@ export default function Planeacion() {
     if (!planilla) return null;
     return planilla.segmentos.find(s => s.estado === "activo") || null;
   }, [planilla]);
+
+  const {
+    proyectosHub,
+    resolverProyectoId,
+    volcarMetricasAlHub,
+  } = useSegmentoProyectoVinculo(user?.uid, segmentoActivo);
 
   const monitorState = useMemo(() => {
     if (!planilla || planilla.segmentos.length === 0) return null;
@@ -1875,6 +1879,7 @@ export default function Planeacion() {
       const segActualNombre = segmentoActivo?.nombre || undefined;
       const segActualId = segmentoActivo?.id;
       const launchCtx = proyectoLaunchRef.current;
+      const resolvedProyectoId = resolverProyectoId(launchCtx);
       const subTareasPrefill =
         tipoFlotaSeleccionado === "situacion" && launchCtx?.plantillaSubTareas?.length
           ? launchCtx.plantillaSubTareas
@@ -1904,8 +1909,11 @@ export default function Planeacion() {
           ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => buildDesglosadorSubFromForm(s, idx, Date.now()))
           : undefined,
         subTareas: subTareasPrefill,
-        ...(launchCtx
-          ? { proyectoId: launchCtx.proyectoId, proyectoPeldanoId: launchCtx.peldanoId }
+        ...(launchCtx || resolvedProyectoId
+          ? {
+              proyectoId: launchCtx?.proyectoId ?? resolvedProyectoId,
+              ...(launchCtx?.peldanoId ? { proyectoPeldanoId: launchCtx.peldanoId } : {}),
+            }
           : {}),
         estadoEnergia,
         energiaDiffPct,
@@ -1974,8 +1982,11 @@ export default function Planeacion() {
           ? desglosadorSubs.filter(s => s.titulo.trim()).map((s, idx) => buildDesglosadorSubFromForm(s, idx, Date.now()))
           : undefined,
         subTareas: subTareasPrefill,
-        ...(launchCtx
-          ? { proyectoId: launchCtx.proyectoId, proyectoPeldanoId: launchCtx.peldanoId }
+        ...(launchCtx || resolvedProyectoId
+          ? {
+              proyectoId: launchCtx?.proyectoId ?? resolvedProyectoId,
+              ...(launchCtx?.peldanoId ? { proyectoPeldanoId: launchCtx.peldanoId } : {}),
+            }
           : {}),
         energiaDiffPct,
         segmentoOrigen: segActualNombre,
@@ -2020,6 +2031,7 @@ export default function Planeacion() {
     setNuevoSegHoraFin("");
     setNuevoSegColor(SEGMENT_COLORS[0]);
     setNuevoSegIcono(SEGMENT_ICONS[0]);
+    setNuevoSegProyectoId("");
   };
 
   const addSegmento = async () => {
@@ -2042,6 +2054,7 @@ export default function Planeacion() {
     const colorCapturado = nuevoSegColor;
     const iconoCapturado = nuevoSegIcono;
     const centinelaCapturado = nuevoSegCentinelaEnabled;
+    const proyectoCapturado = nuevoSegProyectoId;
 
     const seg: SegmentoV5 = {
       id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2054,6 +2067,7 @@ export default function Planeacion() {
       eventos: [],
       psGanados: 0,
       centinelaEnabled: centinelaCapturado,
+      ...(proyectoCapturado ? { proyectoVinculadoId: proyectoCapturado } : {}),
     };
 
     const fecha = getLimaDateString();
@@ -2691,6 +2705,10 @@ export default function Planeacion() {
       }
 
       registrarEvento(COMPONENTES.PLANIFICACION);
+      if (!vehicle.autoVerdad && status === "cumplido") {
+        const closedVehicle: Vehicle = { ...vehicle, ...optimisticClose, status };
+        safeFire(() => volcarMetricasAlHub(closedVehicle, { minutos: duracionMin }));
+      }
       if (vehicle.vehiculoPadreDesglosadorId && (status === "cumplido" || status === "archivado")) {
         void resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
       }
@@ -5286,6 +5304,12 @@ export default function Planeacion() {
                       <p className="text-[8px] text-gray-500 leading-relaxed">
                         Duración máxima 24 h. Si la hora fin es anterior a inicio, el segmento cruza medianoche.
                       </p>
+                      <SegmentoProyectoSelect
+                        value={nuevoSegProyectoId}
+                        onChange={setNuevoSegProyectoId}
+                        proyectos={proyectosHub}
+                        compact
+                      />
                       <div>
                         <label className="text-[9px] text-gray-500 uppercase tracking-wider mb-1.5 block">
                           Color
