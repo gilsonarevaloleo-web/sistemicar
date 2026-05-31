@@ -136,6 +136,7 @@ import {
   notifyVehicleClosed,
   wasVehicleRecentlyClosed,
   mergeActiveVehicleSessionState,
+  isOrphanDesglosadorInterrupt,
 } from "@/lib/persistence";
 import {
   releaseCentinela,
@@ -1267,13 +1268,15 @@ export default function Planeacion() {
       // edge case where a stale snapshot bypasses the persistence-layer guards and would
       // otherwise silently erase a vehicle from the UI.
       const mergedIds = new Set(merged.map(v => v.id));
+      const mergedById = new Map(merged.map(v => [v.id, v]));
       const rescued = vehiclesRef.current.filter(
         v =>
           v.status === "activo" &&
           !v.autoVerdad &&
           !mergedIds.has(v.id) &&
           !closingInProgressRef.current.has(v.id) &&
-          !wasVehicleRecentlyClosed(v.id)
+          !wasVehicleRecentlyClosed(v.id) &&
+          !isOrphanDesglosadorInterrupt(v, mergedById)
       );
       if (rescued.length > 0) {
         console.warn(`[Vehicles] Rescatando ${rescued.length} activo(s) ausentes del snapshot:`, rescued.map(v => `${v.id}:${v.titulo}`));
@@ -1578,6 +1581,48 @@ export default function Planeacion() {
   const closingInProgressRef = useRef<Set<string>>(new Set());
   const pausaInterrupcionLockRef = useRef<string | null>(null);
   vehiclesRef.current = vehicles;
+
+  const orphanInterruptSweepRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!user) return;
+    const byId = new Map(vehicles.map(v => [v.id, v]));
+    const orphans = vehicles.filter(
+      v =>
+        isOrphanDesglosadorInterrupt(v, byId) &&
+        !orphanInterruptSweepRef.current.has(v.id) &&
+        !closingInProgressRef.current.has(v.id)
+    );
+    if (orphans.length === 0) return;
+    const now = Date.now();
+    const patches = new Map(
+      orphans.map(o => {
+        const patch = {
+          status: "archivado" as const,
+          cierreAt: now,
+          duracionFinal: Math.max(1, Math.round((now - (o.aperturaAt || now)) / 60000)),
+          cierreManual: false,
+        };
+        return [o.id, patch] as const;
+      })
+    );
+    for (const o of orphans) {
+      orphanInterruptSweepRef.current.add(o.id);
+      notifyVehicleClosed(o.id);
+      const patch = patches.get(o.id)!;
+      void updateVehicle(user.uid, o.id, patch).catch(e => console.warn("[orphan-interrupt]", o.id, e));
+      void updateVehicleStatus(user.uid, o.id, "archivado").catch(e => console.warn("[orphan-interrupt] status", o.id, e));
+    }
+    setVehicles(prev => prev.map(v => {
+      const patch = patches.get(v.id);
+      return patch ? { ...v, ...patch } : v;
+    }));
+    vehiclesRef.current = vehiclesRef.current.map(v => {
+      const patch = patches.get(v.id);
+      return patch ? { ...v, ...patch } : v;
+    });
+    saveLocalVehicles(vehiclesRef.current);
+    releaseCentinela();
+  }, [user, vehicles]);
 
   const persistVehiclesRef = () => {
     saveLocalVehicles(vehiclesRef.current);
@@ -2552,6 +2597,18 @@ export default function Planeacion() {
     if (!vehicle.autoVerdad) triggerConquistaPulse();
     if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
 
+    if (vehicle.vehiculoPadreDesglosadorId) {
+      try {
+        await updateVehicle(user.uid, vehicleId, {
+          ...optimisticClose,
+          ...situacionCloseExtras,
+        });
+        await updateVehicleStatus(user.uid, vehicleId, status);
+      } catch (e) {
+        console.warn("[handleFlotaStatusChange] persist interrupción:", e);
+      }
+    }
+
     // Helper: fire-and-forget (no await) — no bloqueamos la UI
     const safeFire = (fn: () => Promise<any>) => { fn().catch(() => {}); };
 
@@ -2710,7 +2767,7 @@ export default function Planeacion() {
         safeFire(() => volcarMetricasAlHub(closedVehicle, { minutos: duracionMin }));
       }
       if (vehicle.vehiculoPadreDesglosadorId && (status === "cumplido" || status === "archivado")) {
-        void resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
+        await resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
       }
     } catch (err: any) {
       console.error("[handleFlotaStatusChange] ERROR:", err);
@@ -2815,6 +2872,21 @@ export default function Planeacion() {
 
   const resumeDesglosadorTrasInterrupcion = async (parentId: string) => {
     if (!user) return;
+    const openInterrupt = vehiclesRef.current.find(
+      v =>
+        v.status === "activo" &&
+        !v.autoVerdad &&
+        v.vehiculoPadreDesglosadorId === parentId &&
+        !wasVehicleRecentlyClosed(v.id)
+    );
+    if (openInterrupt) {
+      toast.error("Cierra la interrupción activa arriba", {
+        description: "Usa Cumplido o Incumplido en el vehículo de interrupción.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 4000,
+      });
+      return;
+    }
     const parent = vehiclesRef.current.find(v => v.id === parentId);
     if (!parent?.desglosadorPausa && !parent?.interrupcionActiva) return;
 
@@ -2858,6 +2930,20 @@ export default function Planeacion() {
 
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
     if (!vehicle || vehicle.tipoReloj !== "desglosador" || vehicle.interrupcionActiva) return;
+    const existingInterrupt = vehiclesRef.current.find(
+      v =>
+        v.status === "activo" &&
+        !v.autoVerdad &&
+        v.vehiculoPadreDesglosadorId === vehicleId &&
+        !wasVehicleRecentlyClosed(v.id)
+    );
+    if (existingInterrupt) {
+      toast.error("Ya hay una interrupción activa", {
+        description: "Ciérrala arriba antes de lanzar otra.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
+      return;
+    }
     const activeSub = (vehicle.subVehiculos || []).find(s => s.status === "activo");
     if (!activeSub?.aperturaAt) {
       toast.error("No hay sub activo para pausar");
@@ -2907,7 +2993,7 @@ export default function Planeacion() {
     const optimisticList = [interruptVehicle, ...pausedList];
     setVehicles(optimisticList);
     vehiclesRef.current = optimisticList;
-    saveLocalVehicles(pausedList);
+    saveLocalVehicles(optimisticList);
 
     setExpandedId(provisionalInterruptId);
     suppressCentinela();
@@ -6526,9 +6612,42 @@ export default function Planeacion() {
           const mergedCruzada = cierreEnergiaPending.kind === "desglosador"
             ? mergeRutaCruzadaFromSubs(cierreEnergiaPending.subs)
             : null;
+          const resetCierreModal = () => {
+            setCierreEnergiaPending(null);
+            setCierreEnergiaSeleccion(null);
+            setCierreRutaSeleccion(new Set());
+            setCierreRutaSinUso(false);
+          };
+          const confirmCierreEnergia = () => {
+            const p = cierreEnergiaPending;
+            if (!p || !user) return;
+            const sel = cierreEnergiaSeleccion ?? undefined;
+            const rutaDecl = showRuta && !cierreRutaSinUso ? Array.from(cierreRutaSeleccion) : [];
+            if (p.kind === "flota") void handleFlotaStatusChange(p.vehicleId, p.status, sel);
+            else if (p.kind === "investigador") void handleInvestigadorClose(p.vehicleId, p.cumplido, p.cantidadRealizada, sel);
+            else if (p.kind === "desglosador") void handleDesglosadorGlobalClose(p.vehicleId, p.subs, sel, rutaDecl);
+            else void handleDescansoClose(p.vehicleId, p.status, p.etiqueta, p.nota, sel);
+            resetCierreModal();
+          };
           return (
           <motion.div className="fixed inset-0 z-[220] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.82)" }} role="dialog" aria-modal="true" aria-labelledby="cierre-energia-titulo">
-            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm rounded-2xl border p-5 space-y-4 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              tabIndex={-1}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  confirmCierreEnergia();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  resetCierreModal();
+                }
+              }}
+              className="w-full max-w-sm rounded-2xl border p-5 space-y-4 max-h-[90vh] overflow-y-auto outline-none"
+              style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}
+            >
               <div className="text-center space-y-1">
                 <p id="cierre-energia-titulo" className="text-sm font-bold text-white">Cierre consciente</p>
                 <p className="text-[9px] text-slate-500">¿Con qué energía terminas? (tiempo, situación, verdad, descanso, investigador, desglosador). Opcional · alimenta el Espejo.</p>
@@ -6577,27 +6696,14 @@ export default function Planeacion() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => { setCierreEnergiaPending(null); setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); }}
+                  onClick={resetCierreModal}
                   className="flex-1 py-2.5 rounded-xl text-xs font-bold text-slate-400 bg-white/5"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const p = cierreEnergiaPending;
-                    if (!p || !user) return;
-                    const sel = cierreEnergiaSeleccion ?? undefined;
-                    const rutaDecl = showRuta && !cierreRutaSinUso ? Array.from(cierreRutaSeleccion) : [];
-                    if (p.kind === "flota") void handleFlotaStatusChange(p.vehicleId, p.status, sel);
-                    else if (p.kind === "investigador") void handleInvestigadorClose(p.vehicleId, p.cumplido, p.cantidadRealizada, sel);
-                    else if (p.kind === "desglosador") void handleDesglosadorGlobalClose(p.vehicleId, p.subs, sel, rutaDecl);
-                    else void handleDescansoClose(p.vehicleId, p.status, p.etiqueta, p.nota, sel);
-                    setCierreEnergiaPending(null);
-                    setCierreEnergiaSeleccion(null);
-                    setCierreRutaSeleccion(new Set());
-                    setCierreRutaSinUso(false);
-                  }}
+                  onClick={confirmCierreEnergia}
                   className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider"
                   style={{ backgroundColor: VIOLET, color: "#fff" }}
                 >

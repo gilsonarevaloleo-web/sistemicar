@@ -24,8 +24,9 @@ export type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaE
 export {
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
+  isOrphanDesglosadorInterrupt,
 } from "./situacionSessionMerge";
-import { mergeActiveVehicleSessionState } from "./situacionSessionMerge";
+import { mergeActiveVehicleSessionState, isOrphanDesglosadorInterrupt } from "./situacionSessionMerge";
 import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
 import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
 import { mergePlantillasRutina } from "./plantillasRutinaMerge";
@@ -936,7 +937,7 @@ export function subscribeToVehicles(
       // Preserve subVehiculos for active desglosador vehicles so Firebase snapshots
       // never destroy in-progress sub-vehicle state (subVehiculos are session-local only)
       const existingLocal = getLocalVehicles();
-      const sortedWithSubs = sorted.map(v => {
+      let sortedWithSubs = sorted.map(v => {
         const localV = existingLocal.find(lv => lv.id === v.id);
         return mergeActiveVehicleSessionState(v, localV);
       });
@@ -977,6 +978,7 @@ export function subscribeToVehicles(
           sortedWithSubs.map(v => v.clientRequestId).filter(Boolean)
         );
         const localActivos = existingLocal.filter(v => v.status === "activo" && !v.autoVerdad);
+        const snapshotById = new Map(sortedWithSubs.map(v => [v.id, v]));
         const orphanedActivos = localActivos.filter(v => {
           // Already present in Firebase snapshot by Firestore document ID
           if (firebaseIds.has(v.id)) return false;
@@ -984,6 +986,7 @@ export function subscribeToVehicles(
           // the post-write ID replacement in localStorage may not have run yet
           if (v.clientRequestId && firebaseClientRequestIds.has(v.clientRequestId)) return false;
           if (wasVehicleRecentlyClosed(v.id)) return false;
+          if (isOrphanDesglosadorInterrupt(v, snapshotById)) return false;
           // Genuinely not in Firebase — must be preserved
           return true;
         });
@@ -996,6 +999,12 @@ export function subscribeToVehicles(
             return bTime - aTime;
           });
         }
+      }
+
+      // Drop orphan desglosador interrupts (parent no longer paused) so they do not block Centinela.
+      {
+        const byId = new Map(sortedWithSubs.map(v => [v.id, v]));
+        sortedWithSubs = sortedWithSubs.filter(v => !isOrphanDesglosadorInterrupt(v, byId));
       }
 
       // Persist the merged result locally (always save the fullest result)

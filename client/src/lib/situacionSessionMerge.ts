@@ -183,12 +183,27 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
   if (localV.desglosadorBloqueDepthPsGranted != null) {
     merged = { ...merged, desglosadorBloqueDepthPsGranted: localV.desglosadorBloqueDepthPsGranted };
   }
-  if (localV.desglosadorPausa) {
-    merged = { ...merged, desglosadorPausa: localV.desglosadorPausa };
-  }
-  if (localV.interrupcionActiva) {
-    merged = { ...merged, interrupcionActiva: localV.interrupcionActiva };
+  // Prefer local pause flags (including explicit clears after cerrar interrupción).
+  if (firebaseV.tipoReloj === "desglosador" && localV.tipoReloj === "desglosador") {
+    merged = {
+      ...merged,
+      interrupcionActiva: localV.interrupcionActiva === true,
+      desglosadorPausa: localV.interrupcionActiva ? localV.desglosadorPausa : undefined,
+    };
   }
 
   return applySituacionDesgloseMerge(merged, firebaseV, localV);
+}
+
+/** Interrupción huérfana: activa en Firebase/local pero el desglosador padre ya no está en pausa. */
+export function isOrphanDesglosadorInterrupt(
+  vehicle: Vehicle,
+  vehiclesById: Map<string, Vehicle>
+): boolean {
+  if (vehicle.status !== "activo" || vehicle.autoVerdad) return false;
+  const parentId = vehicle.vehiculoPadreDesglosadorId;
+  if (!parentId) return false;
+  const parent = vehiclesById.get(parentId);
+  if (!parent) return false;
+  return parent.status === "activo" && !parent.interrupcionActiva;
 }

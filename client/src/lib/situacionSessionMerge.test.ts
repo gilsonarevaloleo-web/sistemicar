@@ -76,6 +76,28 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     assert.equal(merged.situacionCronometro?.activo, true);
   });
 
+  it("clears desglosador pause when local resumed but firebase still paused", () => {
+    const fb: Vehicle = {
+      ...(baseVehicle() as Vehicle),
+      id: "d1",
+      tipoReloj: "desglosador",
+      interrupcionActiva: true,
+      desglosadorPausa: {
+        pausadoAt: 1000,
+        subActivoId: "sub1",
+        elapsedSecSnapshot: 120,
+      },
+    };
+    const local: Vehicle = {
+      ...fb,
+      interrupcionActiva: false,
+      desglosadorPausa: undefined,
+    };
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.interrupcionActiva, false);
+    assert.equal(merged.desglosadorPausa, undefined);
+  });
+
   it("merges free-list subtasks when firebase snapshot lacks them", () => {
     const fb: Vehicle = {
       ...baseVehicle(),
