@@ -263,7 +263,7 @@ import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
-import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, computeAnilloEstado, computeTimelineClockArcs, computeTimelineDayStats, formatMinutosJornada } from "@/engines/ConcienciaEngine";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, computeAnilloEstado, computeTimelineClockArcs, computeTimelineDayStats, formatMinutosJornada, nowToHalfDayLap } from "@/engines/ConcienciaEngine";
 
 const GOLD = "#D4AF37";
 const AZURE = "#1E90FF";
@@ -4730,6 +4730,7 @@ export default function Planeacion() {
             now: nowMs,
           });
           const anilloEstado = computeAnilloEstado({ segmentos: segs, vehiculos: vehicles, now: nowMs });
+          const pointerLap = nowToHalfDayLap(nowMs);
           const timelineArcs = computeTimelineClockArcs({ vehiculos: vehicles, segmentos: segs, now: nowMs });
           const dayStats = computeTimelineDayStats({ vehiculos: vehicles, segmentos: segs, now: nowMs });
           const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
@@ -4752,6 +4753,7 @@ export default function Planeacion() {
                 size={130}
                 segmentos={segs}
                 pointerDeg={anilloEstado.deg}
+                pointerLap={pointerLap}
                 pointerMode={anilloEstado.mode}
                 centerGuide={anilloEstado.centerGuide}
               />

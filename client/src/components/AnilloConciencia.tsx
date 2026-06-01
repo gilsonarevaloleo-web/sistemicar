@@ -20,6 +20,7 @@ interface AnilloConcienciaProps {
   size?: number;
   segmentos?: SegmentoLite[];
   pointerDeg?: number;
+  pointerLap?: 0 | 1;
   pointerMode?: AnilloPointerMode;
   centerGuide?: string;
 }
@@ -29,6 +30,8 @@ const parseMin = (t: string): number => {
   const parts = t.split(":").map(Number);
   return (parts[0] || 0) * 60 + (parts[1] || 0);
 };
+
+type HalfDayLap = 0 | 1;
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 
@@ -61,6 +64,32 @@ const POINTER_COLORS: Record<AnilloPointerMode, string> = {
   entropia: BLOOD,
 };
 
+function splitMinutesRangeByLap(
+  startMin: number,
+  endMin: number,
+): Array<{ startMin: number; endMin: number; lap: HalfDayLap }> {
+  // Normalize to [0, 2880) so we can split cleanly across midnight.
+  let s = ((startMin % 1440) + 1440) % 1440;
+  let e = ((endMin % 1440) + 1440) % 1440;
+  if (endMin <= startMin) e += 1440;
+
+  const cutPoints = [720, 1440, 2160];
+  const out: Array<{ startMin: number; endMin: number; lap: HalfDayLap }> = [];
+  let cur = s;
+  for (const cut of cutPoints) {
+    if (cut <= cur) continue;
+    if (e <= cut) break;
+    const lap: HalfDayLap = (cur % 1440) >= 720 ? 1 : 0;
+    out.push({ startMin: cur, endMin: cut, lap });
+    cur = cut;
+  }
+  const lap: HalfDayLap = (cur % 1440) >= 720 ? 1 : 0;
+  out.push({ startMin: cur, endMin: e, lap });
+  return out
+    .map(p => ({ ...p, startMin: p.startMin % 1440, endMin: p.endMin % 1440 }))
+    .filter(p => p.endMin !== p.startMin);
+}
+
 export default function AnilloConciencia({
   planificacionPct,
   timelineArcs = [],
@@ -72,6 +101,7 @@ export default function AnilloConciencia({
   size = 140,
   segmentos = [],
   pointerDeg = 0,
+  pointerLap = 0,
   pointerMode = "libre",
   centerGuide,
 }: AnilloConcienciaProps) {
@@ -100,6 +130,7 @@ export default function AnilloConciencia({
   const conquLabel = Math.round(resolvedConquista);
   const entropiaLabel = Math.round(resolvedEntropia);
   const fillLabel = Math.round(Math.min(100, resolvedConquista + resolvedEntropia));
+  const ampm = pointerLap === 1 ? "PM" : "AM";
 
   const planColor = planLabel >= 70 ? CYAN : planLabel >= 40 ? GOLD : "#6b7280";
   const showEntropia = resolvedEntropia > 0;
@@ -109,16 +140,28 @@ export default function AnilloConciencia({
   const entropiaTimelineArcs = timelineArcs.filter(a => a.kind === "entropia");
   const conquistaTimelineArcs = timelineArcs.filter(a => a.kind === "conquista");
 
-  const hourMarks = [0, 3, 6, 9, 12, 15, 18, 21];
+  // Reloj 12h: marcas principales 12/3/6/9.
+  const hourMarks = [0, 3, 6, 9];
 
-  const segArcs: { path: string; color: string; glow: string; isActive: boolean }[] = [];
+  const lap0 = (a: TimelineClockArc) => (a.lap ?? 0) === 0;
+  const lap1 = (a: TimelineClockArc) => (a.lap ?? 0) === 1;
+
+  const fondoLap0 = fondoArcs.filter(lap0);
+  const fondoLap1 = fondoArcs.filter(lap1);
+  const entropiaLap0 = entropiaTimelineArcs.filter(lap0);
+  const entropiaLap1 = entropiaTimelineArcs.filter(lap1);
+  const conquistaLap0 = conquistaTimelineArcs.filter(lap0);
+  const conquistaLap1 = conquistaTimelineArcs.filter(lap1);
+
+  // Segunda vuelta: aro levemente más interno y más tenue.
+  const timelineR2 = timelineR - timelineSW * 1.25;
+  const segR2 = segR - segSW * 1.25;
+
+  const segArcs: { path: string; color: string; glow: string; isActive: boolean; lap: HalfDayLap }[] = [];
   for (const s of segmentos) {
     const ini = parseMin(s.horaInicio);
     const fin = parseMin(s.horaFin);
     if (!s.horaInicio || !s.horaFin) continue;
-    const startDeg = clockMinutesToDeg(ini);
-    let endDeg = clockMinutesToDeg(fin);
-    if (fin <= ini) endDeg += 360;
 
     const color =
       s.estado === "cerrado_manual" || s.estado === "entropia"
@@ -133,12 +176,19 @@ export default function AnilloConciencia({
           ? `${CYAN}90`
           : "transparent";
 
-    segArcs.push({
-      path: arcPath(cx, cy, segR, startDeg, endDeg),
-      color,
-      glow,
-      isActive: s.estado === "activo",
-    });
+    const parts = splitMinutesRangeByLap(ini, fin);
+    for (const p of parts) {
+      const startDeg = clockMinutesToDeg(p.startMin);
+      let endDeg = clockMinutesToDeg(p.endMin);
+      if (endDeg <= startDeg) endDeg += 360;
+      segArcs.push({
+        path: arcPath(cx, cy, p.lap === 0 ? segR : segR2, startDeg, endDeg),
+        color: p.lap === 0 ? color : `${color}B3`,
+        glow,
+        isActive: s.estado === "activo",
+        lap: p.lap,
+      });
+    }
   }
 
   const needleColor = POINTER_COLORS[pointerMode];
@@ -150,16 +200,17 @@ export default function AnilloConciencia({
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} overflow="visible">
           <circle cx={cx} cy={cy} r={segR} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={segSW} />
+          <circle cx={cx} cy={cy} r={segR2} fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth={segSW * 0.9} />
           {segArcs.map((arc, i) => (
             <motion.path
               key={`seg-${i}`}
               d={arc.path}
               fill="none"
               stroke={arc.color}
-              strokeWidth={segSW}
+              strokeWidth={arc.lap === 0 ? segSW : segSW * 0.9}
               strokeLinecap="butt"
               initial={{ pathLength: 0, opacity: 0 }}
-              animate={{ pathLength: 1, opacity: 1 }}
+              animate={{ pathLength: 1, opacity: arc.lap === 0 ? 1 : 0.85 }}
               transition={{ duration: 0.8, delay: i * 0.05, ease: "easeOut" }}
               style={{
                 filter: arc.isActive
@@ -171,15 +222,26 @@ export default function AnilloConciencia({
             />
           ))}
 
-          {fondoArcs.map((_, i) => (
+          {fondoLap0.map((_, i) => (
             <circle
-              key={`fondo-${i}`}
+              key={`fondo0-${i}`}
               cx={cx}
               cy={cy}
               r={timelineR}
               fill="none"
               stroke={TRACK_BG}
               strokeWidth={timelineSW}
+            />
+          ))}
+          {fondoLap1.map((_, i) => (
+            <circle
+              key={`fondo1-${i}`}
+              cx={cx}
+              cy={cy}
+              r={timelineR2}
+              fill="none"
+              stroke="rgba(30, 35, 48, 0.7)"
+              strokeWidth={timelineSW * 0.9}
             />
           ))}
           {hourMarks.map(h => {
@@ -200,7 +262,7 @@ export default function AnilloConciencia({
               />
             );
           })}
-          {entropiaTimelineArcs.map((arc, i) => (
+          {entropiaLap0.map((arc, i) => (
             <motion.path
               key={`tl-ent-${i}`}
               d={arcPath(cx, cy, timelineR, arc.startDeg, arc.endDeg)}
@@ -214,7 +276,22 @@ export default function AnilloConciencia({
               style={{ filter: `drop-shadow(0 0 3px ${BLOOD}70)` }}
             />
           ))}
-          {conquistaTimelineArcs.map((arc, i) => (
+          {entropiaLap1.map((arc, i) => (
+            <motion.path
+              key={`tl-ent2-${i}`}
+              d={arcPath(cx, cy, timelineR2, arc.startDeg, arc.endDeg)}
+              fill="none"
+              stroke={`${BLOOD}AA`}
+              strokeWidth={timelineSW * 0.9}
+              strokeLinecap="butt"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 0.85 }}
+              transition={{ duration: 0.5, delay: i * 0.03, ease: "easeOut" }}
+              style={{ filter: `drop-shadow(0 0 2px ${BLOOD}55)` }}
+            />
+          ))}
+
+          {conquistaLap0.map((arc, i) => (
             <motion.path
               key={`tl-conq-${i}`}
               d={arcPath(cx, cy, timelineR, arc.startDeg, arc.endDeg)}
@@ -229,6 +306,23 @@ export default function AnilloConciencia({
                 opacity: conquistaPulse ? { duration: 0.8, repeat: Infinity } : { duration: 0 },
               }}
               style={{ filter: `drop-shadow(0 0 4px ${PURPLE}80)` }}
+            />
+          ))}
+          {conquistaLap1.map((arc, i) => (
+            <motion.path
+              key={`tl-conq2-${i}`}
+              d={arcPath(cx, cy, timelineR2, arc.startDeg, arc.endDeg)}
+              fill="none"
+              stroke={`${PURPLE}B3`}
+              strokeWidth={conquistaPulse ? timelineSW * 1.02 : timelineSW * 0.9}
+              strokeLinecap="butt"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: conquistaPulse ? [0.95, 0.65, 0.95] : 0.9 }}
+              transition={{
+                pathLength: { duration: 0.5, delay: i * 0.03, ease: "easeOut" },
+                opacity: conquistaPulse ? { duration: 0.8, repeat: Infinity } : { duration: 0 },
+              }}
+              style={{ filter: `drop-shadow(0 0 3px ${PURPLE}66)` }}
             />
           ))}
 
@@ -334,6 +428,17 @@ export default function AnilloConciencia({
               fontFamily="JetBrains Mono, monospace"
             >
               PLAN
+            </text>
+            <text
+              x={cx}
+              y={cy + 32}
+              textAnchor="middle"
+              fill="rgba(255,255,255,0.32)"
+              fontSize={size * 0.05}
+              fontFamily="JetBrains Mono, monospace"
+              fontWeight="bold"
+            >
+              {ampm}
             </text>
             <text
               x={cx}

@@ -15,17 +15,17 @@ function localAt(y: number, mo: number, d: number, h: number, min = 0): number {
   return new Date(y, mo, d, h, min).getTime();
 }
 
-describe("clockMinutesToDeg / puntero 24h", () => {
+describe("clockMinutesToDeg / puntero 12h", () => {
   it("00:00 arriba (0°)", () => {
     assert.equal(clockMinutesToDeg(0), 0);
   });
 
-  it("07:00 = 105° (7×15 + 0×0.25)", () => {
-    assert.equal(clockMinutesToDeg(7 * 60), 105);
+  it("07:00 = 210° (7×30)", () => {
+    assert.equal(clockMinutesToDeg(7 * 60), 210);
   });
 
-  it("12:00 = 180° (medio día abajo)", () => {
-    assert.equal(clockMinutesToDeg(12 * 60), 180);
+  it("12:00 vuelve arriba (0°)", () => {
+    assert.equal(clockMinutesToDeg(12 * 60), 0);
   });
 
   it("nowToClockDeg usa hora local del sistema", () => {
@@ -53,13 +53,13 @@ describe("Umbral de Conciencia", () => {
 describe("computeTimelineClockArcs", () => {
   const dayStart = getLocalDayStartMs(localAt(2026, 4, 18, 12, 0));
 
-  it("incluye arco fondo 24h", () => {
+  it("incluye fondo para 2 vueltas (AM/PM)", () => {
     const arcs = computeTimelineClockArcs({
       vehiculos: [],
       segmentos: [],
       now: localAt(2026, 4, 18, 10, 0),
     });
-    assert.ok(arcs.some(a => a.kind === "fondo" && a.endDeg - a.startDeg >= 359));
+    assert.ok(arcs.filter(a => a.kind === "fondo").length >= 2);
     void dayStart;
   });
 

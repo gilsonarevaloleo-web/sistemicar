@@ -70,6 +70,7 @@ export interface TimelineClockArc {
   startDeg: number;
   endDeg: number;
   kind: TimelineArcKind;
+  lap?: 0 | 1;
 }
 
 export interface TimelineDayStats {
@@ -192,21 +193,34 @@ function subtractMsIntervals(base: MsInterval[], subtract: MsInterval[]): MsInte
   return result;
 }
 
-/** Grados en reloj 24h: 00:00 arriba, sentido horario; 100% = 1440 min. */
+const MINUTOS_MEDIA_JORNADA = 12 * 60;
+
+/** Grados en reloj 12h: 00:00/12:00 arriba, sentido horario; 360° = 720 min. */
 export function clockMinutesToDeg(totalMinutes: number): number {
-  const m = ((totalMinutes % MINUTOS_DIA) + MINUTOS_DIA) % MINUTOS_DIA;
-  return m * 0.25;
+  const m = ((totalMinutes % MINUTOS_MEDIA_JORNADA) + MINUTOS_MEDIA_JORNADA) % MINUTOS_MEDIA_JORNADA;
+  return m * 0.5;
 }
 
-/** Puntero en tiempo local: (Horas × 15) + (Minutos × 0.25), alineado con inputs type=time. */
+export function getHalfDayLap(totalMinutes: number): 0 | 1 {
+  const m = ((totalMinutes % MINUTOS_DIA) + MINUTOS_DIA) % MINUTOS_DIA;
+  return (m >= MINUTOS_MEDIA_JORNADA ? 1 : 0) as 0 | 1;
+}
+
+export function nowToHalfDayLap(nowMs: number = Date.now()): 0 | 1 {
+  const d = new Date(nowMs);
+  const min = d.getHours() * 60 + d.getMinutes();
+  return getHalfDayLap(min);
+}
+
+/** Puntero en tiempo local 12h + vuelta (lap) para indicar PM. */
 export function nowToClockDeg(nowMs: number = Date.now()): number {
   const d = new Date(nowMs);
   const min = d.getHours() * 60 + d.getMinutes();
   const sec = d.getSeconds();
-  return clockMinutesToDeg(min) + sec * (0.25 / 60);
+  return clockMinutesToDeg(min) + sec * (0.5 / 60);
 }
 
-/** Convierte instante Lima (ms desde medianoche del día calendario) a grados del reloj. */
+/** Convierte instante local (ms desde medianoche) a grados del reloj 12h. */
 export function msToClockDeg(ms: number, dayStartMs: number): number {
   const minutesFromMidnight = (ms - dayStartMs) / 60000;
   return clockMinutesToDeg(minutesFromMidnight);
@@ -279,11 +293,31 @@ function isNowInPlannedGap(
   return false;
 }
 
-function intervalToClockArc(interval: MsInterval, dayStartMs: number, kind: TimelineArcKind): TimelineClockArc {
-  let startDeg = msToClockDeg(interval.start, dayStartMs);
-  let endDeg = msToClockDeg(interval.end, dayStartMs);
-  if (endDeg <= startDeg) endDeg += 360;
-  return { startDeg, endDeg, kind };
+function splitByHalfDayLap(interval: MsInterval, dayStartMs: number): Array<{ interval: MsInterval; lap: 0 | 1 }> {
+  const dayEnd = dayStartMs + 86400000;
+  const start = Math.max(interval.start, dayStartMs);
+  const end = Math.min(interval.end, dayEnd);
+  if (end <= start) return [];
+
+  const noon = dayStartMs + MINUTOS_MEDIA_JORNADA * 60000;
+  if (end <= noon) return [{ interval: { start, end }, lap: 0 }];
+  if (start >= noon) return [{ interval: { start, end }, lap: 1 }];
+  return [
+    { interval: { start, end: noon }, lap: 0 },
+    { interval: { start: noon, end }, lap: 1 },
+  ];
+}
+
+function intervalToClockArcs(interval: MsInterval, dayStartMs: number, kind: TimelineArcKind): TimelineClockArc[] {
+  const parts = splitByHalfDayLap(interval, dayStartMs);
+  const out: TimelineClockArc[] = [];
+  for (const p of parts) {
+    let startDeg = msToClockDeg(p.interval.start, dayStartMs);
+    let endDeg = msToClockDeg(p.interval.end, dayStartMs);
+    if (endDeg <= startDeg) endDeg += 360;
+    out.push({ startDeg, endDeg, kind, lap: p.lap });
+  }
+  return out;
 }
 
 export function filterVehiculosCalendarioHoy(
@@ -320,7 +354,11 @@ export function computeTimelineClockArcs(params: {
   const hasSegments = segmentos.length > 0;
   const umbralMin = getUmbralConcienciaMin(segmentos);
 
-  const arcs: TimelineClockArc[] = [{ startDeg: 0, endDeg: 360, kind: "fondo" }];
+  // Fondo: dos vueltas (AM/PM) para reloj 12h.
+  const arcs: TimelineClockArc[] = [
+    { startDeg: 0, endDeg: 360, kind: "fondo", lap: 0 },
+    { startDeg: 0, endDeg: 360, kind: "fondo", lap: 1 },
+  ];
 
   if (nowMin < umbralMin) return arcs;
 
@@ -356,7 +394,7 @@ export function computeTimelineClockArcs(params: {
   const centinelaMerged = mergeMsIntervals(centinelaSessions);
 
   for (const interval of conquistaMerged) {
-    arcs.push(intervalToClockArc(interval, dayStartMs, "conquista"));
+    arcs.push(...intervalToClockArcs(interval, dayStartMs, "conquista"));
   }
 
   if (hasSegments) {
@@ -377,14 +415,14 @@ export function computeTimelineClockArcs(params: {
         .filter((s): s is MsInterval => s != null);
       const gaps = subtractMsIntervals([window], mergeMsIntervals(coverInWindow));
       for (const gap of gaps) {
-        arcs.push(intervalToClockArc(gap, dayStartMs, "entropia"));
+        arcs.push(...intervalToClockArcs(gap, dayStartMs, "entropia"));
       }
     }
   }
 
   const centinelaNet = subtractMsIntervals(centinelaMerged, gapCoverMerged);
   for (const interval of centinelaNet) {
-    arcs.push(intervalToClockArc(interval, dayStartMs, "entropia"));
+    arcs.push(...intervalToClockArcs(interval, dayStartMs, "entropia"));
   }
 
   return arcs;
