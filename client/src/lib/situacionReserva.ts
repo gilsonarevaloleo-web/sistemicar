@@ -14,11 +14,42 @@ import type { DetalleSubTarea } from "./persistence";
 
 export type SituacionReservaEstado = "activa" | "retomada_libre" | "retomada_cron";
 
+/** Ruta táctica: S = desglosador situación · E = ejecución · M = tener en cuenta */
+export type ReservaTacticaRuta = "situacion_desglosador" | "ejecucion" | "consideracion";
+
+export const RUTA_TACTICA_ORDER: ReservaTacticaRuta[] = [
+  "situacion_desglosador",
+  "ejecucion",
+  "consideracion",
+];
+
+export const RUTA_TACTICA_META: Record<
+  ReservaTacticaRuta,
+  { label: string; short: string; hint: string }
+> = {
+  situacion_desglosador: {
+    label: "Desglosador situación",
+    short: "S",
+    hint: "Viene del cronómetro situacional",
+  },
+  ejecucion: {
+    label: "Peso de ejecución",
+    short: "E",
+    hint: "Trabajo real pendiente (captura rápida)",
+  },
+  consideracion: {
+    label: "Tener en cuenta",
+    short: "M",
+    hint: "Idea o recordatorio sin ejecutar ahora",
+  },
+};
+
 export interface SituacionReservaItem {
   id: string;
   userId: string;
   texto: string;
   reservadaAt: number;
+  ruta?: ReservaTacticaRuta;
   origenVehiculoTitulo?: string;
   origenVehiculoId?: string;
   minutosCupo?: number;
@@ -28,15 +59,56 @@ export interface SituacionReservaItem {
   retomadaEnVehiculoId?: string;
 }
 
+const RUTA_STORAGE_KEY = "sistemicar-reserva-ruta-default";
+
+export function getDefaultReservaRuta(): ReservaTacticaRuta {
+  try {
+    const raw = localStorage.getItem(RUTA_STORAGE_KEY);
+    if (raw === "situacion_desglosador" || raw === "ejecucion" || raw === "consideracion") return raw;
+  } catch {}
+  return "ejecucion";
+}
+
+export function setDefaultReservaRuta(ruta: ReservaTacticaRuta): void {
+  try {
+    localStorage.setItem(RUTA_STORAGE_KEY, ruta);
+  } catch {}
+}
+
+function inferRutaFromRow(row: {
+  ruta?: unknown;
+  origenVehiculoId?: string;
+  detalles?: DetalleSubTarea[];
+}): ReservaTacticaRuta {
+  if (row.ruta === "situacion_desglosador" || row.ruta === "ejecucion" || row.ruta === "consideracion") {
+    return row.ruta;
+  }
+  if (row.origenVehiculoId || (row.detalles && row.detalles.length > 0)) {
+    return "situacion_desglosador";
+  }
+  return "ejecucion";
+}
+
+export function sortReservasTacticas(items: SituacionReservaItem[]): SituacionReservaItem[] {
+  const rank = (r: ReservaTacticaRuta) => RUTA_TACTICA_ORDER.indexOf(r);
+  return [...items].sort((a, b) => {
+    const ra = rank(a.ruta ?? "ejecucion");
+    const rb = rank(b.ruta ?? "ejecucion");
+    if (ra !== rb) return ra - rb;
+    return b.reservadaAt - a.reservadaAt;
+  });
+}
+
 const STORAGE_KEY = "sistemicar_situacion_reserva";
 export const SITUACION_RESERVA_EVENT = "sistemicar-situacion-reserva-changed";
 
 function normalizeItem(raw: SituacionReservaItem): SituacionReservaItem {
-  return {
+  const base = {
     ...raw,
     reservadaAt: raw.reservadaAt ?? Date.now(),
     estado: raw.estado ?? "activa",
   };
+  return { ...base, ruta: inferRutaFromRow(base) };
 }
 
 function getAllLocalReserva(): SituacionReservaItem[] {
@@ -61,7 +133,7 @@ export function getLocalSituacionReserva(userId: string): SituacionReservaItem[]
 }
 
 export function getReservaActivas(items: SituacionReservaItem[]): SituacionReservaItem[] {
-  return items.filter(i => i.estado === "activa");
+  return sortReservasTacticas(items.filter(i => i.estado === "activa"));
 }
 
 export function subscribeToSituacionReserva(
@@ -86,12 +158,13 @@ export function subscribeToSituacionReserva(
             origenVehiculoId: row.origenVehiculoId,
             minutosCupo: row.minutosCupo,
             detalles: row.detalles,
+            ruta: inferRutaFromRow(row),
             estado: row.estado ?? "activa",
             retomadaAt: row.retomadaAt,
             retomadaEnVehiculoId: row.retomadaEnVehiculoId,
           });
         });
-        const sorted = data.sort((a, b) => b.reservadaAt - a.reservadaAt);
+        const sorted = sortReservasTacticas(data);
         deactivateSovereignModeGlobal();
         const others = getAllLocalReserva().filter(i => i.userId !== userId);
         saveAllLocalReserva([...others, ...sorted]);
@@ -121,9 +194,11 @@ export type NuevaSituacionReserva = Omit<SituacionReservaItem, "id" | "userId" |
 };
 
 export async function addSituacionReserva(userId: string, item: NuevaSituacionReserva): Promise<string> {
+  const ruta = item.ruta ?? inferRutaFromRow(item);
   const payload = {
     texto: item.texto,
     reservadaAt: Date.now(),
+    ruta,
     origenVehiculoTitulo: item.origenVehiculoTitulo ?? null,
     origenVehiculoId: item.origenVehiculoId ?? null,
     minutosCupo: item.minutosCupo ?? null,
@@ -143,6 +218,7 @@ export async function addSituacionReserva(userId: string, item: NuevaSituacionRe
       userId,
       texto: payload.texto,
       reservadaAt: payload.reservadaAt,
+      ruta: payload.ruta,
       ...(item.origenVehiculoTitulo ? { origenVehiculoTitulo: item.origenVehiculoTitulo } : {}),
       ...(item.origenVehiculoId ? { origenVehiculoId: item.origenVehiculoId } : {}),
       ...(item.minutosCupo != null && item.minutosCupo > 0 ? { minutosCupo: item.minutosCupo } : {}),
@@ -184,6 +260,22 @@ export async function updateSituacionReservaEstado(
       ...(extra?.retomadaAt != null ? { retomadaAt: extra.retomadaAt } : {}),
       ...(extra?.retomadaEnVehiculoId ? { retomadaEnVehiculoId: extra.retomadaEnVehiculoId } : {}),
     });
+  }
+}
+
+export async function updateSituacionReservaRuta(
+  userId: string,
+  reservaId: string,
+  ruta: ReservaTacticaRuta
+): Promise<void> {
+  const all = getAllLocalReserva().map(i =>
+    i.id === reservaId && i.userId === userId ? { ...i, ruta } : i
+  );
+  saveAllLocalReserva(all);
+
+  if (isFirebaseConfigured() && db) {
+    const path = getPrivatePath(userId, "situacionReserva");
+    await updateDoc(doc(db, path, reservaId), { ruta });
   }
 }
 

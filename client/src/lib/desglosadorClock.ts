@@ -108,10 +108,41 @@ export function formatMMSS(totalSec: number): string {
 }
 
 export function formatElapsedHHMMSS(totalSec: number): string {
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
+  const sec = Math.max(0, Math.floor(totalSec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Tiempo total en el vehículo desglosador (desde apertura) — base de profundidad y resistencia. */
+export function getDesglosadorSessionElapsedSec(vehicle: Vehicle, now = Date.now()): number {
+  const aperturaMs = vehicle.aperturaAt ?? vehicle.createdAt?.getTime?.() ?? 0;
+  if (aperturaMs <= 0) return 0;
+  return Math.floor((now - aperturaMs) / 1000);
+}
+
+export function desglosadorHourProgress(elapsedSec: number): {
+  hoursDone: number;
+  secInCurrentHour: number;
+  pctToNextHour: number;
+  secToNextHour: number;
+} {
+  const sec = Math.max(0, Math.floor(elapsedSec));
+  const hoursDone = Math.floor(sec / 3600);
+  const secInCurrentHour = sec % 3600;
+  const pctToNextHour = (secInCurrentHour / 3600) * 100;
+  const secToNextHour = 3600 - secInCurrentHour;
+  return { hoursDone, secInCurrentHour, pctToNextHour, secToNextHour };
+}
+
+export function formatDesglosadorDurationHuman(elapsedSec: number): string {
+  const sec = Math.max(0, Math.floor(elapsedSec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m} min`;
+  return `${sec % 60}s`;
 }
 
 export type SubCloseVerdict = "gain" | "loss" | "neutral" | "noRef";

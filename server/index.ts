@@ -5127,6 +5127,44 @@ app.post("/api/admin/espejo/grant-credits", requireAdminToken, async (req, res) 
   }
 });
 
+// ===== ADMIN: ACTIVAR MÓDULOS PLANIFICACIÓN (Yape / manual) =====
+app.post("/api/admin/modules/grant", requireAdminToken, async (req, res) => {
+  try {
+    const { email, planId, source, note } = req.body || {};
+    if (!email || typeof email !== "string" || !email.includes("@")) {
+      return res.status(400).json({ error: "Email válido requerido." });
+    }
+    const pid = typeof planId === "string" ? planId.trim() : "";
+    if (!pid || modulesGrantedByPlan(pid).length === 0) {
+      return res.status(400).json({
+        error: "Plan no válido. Usa: planificacion_base, soberania_dia u operativo.",
+      });
+    }
+    const activated = await activateModulesForEmail(email.trim().toLowerCase(), pid);
+    if (!activated) {
+      return res.status(404).json({
+        error:
+          "No se encontró usuario con ese correo en Firebase Auth. Que inicie sesión al menos una vez.",
+        pending: true,
+      });
+    }
+    console.log(
+      `[admin/modules/grant] ${email} plan=${pid} source=${source ?? "manual"} note=${note ?? ""}`
+    );
+    res.json({
+      success: true,
+      activated: true,
+      planId: pid,
+      modules: modulesGrantedByPlan(pid),
+      message: `Módulo ${pid} activado para ${email}.`,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error activando módulo.";
+    console.error("[admin/modules/grant]", error);
+    res.status(500).json({ error: message });
+  }
+});
+
 // ===== ADMIN: VENTAS VENDEDORES PLANIFICACIÓN =====
 app.get("/api/admin/seller-sales", requireAdminToken, async (req, res) => {
   try {

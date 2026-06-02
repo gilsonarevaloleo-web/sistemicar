@@ -1,6 +1,6 @@
 import type { SegmentoV5 } from "./persistence";
 import {
-  getJournalDayStartMs,
+  getLimaDayStartMs,
   isPastSegmentEnd,
   segmentClockMs,
   segmentWindowMs,
@@ -82,7 +82,9 @@ export function applySegmentAttentionTick(
   nowMs: number,
   dayStartMs?: number
 ): { segmentos: SegmentoV5[]; events: SegmentAttentionEvent[]; changed: boolean } {
-  const dayStart = dayStartMs ?? getJournalDayStartMs(nowMs);
+  // dayStart debe ser medianoche calendario (Lima) para que "HH:mm" sea absoluto.
+  // El "día-jornada" (05:00) se usa para agrupar/snapshot, no para anclar horarios de segmentos.
+  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
   const events: SegmentAttentionEvent[] = [];
   let changed = false;
 
@@ -130,7 +132,7 @@ export function collectVozPuertaEvents(
   nowMs: number,
   dayStartMs?: number
 ): Array<{ segId: string; nombre: string; ordinal: number; total: number }> {
-  const dayStart = dayStartMs ?? getJournalDayStartMs(nowMs);
+  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
   const total = segmentos.length;
   const out: Array<{ segId: string; nombre: string; ordinal: number; total: number }> = [];
 

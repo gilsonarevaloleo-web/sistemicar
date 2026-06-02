@@ -204,10 +204,12 @@ import {
   formatElapsedHHMMSS,
   formatHHMM,
   formatMMSS,
+  getDesglosadorSessionElapsedSec,
   suggestedSec,
   computeSubCloseVerdict,
   type SubCloseVerdict,
 } from "@/lib/desglosadorClock";
+import DesglosadorDuracionPanel from "@/components/DesglosadorDuracionPanel";
 import {
   aplicarTiempoGanadoAlCumplir,
   applyCupoManualYRedistribuir,
@@ -243,6 +245,8 @@ import {
   getReservaActivas,
   subscribeToSituacionReserva,
   updateSituacionReservaEstado,
+  updateSituacionReservaRuta,
+  type ReservaTacticaRuta,
   type SituacionReservaItem,
 } from "@/lib/situacionReserva";
 import { computeDailyPsBarModel } from "@/lib/dailyPsBar";
@@ -314,6 +318,8 @@ import { setActiveSegmento, registrarEvento, COMPONENTES } from "@/lib/evento-un
 import { ManualTriggerButton } from "@/components/master-manual-drawer";
 import AnilloConciencia from "@/components/AnilloConciencia";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
+import PlanificacionCockpit from "@/components/PlanificacionCockpit";
+import ReservasTacticasDock from "@/components/ReservasTacticasDock";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
@@ -563,12 +569,6 @@ const computeDesglosadorDepthPS = (tiempoSugeridoSeg: number | undefined): numbe
   if (tiempoSugeridoSeg == null || !Number.isFinite(tiempoSugeridoSeg) || tiempoSugeridoSeg <= 0) return 0;
   return computeDesglosadorSessionDepthPS(tiempoSugeridoSeg);
 };
-
-function getDesglosadorElapsedSec(vehicle: Vehicle): number {
-  const aperturaMs = vehicle.aperturaAt ?? vehicle.createdAt?.getTime?.() ?? 0;
-  if (aperturaMs <= 0) return 0;
-  return Math.floor((Date.now() - aperturaMs) / 1000);
-}
 
 type SituacionDesgloseSummary = {
   cumplidos: number;
@@ -955,6 +955,33 @@ export default function Planeacion() {
   const [situacionReserva, setSituacionReserva] = useState<SituacionReservaItem[]>([]);
   const reservaActivas = useMemo(() => getReservaActivas(situacionReserva), [situacionReserva]);
 
+  type PlanTab = "operar" | "metricas" | "meta";
+  const [planLayout, setPlanLayout] = useState<"compact" | "full">(() => {
+    try {
+      const raw = localStorage.getItem("sistemicar-plan-layout");
+      return raw === "full" ? "full" : "compact";
+    } catch {
+      return "compact";
+    }
+  });
+  const [planTab, setPlanTab] = useState<PlanTab>(() => {
+    try {
+      const raw = localStorage.getItem("sistemicar-plan-tab");
+      return raw === "metricas" || raw === "meta" ? raw : "operar";
+    } catch {
+      return "operar";
+    }
+  });
+  const compactLayout = planLayout === "compact";
+  const [metricasDetalleOpen, setMetricasDetalleOpen] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem("sistemicar-plan-layout", planLayout); } catch {}
+  }, [planLayout]);
+  useEffect(() => {
+    try { localStorage.setItem("sistemicar-plan-tab", planTab); } catch {}
+  }, [planTab]);
+
   const [progression, setProgression] = useState<UserProgression | null>(null);
   const [energyLogs, setEnergyLogs] = useState<EnergyLog[]>([]);
 
@@ -1334,6 +1361,32 @@ export default function Planeacion() {
     return null;
   }, [planilla, segmentoActivo]);
 
+  const anilloModel = useMemo(() => {
+    void anilloTick;
+    const segs = planilla?.segmentos || [];
+    const nowMs = Date.now();
+    const vehiculosAnillo = filterVehiclesForEntropy(vehicles, nowMs);
+    const metricas = calcularMetricasAnilloConciencia({
+      segmentos: segs,
+      vehiculos: vehiculosAnillo,
+      now: nowMs,
+    });
+    const anilloEstado = computeAnilloEstado({ segmentos: segs, vehiculos: vehiculosAnillo, now: nowMs });
+    const pointerLap = nowToHalfDayLap(nowMs);
+    const timelineArcs = computeTimelineClockArcs({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
+    const dayStats = computeTimelineDayStats({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
+    const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
+    return {
+      segs,
+      metricas,
+      anilloEstado,
+      pointerLap,
+      timelineArcs,
+      dayStats,
+      segConquistados,
+    };
+  }, [planilla, vehicles, anilloTick]);
+
   useEffect(() => {
     if (!user) return;
     const unsub1 = subscribeToVehicles(user.uid, (data) => {
@@ -1672,7 +1725,8 @@ export default function Planeacion() {
         return;
       }
 
-      const dayStart = getJournalDayStartMs(nowMs);
+      // Segmentos usan reloj HH:mm anclado a medianoche (Lima), no al inicio de jornada 05:00.
+      const dayStart = getLimaDayStartMs(nowMs);
       const { segmentos: nextSegmentos, events, changed } = applySegmentAttentionTick(
         planilla.segmentos,
         nowMs,
@@ -3274,7 +3328,7 @@ export default function Planeacion() {
       return vehicle?.desglosadorBloqueDepthPsGranted ?? 0;
     }
 
-    const elapsedSec = getDesglosadorElapsedSec(vehicle);
+    const elapsedSec = getDesglosadorSessionElapsedSec(vehicle);
     const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
     const depthGranted = options?.resetGranted ?? vehicle.desglosadorBloqueDepthPsGranted ?? 0;
     const delta = totalDepthPs - depthGranted;
@@ -4057,6 +4111,7 @@ export default function Planeacion() {
         updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro }),
         addSituacionReserva(user.uid, {
           texto: extraido.texto,
+          ruta: "situacion_desglosador",
           origenVehiculoTitulo: vehicle.titulo,
           origenVehiculoId: vehicle.id,
           minutosCupo: extraido.minutosCupo,
@@ -4064,8 +4119,8 @@ export default function Planeacion() {
         }),
       ]);
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
-      toast.info("En reserva situacional", {
-        description: `"${extraido.texto}" — retómala cuando tengas tiempo`,
+      toast.info("En reservas tácticas", {
+        description: `"${extraido.texto}" — ruta S · retómala cuando tengas tiempo`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 3200,
       });
@@ -4091,6 +4146,30 @@ export default function Planeacion() {
     if (activos.length === 1) return activos[0];
     return undefined;
   }, [vehicles, expandedId]);
+
+  const handleReservaTacticaQuickAdd = async (texto: string, ruta: ReservaTacticaRuta) => {
+    if (!user) return;
+    try {
+      await addSituacionReserva(user.uid, { texto, ruta });
+      toast.info("Reserva táctica guardada", {
+        description: texto.length > 48 ? `${texto.slice(0, 48)}…` : texto,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
+        duration: 2200,
+      });
+    } catch (e) {
+      console.error("[handleReservaTacticaQuickAdd]", e);
+      toast.error("No se pudo guardar la reserva");
+    }
+  };
+
+  const handleReservaRutaChange = async (reservaId: string, ruta: ReservaTacticaRuta) => {
+    if (!user) return;
+    try {
+      await updateSituacionReservaRuta(user.uid, reservaId, ruta);
+    } catch (e) {
+      console.error("[handleReservaRutaChange]", e);
+    }
+  };
 
   const handleReservaEliminar = async (reservaId: string) => {
     if (!user) return;
@@ -4569,22 +4648,66 @@ export default function Planeacion() {
   };
 
   return (
-    <div className="min-h-screen p-4 pb-24" style={{ backgroundColor: "#020202" }}>
+    <div className="min-h-screen p-4 pb-40" style={{ backgroundColor: "#020202" }}>
       <div className="max-w-lg mx-auto space-y-4">
-        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center pt-4">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-3" style={{ backgroundColor: `${BLOOD}20` }}>
-            <Rocket size={16} style={{ color: BLOOD }} />
-            <span className="text-xs font-bold uppercase tracking-widest" style={{ color: BLOOD }}>Planificación v5.5</span>
-          </div>
-          <div className="flex items-center justify-center gap-3">
-            <h1 className="text-2xl font-black text-white tracking-tight">PLANIFICACIÓN</h1>
-            <ManualTriggerButton manualType="planificacion" />
-          </div>
-          <p className="text-[10px] text-slate-600 mt-1 uppercase tracking-widest">Sistema de Segmentos · Puerta de Atención</p>
-        </motion.div>
+        {planLayout === "full" && (
+          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center pt-4">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-3" style={{ backgroundColor: `${BLOOD}20` }}>
+              <Rocket size={16} style={{ color: BLOOD }} />
+              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: BLOOD }}>Planificación v5.5</span>
+            </div>
+            <div className="flex items-center justify-center gap-3">
+              <h1 className="text-2xl font-black text-white tracking-tight">PLANIFICACIÓN</h1>
+              <ManualTriggerButton manualType="planificacion" />
+            </div>
+            <p className="text-[10px] text-slate-600 mt-1 uppercase tracking-widest">Sistema de Segmentos · Puerta de Atención</p>
+          </motion.div>
+        )}
+
+        {compactLayout && (
+          <PlanificacionCockpit
+            compact={compactLayout}
+            onToggleCompact={() => setPlanLayout(v => (v === "compact" ? "full" : "compact"))}
+            tab={planTab}
+            onTabChange={setPlanTab}
+            psLine={(
+              <p className="text-[10px] font-black tabular-nums" style={{ color: CYAN }} data-testid="cockpit-ps-line">
+                {dailyPsBar.todayPs} PS · {dailyPsBar.pctOfReference}%
+              </p>
+            )}
+            anillo={(
+              <AnilloConciencia
+                planificacionPct={anilloModel.metricas.planificacionPct}
+                conquistaArcPct={anilloModel.metricas.conquistaArcPct}
+                entropiaArcPct={anilloModel.metricas.entropiaArcPct}
+                timelineArcs={anilloModel.timelineArcs}
+                conquistaPulse={conquistaPulse}
+                size={72}
+                segmentos={anilloModel.segs}
+                pointerDeg={anilloModel.anilloEstado.deg}
+                pointerLap={anilloModel.pointerLap}
+                pointerMode={anilloModel.anilloEstado.mode}
+                centerGuide={anilloModel.anilloEstado.centerGuide}
+              />
+            )}
+            segmentoChip={(
+              segmentoActivo ? (
+                <div className="rounded-xl border px-3 py-2" style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }} data-testid="cockpit-segmento-activo">
+                  <p className="text-[9px] font-black text-white truncate">{segmentoActivo.nombre}</p>
+                  <p className="text-[8px] text-slate-500">{segmentoActivo.horaInicio}–{segmentoActivo.horaFin}</p>
+                </div>
+              ) : (
+                <div className="rounded-xl border px-3 py-2" style={{ backgroundColor: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.06)" }} data-testid="cockpit-sin-segmento">
+                  <p className="text-[9px] font-black text-slate-300">Sin segmento activo</p>
+                  <p className="text-[8px] text-slate-600">Opera desde “Segmentos del día”.</p>
+                </div>
+              )
+            )}
+          />
+        )}
 
         {/* MONITOR DE ESTADOS */}
-        {monitorState && (
+        {(planLayout === "full" || planTab === "meta") && monitorState && (
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="p-4 rounded-xl border-2" style={{ backgroundColor: `${MONITOR_STATES[monitorState].color}10`, borderColor: MONITOR_STATES[monitorState].color }}>
             <div className="flex items-center gap-3">
               {(() => { const Icon = MONITOR_STATES[monitorState].icon; return <Icon size={20} style={{ color: MONITOR_STATES[monitorState].color }} />; })()}
@@ -4597,6 +4720,7 @@ export default function Planeacion() {
         )}
 
         {/* BARRA PS — total + día */}
+        {(planLayout === "full" || planTab === "meta") && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="p-3 rounded-xl border relative overflow-hidden" style={{ backgroundColor: PIZARRA, borderColor: goldenFlash ? GOLD : `${GOLD}20`, boxShadow: goldenFlash ? `0 0 30px ${GOLD}50, 0 0 60px ${GOLD}20` : "none", transition: "all 0.5s ease" }}>
           <AnimatePresence>
             {goldenFlash && (
@@ -4666,8 +4790,10 @@ export default function Planeacion() {
             <span className="absolute right-0 top-0 text-[7px] text-slate-600">120%</span>
           </div>
         </motion.div>
+        )}
 
         {/* Termodinámica — frente a ayer (tu referencia) */}
+        {(planLayout === "full" || planTab === "metricas") && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -4682,6 +4808,18 @@ export default function Planeacion() {
               </p>
               <p className="text-[7px] text-slate-500 mt-0.5">Frente a ayer · tu referencia, no el reloj</p>
             </div>
+            {compactLayout && (
+              <button
+                type="button"
+                onClick={() => setMetricasDetalleOpen(v => !v)}
+                className="text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border"
+                style={{ borderColor: "rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.45)", backgroundColor: "rgba(0,0,0,0.20)" }}
+                data-testid="metricas-detalle-toggle"
+                title={metricasDetalleOpen ? "Ocultar detalles" : "Ver detalles"}
+              >
+                {metricasDetalleOpen ? "Menos" : "Más"}
+              </button>
+            )}
             <div
               className="shrink-0 px-2.5 py-1.5 rounded-lg border text-center"
               style={{
@@ -4707,7 +4845,9 @@ export default function Planeacion() {
             style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.06)" }}
           >
             <p className="text-[10px] font-bold text-white leading-snug">{termoCompare.headline}</p>
-            <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{termoCompare.motivacion}</p>
+            {(planLayout === "full" || metricasDetalleOpen) && (
+              <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{termoCompare.motivacion}</p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-1.5">
@@ -4783,9 +4923,10 @@ export default function Planeacion() {
               })}
           </div>
         </motion.div>
+        )}
 
         {/* Atención Panorámica — puertas conscientes */}
-        {planilla && planilla.segmentos.length > 0 && (
+        {(planLayout === "full" || planTab === "metricas") && planilla && planilla.segmentos.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -4818,7 +4959,9 @@ export default function Planeacion() {
               style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.06)" }}
             >
               <p className="text-[10px] font-bold text-white leading-snug">{atencionCompare.headline}</p>
-              <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{atencionCompare.motivacion}</p>
+              {(planLayout === "full" || metricasDetalleOpen) && (
+                <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{atencionCompare.motivacion}</p>
+              )}
               <div className="flex gap-3 mt-2 text-[8px] flex-wrap">
                 <span className="text-slate-500">
                   Puertas: <span className="font-bold text-slate-300">{atencionLive.puertasAbiertas}</span>
@@ -4837,7 +4980,7 @@ export default function Planeacion() {
               </div>
             </div>
 
-            <div className="space-y-1 max-h-36 overflow-y-auto">
+            <div className={`space-y-1 overflow-y-auto ${compactLayout ? "max-h-24" : "max-h-36"}`}>
               {atencionLive.segmentos.map(sa => {
                 const badge = atencionBadgeLabel(sa);
                 const badgeColor =
@@ -4882,7 +5025,7 @@ export default function Planeacion() {
         )}
 
         {/* Disciplina — vehículos conscientes en segmento */}
-        {planilla && planilla.segmentos.length > 0 && (
+        {(planLayout === "full" || planTab === "metricas") && planilla && planilla.segmentos.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -4914,7 +5057,7 @@ export default function Planeacion() {
             </div>
 
             {disciplinaSerie.length >= 2 && (
-              <div className="h-28 mb-2.5">
+              <div className={`${compactLayout ? "h-20" : "h-28"} mb-2.5`}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={disciplinaSerie}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -4961,7 +5104,9 @@ export default function Planeacion() {
               style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.06)" }}
             >
               <p className="text-[10px] font-bold text-white leading-snug">{disciplinaCompare.headline}</p>
-              <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{disciplinaCompare.motivacion}</p>
+              {(planLayout === "full" || metricasDetalleOpen) && (
+                <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{disciplinaCompare.motivacion}</p>
+              )}
               <div className="flex gap-3 mt-2 text-[8px] flex-wrap">
                 <span className="text-slate-500">
                   Sin entrada: <span className="font-bold text-slate-300">{disciplinaLive.sinEntrada}</span>
@@ -4993,7 +5138,7 @@ export default function Planeacion() {
               </div>
             )}
 
-            <div className="space-y-1 max-h-36 overflow-y-auto">
+            <div className={`space-y-1 overflow-y-auto ${compactLayout ? "max-h-24" : "max-h-36"}`}>
               {disciplinaLive.segmentos.map(sd => {
                 const badge = disciplinaBadgeLabel(sd);
                 const badgeColor =
@@ -5040,37 +5185,43 @@ export default function Planeacion() {
           </motion.div>
         )}
 
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col gap-2 p-2.5 rounded-xl border sm:flex-row sm:items-center sm:justify-between"
-          style={{ backgroundColor: "rgba(0,0,0,0.35)", borderColor: "rgba(255,255,255,0.08)" }}
-          data-testid="sound-controls-bar"
-        >
-          <div className="min-w-0">
-            <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · Planificación</p>
-            <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
-              Alertas = cupo situacional · Puerta = voz min 4 · Tick = pitido del reloj
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles(true)}</div>
-        </motion.div>
-
-        {centinelaEsperaSec > 0 && !vehicles.some(v => v.status === "activo" && !v.autoVerdad) && (
-          <p className="text-[9px] text-center text-slate-500 font-mono" data-testid="centinela-espera">
-            Centinela en espera… {centinelaEsperaSec}s
-          </p>
+        {(planLayout === "full" || planTab === "meta") && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col gap-2 p-2.5 rounded-xl border sm:flex-row sm:items-center sm:justify-between"
+            style={{ backgroundColor: "rgba(0,0,0,0.35)", borderColor: "rgba(255,255,255,0.08)" }}
+            data-testid="sound-controls-bar"
+          >
+            <div className="min-w-0">
+              <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · Planificación</p>
+              <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
+                Alertas = cupo situacional · Puerta = voz min 4 · Tick = pitido del reloj
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles(true)}</div>
+          </motion.div>
         )}
-        {centinelaBlockReason &&
-          !vehicles.some(v => v.status === "activo" && !v.autoVerdad) &&
-          !vehicles.some(v => v.autoVerdad && v.status === "activo") && (
-          <p className="text-[9px] text-center text-amber-600/80 leading-snug px-2" data-testid="centinela-blocked">
-            Centinela pausado: {centinelaBlockReason}
-          </p>
+
+        {(planLayout === "full" || planTab === "meta") && (
+          <>
+            {centinelaEsperaSec > 0 && !vehicles.some(v => v.status === "activo" && !v.autoVerdad) && (
+              <p className="text-[9px] text-center text-slate-500 font-mono" data-testid="centinela-espera">
+                Centinela en espera… {centinelaEsperaSec}s
+              </p>
+            )}
+            {centinelaBlockReason &&
+              !vehicles.some(v => v.status === "activo" && !v.autoVerdad) &&
+              !vehicles.some(v => v.autoVerdad && v.status === "activo") && (
+              <p className="text-[9px] text-center text-amber-600/80 leading-snug px-2" data-testid="centinela-blocked">
+                Centinela pausado: {centinelaBlockReason}
+              </p>
+            )}
+          </>
         )}
 
         {/* RADIOGRAFÍA DEL OPERADOR — mini barra de progreso de tokens */}
-        {(() => {
+        {(planLayout === "full" || planTab === "meta") && (() => {
           const ps = progression?.sovereigntyPoints || 0;
           const STEP = 350;
           const nextMilestone = (Math.floor(ps / STEP) + 1) * STEP;
@@ -5115,66 +5266,53 @@ export default function Planeacion() {
         })()}
 
         {/* BÓVEDA DE LOGROS — HITO PLANIFICACIÓN */}
-        <PlanModuleMilestoneBar pts={progression?.ptsPlanificacion || 0} />
+        {(planLayout === "full" || planTab === "meta") && (
+          <PlanModuleMilestoneBar pts={progression?.ptsPlanificacion || 0} />
+        )}
 
         {/* ANILLO DE CONCIENCIA */}
-        {(() => {
-          void anilloTick;
-          const segs = planilla?.segmentos || [];
-          const nowMs = Date.now();
-          const vehiculosAnillo = filterVehiclesForEntropy(vehicles, nowMs);
-          const metricas = calcularMetricasAnilloConciencia({
-            segmentos: segs,
-            vehiculos: vehiculosAnillo,
-            now: nowMs,
-          });
-          const anilloEstado = computeAnilloEstado({ segmentos: segs, vehiculos: vehiculosAnillo, now: nowMs });
-          const pointerLap = nowToHalfDayLap(nowMs);
-          const timelineArcs = computeTimelineClockArcs({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
-          const dayStats = computeTimelineDayStats({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
-          const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
-          return (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="flex flex-col items-center p-3 rounded-xl border"
-              style={{ backgroundColor: "rgba(10,10,10,0.8)", borderColor: "rgba(212,175,55,0.15)" }}
-            >
-              <p className="text-[8px] font-black uppercase tracking-[0.25em] text-center mb-2" style={{ color: "rgba(255,255,255,0.25)" }}>
-                ANILLO DE CONCIENCIA
-              </p>
-              <AnilloConciencia
-                planificacionPct={metricas.planificacionPct}
-                conquistaArcPct={metricas.conquistaArcPct}
-                entropiaArcPct={metricas.entropiaArcPct}
-                timelineArcs={timelineArcs}
-                conquistaPulse={conquistaPulse}
-                size={130}
-                segmentos={segs}
-                pointerDeg={anilloEstado.deg}
-                pointerLap={pointerLap}
-                pointerMode={anilloEstado.mode}
-                centerGuide={anilloEstado.centerGuide}
-              />
-              <div className="mt-2 grid grid-cols-3 gap-1 w-full text-center">
-                <div>
-                  <p className="text-[7px] uppercase font-bold" style={{ color: "#8B5CF6" }}>Consciente</p>
-                  <p className="text-xs font-black" style={{ color: "#8B5CF6" }}>{formatMinutosJornada(dayStats.conquistaMin)}</p>
-                </div>
-                <div>
-                  <p className="text-[7px] uppercase font-bold" style={{ color: BLOOD }}>Inconsciente</p>
-                  <p className="text-xs font-black" style={{ color: dayStats.entropiaMin > 0 ? BLOOD : "rgba(148,163,184,0.5)" }}>
-                    {formatMinutosJornada(dayStats.entropiaMin)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[7px] text-slate-500 uppercase">Seg. cerrados</p>
-                  <p className="text-xs font-black" style={{ color: "#00FFC3" }}>{segConquistados}/{segs.length}</p>
-                </div>
+        {(planLayout === "full" || planTab === "metricas") && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex flex-col items-center p-3 rounded-xl border"
+            style={{ backgroundColor: "rgba(10,10,10,0.8)", borderColor: "rgba(212,175,55,0.15)" }}
+            data-testid="anillo-card"
+          >
+            <p className="text-[8px] font-black uppercase tracking-[0.25em] text-center mb-2" style={{ color: "rgba(255,255,255,0.25)" }}>
+              ANILLO DE CONCIENCIA
+            </p>
+            <AnilloConciencia
+              planificacionPct={anilloModel.metricas.planificacionPct}
+              conquistaArcPct={anilloModel.metricas.conquistaArcPct}
+              entropiaArcPct={anilloModel.metricas.entropiaArcPct}
+              timelineArcs={anilloModel.timelineArcs}
+              conquistaPulse={conquistaPulse}
+              size={130}
+              segmentos={anilloModel.segs}
+              pointerDeg={anilloModel.anilloEstado.deg}
+              pointerLap={anilloModel.pointerLap}
+              pointerMode={anilloModel.anilloEstado.mode}
+              centerGuide={anilloModel.anilloEstado.centerGuide}
+            />
+            <div className="mt-2 grid grid-cols-3 gap-1 w-full text-center">
+              <div>
+                <p className="text-[7px] uppercase font-bold" style={{ color: "#8B5CF6" }}>Consciente</p>
+                <p className="text-xs font-black" style={{ color: "#8B5CF6" }}>{formatMinutosJornada(anilloModel.dayStats.conquistaMin)}</p>
               </div>
-            </motion.div>
-          );
-        })()}
+              <div>
+                <p className="text-[7px] uppercase font-bold" style={{ color: BLOOD }}>Inconsciente</p>
+                <p className="text-xs font-black" style={{ color: anilloModel.dayStats.entropiaMin > 0 ? BLOOD : "rgba(148,163,184,0.5)" }}>
+                  {formatMinutosJornada(anilloModel.dayStats.entropiaMin)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[7px] text-slate-500 uppercase">Seg. cerrados</p>
+                <p className="text-xs font-black" style={{ color: "#00FFC3" }}>{anilloModel.segConquistados}/{anilloModel.segs.length}</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
 
         <AnimatePresence>
           {recordBanner && (
@@ -5477,7 +5615,7 @@ export default function Planeacion() {
         </AnimatePresence>
 
         {/* BANNER: AUTO-CARGA DE RUTINA */}
-        {rutinaBanner && (
+        {(planLayout === "full" || planTab === "operar") && rutinaBanner && (
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
             className="rounded-2xl border border-amber-700/30 shadow-[0_0_12px_rgba(245,158,11,0.08)] p-4 flex items-center justify-between gap-3 bg-gradient-to-br from-zinc-950 via-[#141416] to-zinc-950"
@@ -5513,6 +5651,7 @@ export default function Planeacion() {
         )}
 
         {/* ACORDEÓN: SEGMENTOS DEL DÍA (Puerta de Atención) */}
+        {(planLayout === "full" || planTab === "operar") && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border overflow-hidden" style={{ backgroundColor: PIZARRA, borderColor: `${BLOOD}25` }}>
           <button onClick={() => setExpandedSegId(expandedSegId === "segmentos" ? null : "segmentos")} className="w-full p-4 flex items-center justify-between" data-testid="accordion-segmentos">
             <div className="flex items-center gap-2">
@@ -6110,8 +6249,9 @@ export default function Planeacion() {
             )}
           </AnimatePresence>
         </motion.div>
+        )}
 
-        {!isCreating ? (
+        {(planLayout === "full" || planTab === "operar") && (!isCreating ? (
           <>
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
               <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
@@ -6150,76 +6290,6 @@ export default function Planeacion() {
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Sin vehículos activos</p>
                 <p className="text-[9px] text-slate-600">Lanza uno desde La Flota o el historial aparecerá al cerrar misiones.</p>
               </div>
-            )}
-
-            {reservaActivas.length > 0 && (
-              <AccordionSection
-                title="RESERVA SITUACIONAL"
-                subtitle="Para retomar"
-                icon={Archive}
-                color={PLATA}
-                count={reservaActivas.length}
-                defaultOpen={false}
-              >
-                <p className="text-[8px] text-slate-500 px-1 pb-2 leading-relaxed">
-                  Tareas pospuestas sin tiempo ahora. Persisten al cerrar el vehículo. Retómala en lista libre (marca cumplida aquí) o en cronómetro.
-                </p>
-                <div className="space-y-1.5">
-                  {reservaActivas.map(item => (
-                    <div
-                      key={item.id}
-                      className="rounded-lg p-2 flex flex-col gap-1.5"
-                      style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid rgba(148,163,184,0.15)" }}
-                      data-testid={`reserva-situacional-${item.id}`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <span className="text-[10px] text-slate-300 flex-1 min-w-0 leading-tight">{item.texto}</span>
-                        {item.minutosCupo != null && item.minutosCupo > 0 && (
-                          <span className="text-[7px] font-mono font-bold flex-shrink-0 text-slate-500">{item.minutosCupo}′</span>
-                        )}
-                      </div>
-                      {(item.origenVehiculoTitulo || item.reservadaAt) && (
-                        <p className="text-[7px] text-slate-600 truncate">
-                          {item.origenVehiculoTitulo ? `de: ${item.origenVehiculoTitulo}` : ""}
-                          {item.origenVehiculoTitulo && item.reservadaAt ? " · " : ""}
-                          {item.reservadaAt ? new Date(item.reservadaAt).toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit" }) : ""}
-                        </p>
-                      )}
-                      <div className="flex flex-wrap gap-1">
-                        <button
-                          type="button"
-                          onClick={() => void handleReservaACronometro(item.id)}
-                          className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase"
-                          style={{ backgroundColor: "rgba(212,175,55,0.12)", color: GOLD, border: "1px solid rgba(212,175,55,0.35)" }}
-                          data-testid={`reserva-a-cron-${item.id}`}
-                        >
-                          → Cronómetro
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleReservaAListaLibre(item.id)}
-                          className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase"
-                          style={{ backgroundColor: "rgba(0,255,195,0.08)", color: CYAN, border: "1px solid rgba(0,255,195,0.25)" }}
-                          data-testid={`reserva-a-libre-${item.id}`}
-                          title="Lista libre (+2 PS al cumplir) · se marca cumplida en reserva"
-                        >
-                          → Lista libre
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleReservaEliminar(item.id)}
-                          className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase ml-auto"
-                          style={{ backgroundColor: "rgba(239,68,68,0.08)", color: "#f87171", border: "1px solid rgba(239,68,68,0.2)" }}
-                          data-testid={`reserva-eliminar-${item.id}`}
-                        >
-                          <Trash2 size={9} className="inline mr-0.5" />
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </AccordionSection>
             )}
 
             {(() => {
@@ -6534,7 +6604,7 @@ export default function Planeacion() {
                                 <span className="text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider" style={{ backgroundColor: `${cfg.color}15`, color: cfg.color, opacity: 0.7 }}>Planificación</span>
                               </div>
                               <p className="text-[8px] text-slate-500 leading-snug">
-                                Profundidad de sesión: {formatDepthAwardPreview()} PS por hora real activa. Se otorgan al cruzar cada hora completa (curva suave, sin explosión).
+                                Duración del desglose en vivo: fortalece tu resistencia atencional. Profundidad: {formatDepthAwardPreview()} PS por cada hora completa en el desglosador (curva suave).
                               </p>
 
                               {/* Secuencia histórica */}
@@ -7038,7 +7108,7 @@ export default function Planeacion() {
             </div>
             <button onClick={resetForm} className="w-full py-2 text-xs text-slate-500 hover:text-slate-400">Cancelar</button>
           </motion.div>
-        ) : null}
+        ) : null)}
 
         {cierreEnergiaPending && (() => {
           const showRuta = cierrePayloadHasRutaEnfoque(cierreEnergiaPending);
@@ -7420,6 +7490,16 @@ export default function Planeacion() {
             userId={user?.uid || ""}
           />
         )}
+
+        <ReservasTacticasDock
+          items={reservaActivas}
+          onQuickAdd={(texto, ruta) => handleReservaTacticaQuickAdd(texto, ruta)}
+          onToCronometro={(id) => void handleReservaACronometro(id)}
+          onToListaLibre={(id) => void handleReservaAListaLibre(id)}
+          onDelete={(id) => void handleReservaEliminar(id)}
+          onRutaChange={(id, ruta) => void handleReservaRutaChange(id, ruta)}
+          colors={{ plata: PLATA, cyan: CYAN, gold: GOLD }}
+        />
       </div>
     </div>
   );
@@ -7642,6 +7722,7 @@ function VehicleCard({
   const [pausaTitulo, setPausaTitulo] = useState("");
   const [pausaEnviando, setPausaEnviando] = useState(false);
   const [desglosadorReorderMode, setDesglosadorReorderMode] = useState(false);
+  const [desglosadorUiTick, setDesglosadorUiTick] = useState(0);
 
   const playChime = useCallback(() => {
     if (!isTikSoundEnabled()) return;
@@ -7758,6 +7839,12 @@ function VehicleCard({
     const id = window.setInterval(() => onDesglosadorDepthTick(vehicle.id), 60_000);
     return () => clearInterval(id);
   }, [vehicle.id, vehicle.tipoReloj, vehicle.status, vehicle.aperturaAt, onDesglosadorDepthTick]);
+
+  useEffect(() => {
+    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo") return;
+    const id = window.setInterval(() => setDesglosadorUiTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [vehicle.id, vehicle.tipoReloj, vehicle.status, vehicle.aperturaAt]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -8392,6 +8479,13 @@ function VehicleCard({
                 {vehicle.interrupcionActiva && vehicle.tipoReloj === "desglosador" && (
                   <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full tracking-widest" style={{ backgroundColor: "rgba(139,92,246,0.15)", color: VIOLET, border: "1px solid rgba(139,92,246,0.35)" }}>EN PAUSA</span>
                 )}
+                {vehicle.tipoReloj === "desglosador" && vehicle.status === "activo" && (
+                  <DesglosadorDuracionPanel
+                    elapsedSec={getDesglosadorSessionElapsedSec(vehicle)}
+                    depthPsGranted={vehicle.desglosadorBloqueDepthPsGranted ?? 0}
+                    compact
+                  />
+                )}
                 {segmentoNumero != null && vehicle.status === "activo" && <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${EMERALD}20`, color: EMERALD }}>S{segmentoNumero}</span>}
                 {isSituacionFlota && vehicle.status === "activo" && situacionRelojDebeMostrarse(vehicle) && timerDisplay && (
                   <span
@@ -8454,6 +8548,7 @@ function VehicleCard({
                 const fmtSec = (sec: number) => { const m = Math.floor(sec / 60); const s = sec % 60; return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; };
 
                 if (desglosadorSummary || done) {
+                  const sessionElapsedSec = getDesglosadorSessionElapsedSec(vehicle);
                   const totalRealSec = subs.reduce((acc, s) => acc + (s.duracionFinal || 0), 0);
                   const totalSugeridoSec = subs.reduce((acc, s) => acc + (s.tiempoSugeridoSeg || 0), 0);
                   const hasSugerido = totalSugeridoSec > 0;
@@ -8484,7 +8579,11 @@ function VehicleCard({
                         </div>
 
                         {/* Top stats */}
-                        <div className="grid grid-cols-2 gap-1.5 text-center sm:grid-cols-4">
+                        <div className="grid grid-cols-2 gap-1.5 text-center sm:grid-cols-5">
+                          <div className="p-2 rounded-lg" style={{ backgroundColor: "rgba(56,189,248,0.1)" }}>
+                            <p className="text-base font-black font-mono" style={{ color: "#38BDF8" }}>{formatElapsedHHMMSS(sessionElapsedSec)}</p>
+                            <p className="text-[7px] uppercase font-bold" style={{ color: "rgba(255,255,255,0.72)" }}>Desglose</p>
+                          </div>
                           <div className="p-2 rounded-lg" style={{ backgroundColor: "rgba(0,200,81,0.1)" }}>
                             <p className="text-base font-black" style={{ color: "#00C851" }}>{cumplidos}</p>
                             <p className="text-[7px] uppercase font-bold" style={{ color: "rgba(255,255,255,0.72)" }}>Cumplidos</p>
@@ -8613,8 +8712,16 @@ function VehicleCard({
                   );
                 }
 
+                const sessionElapsedSec = getDesglosadorSessionElapsedSec(vehicle);
+                void desglosadorUiTick;
+
                 return (
                   <div className="pt-3 space-y-3">
+                    <DesglosadorDuracionPanel
+                      elapsedSec={sessionElapsedSec}
+                      depthPsGranted={vehicle.desglosadorBloqueDepthPsGranted ?? 0}
+                    />
+
                     {/* Progress header with collapse toggle */}
                     <div className="flex items-center justify-between px-1">
                       <div className="flex items-center gap-2">
@@ -8624,18 +8731,6 @@ function VehicleCard({
                       <div className="flex items-center gap-2">
                         <span className="text-[8px] font-mono font-bold" style={{ color: "rgba(255,255,255,0.82)" }}>{cumplidos + fallados}/{subs.length}</span>
                         <span className="text-[8px] font-mono font-bold" style={{ color: futuroCicloLabel === "—" ? "rgba(255,255,255,0.45)" : "#FDBA74" }}>🏁 CICLO: {futuroCicloLabel}</span>
-                        {(() => {
-                          const elapsed = getDesglosadorElapsedSec(vehicle);
-                          const depthGranted = vehicle.desglosadorBloqueDepthPsGranted ?? 0;
-                          const hoursDone = Math.floor(elapsed / 3600);
-                          const nextAward = nextDepthAwardAfterHours(hoursDone);
-                          const minsToNext = Math.max(0, Math.ceil(((hoursDone + 1) * 3600 - elapsed) / 60));
-                          return (
-                            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: "rgba(212,175,55,0.12)", color: GOLD }}>
-                              ⏳ {depthGranted} PS prof. · {minsToNext}m → +{nextAward}
-                            </span>
-                          );
-                        })()}
                         <button
                           onClick={(e) => { e.stopPropagation(); setSubTasksCollapsed(c => !c); }}
                           className="p-1 rounded-md transition-colors hover:bg-white/10"
@@ -9559,7 +9654,7 @@ function VehicleCard({
                                           {pend && (
                                             <div className="flex gap-1 flex-shrink-0 flex-wrap">
                                               <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroCumplido?.(vehicle.id, st.id); }} className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(0,200,81,0.15)", color: VERDE, border: "1px solid rgba(0,200,81,0.4)" }}>Cumplido</button>
-                                              <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroReservar?.(vehicle.id, st.id); }} className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(148,163,184,0.12)", color: PLATA, border: "1px solid rgba(148,163,184,0.35)" }} title="Posponer — va a Reserva situacional (persiste al cerrar vehículo)">Reservar</button>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroReservar?.(vehicle.id, st.id); }} className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(148,163,184,0.12)", color: PLATA, border: "1px solid rgba(148,163,184,0.35)" }} title="Posponer — va a Reservas tácticas (ruta S, persiste al cerrar vehículo)">Reservar</button>
                                               <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroFallado?.(vehicle.id, st.id); }} className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.35)" }}>Fallado</button>
                                             </div>
                                           )}

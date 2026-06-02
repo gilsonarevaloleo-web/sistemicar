@@ -57,7 +57,7 @@ export default function AdminGilson() {
   const [users, setUsers] = useState<User[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"users" | "payments" | "recovery" | "laboratorio" | "adn" | "creditos" | "vendedores">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "payments" | "recovery" | "laboratorio" | "adn" | "creditos" | "modulos" | "vendedores">("users");
   const [loginLoading, setLoginLoading] = useState(false);
   const [accounts, setAccounts] = useState<AccountData[]>([]);
   const [searchingAccounts, setSearchingAccounts] = useState(false);
@@ -96,6 +96,13 @@ export default function AdminGilson() {
     adminNote: string | null;
   }>>([]);
   const [creditDeliveriesLoading, setCreditDeliveriesLoading] = useState(false);
+  const [moduleEmail, setModuleEmail] = useState("");
+  const [modulePlanId, setModulePlanId] = useState("planificacion_base");
+  const [moduleSource, setModuleSource] = useState<"yape" | "paypal" | "manual">("yape");
+  const [moduleNote, setModuleNote] = useState("");
+  const [moduleSaving, setModuleSaving] = useState(false);
+  const [moduleSearchResult, setModuleSearchResult] = useState<{ uid: string; email: string; rank: string; totalCP: number } | null>(null);
+  const [moduleSearching, setModuleSearching] = useState(false);
   const [sellerSales, setSellerSales] = useState<Array<{
     id: string;
     sellerRef: string;
@@ -203,6 +210,35 @@ export default function AdminGilson() {
       toast.error(msg);
     } finally {
       setCreditDeliveriesLoading(false);
+    }
+  };
+
+  const grantModuleAdmin = async (targetEmail: string) => {
+    if (!targetEmail.trim()) {
+      toast.error("Ingresa el email del comprador");
+      return;
+    }
+    setModuleSaving(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch("/api/admin/modules/grant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({
+          email: targetEmail.trim(),
+          planId: modulePlanId,
+          source: moduleSource,
+          note: moduleNote.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error activando módulo");
+      toast.success(data.message || "Módulo activado");
+      setModuleNote("");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error activando módulo");
+    } finally {
+      setModuleSaving(false);
     }
   };
 
@@ -641,6 +677,16 @@ export default function AdminGilson() {
             >
               <DollarSign size={14} className="inline mr-1" />
               Créditos Espejo
+            </button>
+            <button
+              onClick={() => setActiveTab("modulos")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === "modulos" ? "bg-sky-500 text-white" : "bg-white/5 text-slate-400"
+              }`}
+              data-testid="tab-modulos"
+            >
+              <Zap size={14} className="inline mr-1" />
+              Módulos
             </button>
             <button
               onClick={() => setActiveTab("vendedores")}
@@ -1335,6 +1381,99 @@ export default function AdminGilson() {
                   Descargar Documento de Conocimiento (.md)
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "modulos" && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-sky-500/10 border border-sky-500/20">
+              <h3 className="text-sky-400 font-bold mb-3">Activar Planificación (Yape / manual)</h3>
+              <p className="text-xs text-slate-400 mb-4">
+                Activa módulos en Firebase para el email exacto del comprador. Debe haber iniciado sesión al menos una vez.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {(["yape", "paypal", "manual"] as const).map((src) => (
+                  <button
+                    key={src}
+                    type="button"
+                    onClick={() => setModuleSource(src)}
+                    className={`px-2 py-2 rounded-lg text-xs font-bold uppercase ${
+                      moduleSource === src
+                        ? "bg-sky-500/30 text-sky-300 border border-sky-500/50"
+                        : "bg-white/5 text-slate-400 border border-white/10"
+                    }`}
+                  >
+                    {src}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={modulePlanId}
+                onChange={(e) => setModulePlanId(e.target.value)}
+                className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+                data-testid="select-module-plan"
+              >
+                <option value="planificacion_base">Planificación base</option>
+                <option value="soberania_dia">Soberanía del día</option>
+                <option value="operativo">Operativo</option>
+              </select>
+              <input
+                type="text"
+                value={moduleNote}
+                onChange={(e) => setModuleNote(e.target.value)}
+                placeholder="Nota (ej. Yape 02/06, S/ XX)"
+                className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+              />
+              <div className="flex gap-2 mb-3">
+                <input
+                  type="email"
+                  value={moduleEmail}
+                  onChange={(e) => setModuleEmail(e.target.value)}
+                  placeholder="Email del comprador"
+                  className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+                  data-testid="input-module-email"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!moduleEmail.trim()) return;
+                    setModuleSearching(true);
+                    setModuleSearchResult(null);
+                    try {
+                      const result = await findUserByEmail(moduleEmail.trim());
+                      if (result) {
+                        setModuleSearchResult(result);
+                        toast.success("Usuario encontrado en Firebase");
+                      } else {
+                        toast.info("No encontrado — puede activar igual si el email es correcto");
+                      }
+                    } catch {
+                      toast.error("Error buscando usuario");
+                    }
+                    setModuleSearching(false);
+                  }}
+                  disabled={moduleSearching}
+                  className="px-4 py-2 rounded-lg bg-sky-500/20 text-sky-400 font-bold text-sm hover:bg-sky-500/30 disabled:opacity-50"
+                  data-testid="button-search-module-user"
+                >
+                  {moduleSearching ? "..." : "Buscar"}
+                </button>
+              </div>
+              {moduleSearchResult && (
+                <p className="text-xs text-slate-400 mb-3">
+                  {moduleSearchResult.email} · {moduleSearchResult.rank} · CP {moduleSearchResult.totalCP}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => void grantModuleAdmin(moduleEmail)}
+                disabled={moduleSaving || !moduleEmail.trim()}
+                className="w-full px-4 py-3 rounded-lg bg-sky-500 text-white font-bold text-sm hover:bg-sky-600 disabled:opacity-50"
+                data-testid="button-grant-module"
+              >
+                {moduleSaving ? "Activando..." : `Activar ${modulePlanId}`}
+              </button>
             </div>
           </div>
         )}
