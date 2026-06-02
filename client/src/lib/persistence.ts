@@ -2582,6 +2582,28 @@ function saveLocalSPLog(userId: string, logs: SovereigntyPointsLog[]): void {
   localStorage.setItem(spLogKey(userId), JSON.stringify(logs));
 }
 
+function isQuotaExceededError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as { name?: string; code?: number; message?: string };
+  if (e.name === "QuotaExceededError") return true;
+  if (typeof e.code === "number" && (e.code === 22 || e.code === 1014)) return true;
+  if (typeof e.message === "string" && e.message.toLowerCase().includes("quota")) return true;
+  return false;
+}
+
+function persistSpLogWithPrune(userId: string, logs: SovereigntyPointsLog[]): void {
+  try {
+    saveLocalSPLog(userId, logs);
+    return;
+  } catch (err) {
+    if (!isQuotaExceededError(err)) throw err;
+  }
+
+  // Quota exceeded: prune old logs and retry once.
+  // Keep most recent entries to preserve daily bar accuracy.
+  saveLocalSPLog(userId, logs.slice(0, 800));
+}
+
 function isLogTimestampInDayRange(
   ts: number,
   dayStartMs: number,
@@ -2667,9 +2689,17 @@ export async function awardSovereigntyPoints(
   // Siempre persistir local primero — la UI y getDailyPoints no dependen solo de Firebase
   const logs = getLocalSPLog(userId);
   logs.unshift(logEntry);
-  saveLocalSPLog(userId, logs);
-  saveLocalProgression({ ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
-  backupToLocal("progression", { ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
+  try {
+    persistSpLogWithPrune(userId, logs);
+  } catch (error) {
+    console.error("[awardSovereigntyPoints] No se pudo persistir SP log (local):", error);
+  }
+  try {
+    saveLocalProgression({ ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
+    backupToLocal("progression", { ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
+  } catch (error) {
+    console.error("[awardSovereigntyPoints] No se pudo persistir progresión (local):", error);
+  }
 
   if (isFirebaseConfigured() && db) {
     try {
