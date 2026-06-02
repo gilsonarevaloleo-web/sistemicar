@@ -6011,7 +6011,8 @@ export default function Planeacion() {
                         const isClosedManual = seg.estado === "cerrado_manual";
                         const isPendiente = seg.estado === "pendiente";
                         const nowMsSeg = Date.now();
-                        const dayStartSeg = getJournalDayStartMs(nowMsSeg);
+                        // Segmentos están anclados a HH:mm sobre medianoche Lima (no inicio de jornada 05:00)
+                        const dayStartSeg = getLimaDayStartMs(nowMsSeg);
                         const puertaVentanaAbierta = isWithinPuertaWindow(
                           nowMsSeg, seg.horaInicio, dayStartSeg
                         );
