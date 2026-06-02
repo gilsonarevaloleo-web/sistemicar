@@ -137,7 +137,23 @@ import {
   wasVehicleRecentlyClosed,
   mergeActiveVehicleSessionState,
   isOrphanDesglosadorInterrupt,
+  reconcileGhostActiveVehicles,
 } from "@/lib/persistence";
+import { filterVehiclesForEntropy, shouldPreserveLocalActivo } from "@/lib/ghostVehicleEngine";
+import {
+  computeDesglosadorSubAwardPS,
+  DESGLOSADOR_CYCLE_CLOSE_BASE_PS,
+  DESGLOSADOR_SUB_CUMPLIDO_PS,
+  VEHICLE_ARCHIVADO_BASE_PS,
+  VEHICLE_CUMPLIDO_BASE_PS,
+  vehicleMissionClosePS,
+} from "@/lib/sovereigntyPointsConfig";
+import {
+  awardDesglosadorSubPointsIfNeeded,
+  settleDesglosadorCyclePoints,
+  sumDesglosadorSubsPsAlreadyGranted,
+  estimateDesglosadorSessionPs,
+} from "@/lib/desglosadorPointsAward";
 import {
   releaseCentinela,
   resetCentinelaTimerState,
@@ -148,16 +164,33 @@ import {
   createRutaEnfoqueState,
   applyRutaThresholdCrossing,
   repairRutaCruzadoAheadOfRestantes,
-  computeRutaEnfoquePS,
   formatRutaPreview,
   getRutaBandaActual,
   mergeRutaCruzadaFromSubs,
-  computeRutaEnfoquePSFromSubs,
   RUTA_BANDA_META,
   type RutaBandaId,
 } from "@/lib/rutaEnfoque";
-import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis } from "@/lib/speechQueue";
-import { isTikSoundEnabled, setTikSoundEnabled, isSituacionAlertsEnabled, setSituacionAlertsEnabled } from "@/lib/tikSound";
+import {
+  enrichSubRutaCierre,
+  computeRutaPrivilegioPS,
+  type RutaSeguimientoPatron,
+} from "@/lib/rutaSeguimiento";
+import { rutaVozFluidoParts, rutaVozPartsForBanda } from "@/lib/rutaEnfoqueVoz";
+import {
+  RutaSeguimientoPicker,
+  rutaSeguimientoPickerCanConfirm,
+} from "@/components/RutaSeguimientoPicker";
+import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis, recoverSpeechQueue } from "@/lib/speechQueue";
+import {
+  isTikSoundEnabled,
+  setTikSoundEnabled,
+  isSituacionAlertsEnabled,
+  setSituacionAlertsEnabled,
+  isPuertaVozEnabled,
+  setPuertaVozEnabled,
+  isDesglosadorVoiceEnabled,
+  setDesglosadorVoiceEnabled,
+} from "@/lib/tikSound";
 import { playSituacionCumplidoChimes } from "@/lib/situacionAlertSounds";
 import {
   fireSituacion2MinAlert,
@@ -221,7 +254,9 @@ import {
   savePlanillaDailySnapshot,
   inferBandaBloque,
   psEspectroBloque,
-  computeTermodinamicaCompare,
+  computeTermodinamicaCompareV2,
+  FASE_ATENCIONAL_COLOR,
+  FASE_ATENCIONAL_LABEL,
   getPlanillaDailySnapshotForDate,
   getPlanillaDailySnapshots,
 } from "@/lib/termodinamicaAtencional";
@@ -233,6 +268,15 @@ import {
   markPeldanoConquistadoTiempo,
   markPeldanoConquistadoSituacion,
 } from "@/lib/proyectos";
+import type { RutasMentalesSet } from "@/lib/proyectos";
+import {
+  buildDefaultRutasMentales,
+  ensurePeldanoFromSegmento,
+  refreshRutasTituloBase,
+  sealPeldanosFromSegmentos,
+  countSegmentosListosParaSellar,
+} from "@/lib/segmentoPeldanoBridge";
+import { RutasMentalesEditor } from "@/components/RutasMentalesEditor";
 import {
   isWithinSegmentTimeMargin,
   segmentDurationMinutes,
@@ -244,8 +288,18 @@ import {
 import {
   applyDayRolloverEntropia,
   applySegmentAttentionTick,
+  classifyPuertaTiming,
+  collectVozPuertaEvents,
+  isWithinPuertaWindow,
   type SegmentAttentionEvent,
 } from "@/lib/segmentAttentionEngine";
+import {
+  atencionBadgeLabel,
+  computeAtencionCompare,
+  computeAtencionPanoramicaDia,
+  describeSegmentoAtencion,
+} from "@/lib/atencionPanoramicaEngine";
+import { speakPuertaSegmento } from "@/lib/puertaAtencionVoice";
 import {
   computeDisciplinaDia,
   computeDisciplinaCompare,
@@ -958,6 +1012,8 @@ export default function Planeacion() {
   const [selectedBovedaRecord, setSelectedBovedaRecord] = useState<VehicleRecord | null>(null);
   const [tikSoundEnabled, setTikSoundEnabledState] = useState(() => isTikSoundEnabled());
   const [situacionAlertsEnabled, setSituacionAlertsEnabledState] = useState(() => isSituacionAlertsEnabled());
+  const [puertaVozEnabled, setPuertaVozEnabledState] = useState(() => isPuertaVozEnabled());
+  const [desglosadorVozEnabled, setDesglosadorVozEnabledState] = useState(() => isDesglosadorVoiceEnabled());
 
   const [anilloTick, setAnilloTick] = useState(0);
   const [conquistaPulse, setConquistaPulse] = useState(false);
@@ -982,22 +1038,6 @@ export default function Planeacion() {
       vehicleId: payload.vehicleId,
       subVehicleId: payload.subId,
       subTitulo: payload.subTitulo,
-    });
-  }, [user]);
-
-  const recordBloqueCierre = useCallback((payload: {
-    vehicleId: string;
-    sub: SubVehiculo;
-    status: string;
-  }) => {
-    if (!user || payload.status !== "cumplido") return;
-    void recordFocusBandEvent(user.uid, {
-      source: "bloque_cierre",
-      banda: inferBandaBloque(payload.sub),
-      vehicleId: payload.vehicleId,
-      subVehicleId: payload.sub.id,
-      subTitulo: payload.sub.titulo,
-      psEspectro: psEspectroBloque(payload.sub),
     });
   }, [user]);
 
@@ -1036,6 +1076,9 @@ export default function Planeacion() {
   const [nuevoSegIcono, setNuevoSegIcono] = useState(SEGMENT_ICONS[0]);
   const [nuevoSegCentinelaEnabled, setNuevoSegCentinelaEnabled] = useState(true);
   const [nuevoSegProyectoId, setNuevoSegProyectoId] = useState("");
+  const [nuevoSegRutas, setNuevoSegRutas] = useState<RutasMentalesSet>(() =>
+    buildDefaultRutasMentales("")
+  );
   const [expandedSegId, setExpandedSegId] = useState<string | null>(null);
   const segmentosAutoExpandRef = useRef(false);
   // --- RUTINAS ---
@@ -1061,6 +1104,7 @@ export default function Planeacion() {
   const [cierreEnergiaSeleccion, setCierreEnergiaSeleccion] = useState<"fluido" | "concentrado" | "limite" | null>(null);
   const [cierreRutaSeleccion, setCierreRutaSeleccion] = useState<Set<RutaBandaId>>(new Set());
   const [cierreRutaSinUso, setCierreRutaSinUso] = useState(false);
+  const [cierreRutaPatron, setCierreRutaPatron] = useState<RutaSeguimientoPatron | null>(null);
   const [showDeposito, setShowDeposito] = useState(false);
   const [situacionDesgloseCelebration, setSituacionDesgloseCelebration] = useState<{
     vehicleId: string;
@@ -1093,6 +1137,52 @@ export default function Planeacion() {
       return false;
     }
   }, [user]);
+
+  const recordBloqueCierre = useCallback((payload: {
+    vehicleId: string;
+    sub: SubVehiculo;
+    status: string;
+  }) => {
+    if (!user || payload.status !== "cumplido") return;
+
+    const vehicle = vehiclesRef.current.find(v => v.id === payload.vehicleId);
+    if (vehicle?.tipoReloj === "desglosador") {
+      void (async () => {
+        const { sub, awarded } = await awardDesglosadorSubPointsIfNeeded(
+          vehicle.titulo,
+          payload.sub,
+          safeAwardPS
+        );
+        if (awarded > 0 && vehicle.subVehiculos) {
+          const subVehiculos = vehicle.subVehiculos.map(s =>
+            s.id === sub.id ? sub : s
+          );
+          const patch = (list: Vehicle[]) =>
+            list.map(v => (v.id === payload.vehicleId ? { ...v, subVehiculos } : v));
+          setVehicles(patch);
+          vehiclesRef.current = patch(vehiclesRef.current);
+          saveLocalVehicles(vehiclesRef.current);
+          void updateVehicle(user.uid, payload.vehicleId, { subVehiculos }).catch(e =>
+            console.warn("[recordBloqueCierre] psOtorgados sync:", e)
+          );
+          toast.success(`+${awarded} PS · ${cleanSubTitulo(sub.titulo)}`, {
+            description: `Sub cumplido (+${DESGLOSADOR_SUB_CUMPLIDO_PS} base${awarded > DESGLOSADOR_SUB_CUMPLIDO_PS ? " + ruta" : ""}) · sumado a tu barra del día`,
+            style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+            duration: 2800,
+          });
+        }
+      })();
+    }
+
+    void recordFocusBandEvent(user.uid, {
+      source: "bloque_cierre",
+      banda: inferBandaBloque(payload.sub),
+      vehicleId: payload.vehicleId,
+      subVehicleId: payload.sub.id,
+      subTitulo: payload.sub.titulo,
+      psEspectro: psEspectroBloque(payload.sub),
+    });
+  }, [user, safeAwardPS]);
 
   const toastDailyPSTotal = useCallback(() => {
     if (!user) return;
@@ -1269,6 +1359,7 @@ export default function Planeacion() {
       // otherwise silently erase a vehicle from the UI.
       const mergedIds = new Set(merged.map(v => v.id));
       const mergedById = new Map(merged.map(v => [v.id, v]));
+      const nowMs = Date.now();
       const rescued = vehiclesRef.current.filter(
         v =>
           v.status === "activo" &&
@@ -1276,7 +1367,8 @@ export default function Planeacion() {
           !mergedIds.has(v.id) &&
           !closingInProgressRef.current.has(v.id) &&
           !wasVehicleRecentlyClosed(v.id) &&
-          !isOrphanDesglosadorInterrupt(v, mergedById)
+          !isOrphanDesglosadorInterrupt(v, mergedById) &&
+          shouldPreserveLocalActivo(v, nowMs)
       );
       if (rescued.length > 0) {
         console.warn(`[Vehicles] Rescatando ${rescued.length} activo(s) ausentes del snapshot:`, rescued.map(v => `${v.id}:${v.titulo}`));
@@ -1288,6 +1380,15 @@ export default function Planeacion() {
     const unsub3 = subscribeToEnergyLogs(user.uid, (data) => setEnergyLogs(data), (e) => console.error(e));
     const unsub4 = subscribeToSituacionReserva(user.uid, setSituacionReserva, e => console.error(e));
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    void reconcileGhostActiveVehicles(user.uid);
+    const ghostInterval = setInterval(() => {
+      void reconcileGhostActiveVehicles(user.uid);
+    }, 60_000);
+    return () => clearInterval(ghostInterval);
   }, [user]);
 
   useEffect(() => {
@@ -1356,10 +1457,13 @@ export default function Planeacion() {
 
   const todayTermoLive = useMemo(() => {
     const dayStartMs = getJournalDayStartMs();
-    const jornadaVehicles = vehicles.filter(v => {
-      const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
-      return ts >= dayStartMs;
-    });
+    const jornadaVehicles = filterVehiclesForEntropy(
+      vehicles.filter(v => {
+        const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
+        return ts >= dayStartMs;
+      }),
+      Date.now()
+    );
     const balance = calcularBalanceConquistaJornada({
       segmentos: planilla?.segmentos || [],
       vehiculos: jornadaVehicles,
@@ -1380,7 +1484,7 @@ export default function Planeacion() {
   }, [planilla, vehicles, focusEventsToday]);
 
   const termoCompare = useMemo(
-    () => computeTermodinamicaCompare(yesterdayTermoSnapshot, todayTermoLive),
+    () => computeTermodinamicaCompareV2(yesterdayTermoSnapshot, todayTermoLive),
     [yesterdayTermoSnapshot, todayTermoLive]
   );
 
@@ -1397,6 +1501,25 @@ export default function Planeacion() {
       dayStartMs,
     });
   }, [planilla, vehicles, segmentTick]);
+
+  const atencionLive = useMemo(() => {
+    const dayStartMs = getJournalDayStartMs();
+    return computeAtencionPanoramicaDia({
+      segmentos: planilla?.segmentos || [],
+      nowMs: Date.now(),
+      dayStartMs,
+    });
+  }, [planilla, segmentTick, anilloTick]);
+
+  const atencionCompare = useMemo(
+    () => computeAtencionCompare(null, atencionLive),
+    [atencionLive]
+  );
+
+  const atencionBySegmentId = useMemo(
+    () => new Map(atencionLive.segmentos.map(s => [s.segmentoId, s])),
+    [atencionLive]
+  );
 
   const disciplinaCompare = useMemo(
     () => computeDisciplinaCompare(yesterdayTermoSnapshot?.disciplina, disciplinaLive),
@@ -1426,12 +1549,19 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    const onFirst = () => {
-      warmupSpeechSynthesis();
-      window.removeEventListener("pointerdown", onFirst);
+    const warm = () => warmupSpeechSynthesis(true);
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      warm();
+      recoverSpeechQueue();
     };
-    window.addEventListener("pointerdown", onFirst);
-    return () => window.removeEventListener("pointerdown", onFirst);
+    window.addEventListener("pointerdown", warm);
+    document.addEventListener("visibilitychange", onVisible);
+    warm();
+    return () => {
+      window.removeEventListener("pointerdown", warm);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -1549,15 +1679,34 @@ export default function Planeacion() {
         dayStart
       );
 
+      let segmentosAfterVoz = nextSegmentos;
+      const vozEvents = collectVozPuertaEvents(nextSegmentos, nowMs, dayStart);
+      if (vozEvents.length > 0) {
+        let vozChanged = false;
+        segmentosAfterVoz = nextSegmentos.map(seg => {
+          const ve = vozEvents.find(v => v.segId === seg.id);
+          if (!ve) return seg;
+          vozChanged = true;
+          speakPuertaSegmento({ nombre: ve.nombre, ordinal: ve.ordinal, total: ve.total });
+          return { ...seg, vozDisparadaAt: nowMs };
+        });
+        if (vozChanged) {
+          const updatedVoz = { ...planilla, segmentos: segmentosAfterVoz };
+          savePlanilla(user.uid, updatedVoz);
+          setPlanilla(updatedVoz);
+        }
+      }
+
       for (const ev of events as SegmentAttentionEvent[]) {
-        if (ev.type === "auto_start") {
-          toast.info(`Segmento iniciado: ${ev.nombre}`, {
-            description: "Activado automáticamente — sin PS. La ventana ±5 min ya cerró.",
-            style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}40`, color: EMERALD },
-          });
-        } else if (ev.type === "entropia") {
+        if (ev.type === "entropia") {
+          const desc =
+            ev.reason === "missed_puerta"
+              ? "Puerta de atención no abierta en ±5 min. 0 PS."
+              : ev.reason === "past_end"
+                ? "No cerraste a tiempo. El sistema no perdona la omisión."
+                : "Ventana de segmento perdida sin puerta consciente.";
           toast.error(`ENTROPÍA: ${ev.nombre}`, {
-            description: "0 PS. No cerraste a tiempo. El sistema no perdona la omisión.",
+            description: desc,
             style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
             duration: 6000,
           });
@@ -1565,7 +1714,7 @@ export default function Planeacion() {
       }
 
       if (changed) {
-        const updated = { ...planilla, segmentos: nextSegmentos };
+        const updated = { ...planilla, segmentos: segmentosAfterVoz };
         savePlanilla(user.uid, updated);
         setPlanilla(updated);
       }
@@ -1576,6 +1725,33 @@ export default function Planeacion() {
     checkPuertaAtencion();
     return () => clearInterval(interval);
   }, [user, planilla]);
+
+  useEffect(() => {
+    if (!user || !planilla) return;
+    const snap = {
+      indiceAtencion: atencionLive.indiceAtencion,
+      ratioAntesVoz: atencionLive.ratioAntesVoz,
+      puertasAbiertas: atencionLive.puertasAbiertas,
+    };
+    const prev = planilla.atencionSnapshot;
+    if (
+      prev &&
+      prev.indiceAtencion === snap.indiceAtencion &&
+      prev.puertasAbiertas === snap.puertasAbiertas &&
+      prev.ratioAntesVoz === snap.ratioAntesVoz
+    ) {
+      return;
+    }
+    const updated = { ...planilla, atencionSnapshot: snap };
+    savePlanilla(user.uid, updated).catch(() => {});
+    setPlanilla(updated);
+  }, [
+    user?.uid,
+    planilla?.fecha,
+    atencionLive.indiceAtencion,
+    atencionLive.puertasAbiertas,
+    atencionLive.ratioAntesVoz,
+  ]);
 
   const vehiclesRef = useRef(vehicles);
   const closingInProgressRef = useRef<Set<string>>(new Set());
@@ -1989,7 +2165,7 @@ export default function Planeacion() {
         const filteredSubs = desglosadorSubs.filter(s => s.titulo.trim());
         if (filteredSubs[0]?.titulo.trim()) {
           toast.info("Profundidad de sesión", {
-            description: "+5 PS por cada hora real activa en el desglosador (máx. 6 h = 30 PS). Se otorgan al cruzar cada hora completa.",
+            description: "Cada sub cumplido suma +2 PS (y ruta si aplica) en tu barra. Profundidad: +4, +6, +8… por hora completa de sesión.",
             style: { backgroundColor: PIZARRA, border: `1px solid rgba(212,175,55,0.35)`, color: GOLD },
             duration: 4500,
           });
@@ -2077,7 +2253,13 @@ export default function Planeacion() {
     setNuevoSegColor(SEGMENT_COLORS[0]);
     setNuevoSegIcono(SEGMENT_ICONS[0]);
     setNuevoSegProyectoId("");
+    setNuevoSegRutas(buildDefaultRutasMentales(""));
   };
+
+  useEffect(() => {
+    if (!nuevoSegProyectoId) return;
+    setNuevoSegRutas(prev => refreshRutasTituloBase(prev, nuevoSegNombre));
+  }, [nuevoSegNombre, nuevoSegProyectoId]);
 
   const addSegmento = async () => {
     if (!user || !nuevoSegNombre.trim() || !nuevoSegHoraInicio || !nuevoSegHoraFin || segmentoProgramando) return;
@@ -2100,8 +2282,9 @@ export default function Planeacion() {
     const iconoCapturado = nuevoSegIcono;
     const centinelaCapturado = nuevoSegCentinelaEnabled;
     const proyectoCapturado = nuevoSegProyectoId;
+    const rutasCapturadas = proyectoCapturado ? nuevoSegRutas : undefined;
 
-    const seg: SegmentoV5 = {
+    let seg: SegmentoV5 = {
       id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       nombre: nombreCapturado,
       horaInicio: horaInicioCapturada,
@@ -2112,7 +2295,7 @@ export default function Planeacion() {
       eventos: [],
       psGanados: 0,
       centinelaEnabled: centinelaCapturado,
-      ...(proyectoCapturado ? { proyectoVinculadoId: proyectoCapturado } : {}),
+      ...(proyectoCapturado ? { proyectoVinculadoId: proyectoCapturado, rutasMentales: rutasCapturadas } : {}),
     };
 
     const fecha = getLimaDateString();
@@ -2123,7 +2306,7 @@ export default function Planeacion() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const planillaOptimista: Planilla = {
+    let planillaOptimista: Planilla = {
       ...planillaBase,
       segmentos: [...planillaBase.segmentos, seg],
       updatedAt: new Date().toISOString(),
@@ -2145,6 +2328,22 @@ export default function Planeacion() {
     });
 
     try {
+      if (proyectoCapturado && rutasCapturadas) {
+        const { peldanoId } = await ensurePeldanoFromSegmento(user.uid, {
+          proyectoId: proyectoCapturado,
+          segmento: seg,
+          planillaFecha: fecha,
+          rutasMentales: rutasCapturadas,
+        });
+        seg = { ...seg, proyectoPeldanoId: peldanoId };
+        planillaOptimista = {
+          ...planillaOptimista,
+          segmentos: planillaOptimista.segmentos.map(s =>
+            s.id === seg.id ? seg : s
+          ),
+        };
+        setPlanilla(planillaOptimista);
+      }
       await savePlanilla(user.uid, planillaOptimista);
       registrarEvento(COMPONENTES.PLANIFICACION);
       try {
@@ -2171,6 +2370,8 @@ export default function Planeacion() {
       setNuevoSegColor(colorCapturado);
       setNuevoSegIcono(iconoCapturado);
       setNuevoSegCentinelaEnabled(centinelaCapturado);
+      setNuevoSegProyectoId(proyectoCapturado);
+      if (rutasCapturadas) setNuevoSegRutas(rutasCapturadas);
       setShowCrearSegmento(true);
       toast.error("No se pudo programar el segmento", {
         description: "Revisa la conexión e intenta de nuevo.",
@@ -2259,15 +2460,28 @@ export default function Planeacion() {
     if (!user || !planilla) return;
     const seg = planilla.segmentos.find(s => s.id === segId);
     if (!seg) return;
+    const dayStart = getJournalDayStartMs();
+    const nowMs = Date.now();
+    if (!isWithinPuertaWindow(nowMs, seg.horaInicio, dayStart)) {
+      toast.warning("Ventana de puerta cerrada", {
+        description: `Abre la puerta de atención solo ±5 min de ${seg.horaInicio}.`,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}40`, color: BLOOD },
+        duration: 5000,
+      });
+      return;
+    }
+    const puertaTiming = classifyPuertaTiming(nowMs, seg.horaInicio, dayStart);
     const updated = await updateSegmentoInPlanilla(user.uid, segId, {
       estado: "activo",
-      activadoAt: Date.now(),
+      activadoAt: nowMs,
+      puertaTiming,
       psGanados: (seg.psGanados || 0) + 2
     });
     setPlanilla(updated);
-    const ok = await safeAwardPS(2, "Segmento activado: " + seg.nombre);
-    toast.success("+2 PS Puerta de Atención abierta", {
-      description: seg.nombre,
+    const ok = await safeAwardPS(2, "Puerta de atención: " + seg.nombre);
+    const timingLabel = puertaTiming === "antes_voz" ? "antes de la voz" : "tras la voz";
+    toast.success("+2 PS Puerta de atención abierta", {
+      description: `${seg.nombre} · ${timingLabel}`,
       style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD }
     });
     if (ok) toastDailyPSTotal();
@@ -2301,7 +2515,7 @@ export default function Planeacion() {
       psGanados: (seg.psGanados || 0) + 2
     });
     setPlanilla(updated);
-    toast.success("+2 PS Cierre Consciente", {
+    toast.success("+2 PS Cierre consciente de puerta", {
       description: seg.nombre + " · Puerta cerrada con intención",
       style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD }
     });
@@ -2320,7 +2534,7 @@ export default function Planeacion() {
   };
 
   const TERMINO_OPTIONS: { id: TipoTerminoRapido; label: string; sublabel: string; puntosCumple: number; puntosNoCumple: number; color: string }[] = [
-    { id: "hora", label: "Hora de Término", sublabel: "Define cuándo termina", puntosCumple: 10, puntosNoCumple: 5, color: GOLD },
+    { id: "hora", label: "Hora de Término", sublabel: "Define cuándo termina", puntosCumple: VEHICLE_CUMPLIDO_BASE_PS, puntosNoCumple: VEHICLE_ARCHIVADO_BASE_PS, color: GOLD },
     { id: "situacion", label: "Situación de Término", sublabel: "Define qué circunstancia termina", puntosCumple: 5, puntosNoCumple: 2, color: AZURE },
     { id: "omitido", label: "Omitir", sublabel: "Sin criterio específico", puntosCumple: 1, puntosNoCumple: 0, color: "#6b7280" }
   ];
@@ -2356,6 +2570,10 @@ export default function Planeacion() {
     if (!user) return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) { console.warn("[handleStatusChange] Vehículo no encontrado:", vehicleId); return; }
+    if (vehicle.tipoReloj === "desglosador") {
+      console.warn("[handleStatusChange] Desglosador: usa «Cerrar ciclo» para registrar PS por subvehículo.");
+      return;
+    }
 
     const safeFb = async (label: string, fn: () => Promise<any>) => {
       try { await fn(); } catch (e) { console.error(`[handleStatusChange] ${label}:`, e); }
@@ -2365,14 +2583,11 @@ export default function Planeacion() {
     const comentario = vehicle.criterioDetalle?.trim() || null;
     await safeFb("saveMision", () => saveMision(user.uid, { titulo: vehicle.titulo, estado: status, scores: stubScores, soberaniaMomento: status === "cumplido" ? 50 : 25, comentario }));
 
-    let missionCP = 0;
+    let missionCP = vehicleMissionClosePS(status, vehicle.tipoTerminoRapido);
     let cpMessage = "";
     if (vehicle.tipoTerminoRapido) {
-      const terminoInfo = TERMINO_OPTIONS.find(t => t.id === vehicle.tipoTerminoRapido);
-      missionCP = status === "cumplido" ? (terminoInfo?.puntosCumple ?? 10) : (terminoInfo?.puntosNoCumple ?? 5);
       cpMessage = status === "cumplido" ? "Misión express completada" : "Misión express archivada";
     } else {
-      missionCP = status === "cumplido" ? 10 : 5;
       cpMessage = status === "cumplido" ? "Objetivo cumplido" : "Archivado";
     }
 
@@ -2696,7 +2911,7 @@ export default function Planeacion() {
         }
       } else if (tipoFlota === "situacion" && (vehicle.segmentosCruzados || 0) > 0) {
         if (vehicle.justificacion) {
-          const psBase = 10;
+          const psBase = VEHICLE_CUMPLIDO_BASE_PS;
           const psRecuperado = Math.round(psBase * 0.5);
           safeFire(() => Promise.all([
             updateVehicle(user.uid, vehicleId, { ...baseUpdate, status }),
@@ -3142,7 +3357,7 @@ export default function Planeacion() {
     vehicleId: string,
     subs: SubVehiculo[],
     intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite",
-    _rutaDeclarada?: RutaBandaId[]
+    rutaDeclaradaGlobal?: RutaBandaId[]
   ) => {
     if (!user) return;
     if (closingInProgressRef.current.has(vehicleId)) return;
@@ -3156,8 +3371,12 @@ export default function Planeacion() {
     const fallados = subs.filter(s => s.status === "fallado").length;
     const closedSubs = subs.filter(s => s.status === "cumplido" || s.status === "fallado");
     const rutaCruzada = mergeRutaCruzadaFromSubs(subs);
-    const psRuta = computeRutaEnfoquePSFromSubs(subs);
-    const subsConRuta = subs;
+    const subsConRuta = subs.map(sv => {
+      if (!sv.rutaEnfoque?.activa || (sv.rutaDeclarada && sv.rutaDeclarada.length > 0)) return sv;
+      if (!rutaDeclaradaGlobal?.length) return sv;
+      return enrichSubRutaCierre(sv, rutaDeclaradaGlobal);
+    });
+    const psRuta = subsConRuta.reduce((sum, s) => sum + computeRutaPrivilegioPS(s), 0);
 
     notifyVehicleClosed(vehicleId);
 
@@ -3212,41 +3431,69 @@ export default function Planeacion() {
     triggerConquistaPulse();
 
     try {
-      const subPoints = cumplidos * 2;
-      const totalPS = 10 + subPoints + psRuta;
+      const subsPsBefore = sumDesglosadorSubsPsAlreadyGranted(subs);
+      const { subs: subsSettled, subsPsAwarded, cycleClosePs } = await settleDesglosadorCyclePoints(
+        vehicle.titulo,
+        subsConRuta,
+        safeAwardPS
+      );
+      const subsPsTotal = subsPsBefore + subsPsAwarded;
+      const displaySessionPs = subsPsTotal + cycleClosePs + depthPsGranted;
+      const psRutaInSubs = psRuta;
+
       await updateVehicle(user.uid, vehicleId, {
         status: "cumplido",
         cierreAt,
         duracionFinal,
         cierreManual: true,
-        subVehiculos: subsConRuta,
+        subVehiculos: subsSettled,
         desglosadorBloqueDepthPsGranted: depthPsGranted,
         ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
         ...(rutaCruzada ? { rutaCruzada } : {}),
       });
-      await awardSovereigntyPoints(user.uid, totalPS, `Ciclo Desglosador completado: ${vehicle.titulo}`);
+      setVehicles(prev =>
+        prev.map(v => (v.id === vehicleId ? { ...v, ...closePatch, subVehiculos: subsSettled } : v))
+      );
+      vehiclesRef.current = vehiclesRef.current.map(v =>
+        v.id === vehicleId ? { ...v, ...closePatch, subVehiculos: subsSettled } : v
+      );
+      saveLocalVehicles(vehiclesRef.current);
+
       if (vehicle.proyectoId && vehicle.proyectoPeldanoId) {
         void markPeldanoConquistadoTiempo(
           user.uid,
-          { ...vehicle, ...closePatch, duracionFinal, subVehiculos: subsConRuta, ...(rutaCruzada ? { rutaCruzada } : {}) },
-          subsConRuta,
-          totalPS
+          { ...vehicle, ...closePatch, duracionFinal, subVehiculos: subsSettled, ...(rutaCruzada ? { rutaCruzada } : {}) },
+          subsSettled,
+          displaySessionPs
         );
       }
       if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
       registrarEvento(COMPONENTES.PLANIFICACION);
-      toast.success(`+${totalPS} PS — Ciclo cerrado`, {
-        description: [
-          `Base +10 · ${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""} (+${cumplidos * 2} PS).`,
-          depthPsGranted > 0 ? `Profundidad de sesión +${depthPsGranted} PS (ya otorgados).` : "",
-          fallados > 0 ? `${fallados} fallado${fallados !== 1 ? "s" : ""} (no contabilizados en ritmo).` : "",
-          psRuta > 0 ? `+${psRuta} PS · Ruta de enfoque por subvehículo.` : "",
-          duracionFinal > 0 ? `${duracionFinal} min total.` : "",
-        ].filter(Boolean).join(" "),
-        style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
-        duration: 4000
-      });
+      const justClosedSubs = subsPsAwarded + cycleClosePs;
+      toast.success(
+        justClosedSubs > 0
+          ? `+${justClosedSubs} PS — Ciclo cerrado`
+          : `Ciclo cerrado · ${displaySessionPs} PS en esta sesión`,
+        {
+          description: [
+            subsPsAwarded > 0
+              ? `+${subsPsAwarded} PS por ${cumplidos} sub${cumplidos !== 1 ? "s" : ""} cumplido${cumplidos !== 1 ? "s" : ""} (2 base c/u + ruta).`
+              : subsPsTotal > 0
+                ? `${subsPsTotal} PS de subs ya en tu barra (${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""}).`
+                : cumplidos > 0
+                  ? `${cumplidos} sub cumplido${cumplidos !== 1 ? "s" : ""} — revisa que cada uno esté marcado cumplido.`
+                  : "",
+            cycleClosePs > 0 ? `+${cycleClosePs} PS cierre de ciclo.` : "",
+            depthPsGranted > 0 ? `+${depthPsGranted} PS profundidad de sesión (por horas activas).` : "",
+            psRutaInSubs > 0 ? `Ruta de enfoque incluida en los subs (+${psRutaInSubs} PS total ruta).` : "",
+            fallados > 0 ? `${fallados} fallado${fallados !== 1 ? "s" : ""} sin PS.` : "",
+            duracionFinal > 0 ? `${duracionFinal} min total.` : "",
+          ].filter(Boolean).join(" "),
+          style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+          duration: 5000,
+        }
+      );
     } catch (err) {
       console.error("[desglosadorGlobalClose] Error:", err);
       toast.error("Error al cerrar ciclo. El cierre local se conservó; reintenta si hace falta.");
@@ -4160,12 +4407,27 @@ export default function Planeacion() {
     const onSituacionAlertsChange = (e: Event) => {
       const on = (e as CustomEvent<{ on: boolean }>).detail?.on ?? isSituacionAlertsEnabled();
       setSituacionAlertsEnabledState(on);
+      if (localStorage.getItem("sistemicar_puerta_voz") == null) {
+        setPuertaVozEnabledState(on);
+      }
+    };
+    const onPuertaVozChange = (e: Event) => {
+      const on = (e as CustomEvent<{ on: boolean }>).detail?.on ?? isPuertaVozEnabled();
+      setPuertaVozEnabledState(on);
+    };
+    const onDesglosadorVozChange = (e: Event) => {
+      const on = (e as CustomEvent<{ on: boolean }>).detail?.on ?? isDesglosadorVoiceEnabled();
+      setDesglosadorVozEnabledState(on);
     };
     window.addEventListener("sistemicar-tik-sound-changed", onTikChange);
     window.addEventListener("sistemicar-situacion-alerts-changed", onSituacionAlertsChange);
+    window.addEventListener("sistemicar-puerta-voz-changed", onPuertaVozChange);
+    window.addEventListener("sistemicar-desglosador-voz-changed", onDesglosadorVozChange);
     return () => {
       window.removeEventListener("sistemicar-tik-sound-changed", onTikChange);
       window.removeEventListener("sistemicar-situacion-alerts-changed", onSituacionAlertsChange);
+      window.removeEventListener("sistemicar-puerta-voz-changed", onPuertaVozChange);
+      window.removeEventListener("sistemicar-desglosador-voz-changed", onDesglosadorVozChange);
     };
   }, [clearTikTapInterval]);
 
@@ -4215,6 +4477,54 @@ export default function Planeacion() {
           style={{ color: situacionAlertsEnabled ? GOLD : "#475569" }}
         >
           Alertas {situacionAlertsEnabled ? "ON" : "OFF"}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const next = !puertaVozEnabled;
+          setPuertaVozEnabledState(next);
+          setPuertaVozEnabled(next);
+        }}
+        className={`flex items-center gap-1 rounded-md border transition-all ${compact ? "px-2 py-1" : "px-2 py-1"}`}
+        style={{
+          borderColor: puertaVozEnabled ? `${VIOLET}40` : "rgba(255,255,255,0.08)",
+          backgroundColor: puertaVozEnabled ? `${VIOLET}10` : "rgba(0,0,0,0.2)",
+        }}
+        title={puertaVozEnabled ? "Silenciar voz de puertas (min 4)" : "Activar voz de puertas de atención"}
+        data-testid="button-puerta-voz-toggle"
+      >
+        <span
+          className="text-[8px] font-bold uppercase tracking-widest whitespace-nowrap"
+          style={{ color: puertaVozEnabled ? VIOLET : "#475569" }}
+        >
+          Puerta {puertaVozEnabled ? "ON" : "OFF"}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const next = !desglosadorVozEnabled;
+          setDesglosadorVozEnabledState(next);
+          setDesglosadorVoiceEnabled(next);
+        }}
+        className={`flex items-center gap-1 rounded-md border transition-all ${compact ? "px-2 py-1" : "px-2 py-1"}`}
+        style={{
+          borderColor: desglosadorVozEnabled ? `${CYAN}40` : "rgba(255,255,255,0.08)",
+          backgroundColor: desglosadorVozEnabled ? `${CYAN}10` : "rgba(0,0,0,0.2)",
+        }}
+        title={
+          desglosadorVozEnabled
+            ? "Silenciar voz de ruta de enfoque (desglosador)"
+            : "Activar voz opcional al iniciar sub con ruta de enfoque marcada"
+        }
+        data-testid="button-desglosador-voz-toggle"
+      >
+        <span
+          className="text-[8px] font-bold uppercase tracking-widest whitespace-nowrap"
+          style={{ color: desglosadorVozEnabled ? CYAN : "#475569" }}
+        >
+          DSG {desglosadorVozEnabled ? "ON" : "OFF"}
         </span>
       </button>
       <button
@@ -4375,19 +4685,18 @@ export default function Planeacion() {
             <div
               className="shrink-0 px-2.5 py-1.5 rounded-lg border text-center"
               style={{
-                backgroundColor: `${RUTA_BANDA_META[termoCompare.profundidadHoy].color}12`,
-                borderColor: `${RUTA_BANDA_META[termoCompare.profundidadHoy].color}40`,
+                backgroundColor: `${FASE_ATENCIONAL_COLOR[termoCompare.estadoHoy]}12`,
+                borderColor: `${FASE_ATENCIONAL_COLOR[termoCompare.estadoHoy]}40`,
               }}
             >
-              <p className="text-[7px] text-slate-500 uppercase tracking-wider">Profundidad</p>
-              <p className="text-sm font-black leading-tight" style={{ color: RUTA_BANDA_META[termoCompare.profundidadHoy].color }}>
-                <span className="mr-1">{RUTA_BANDA_META[termoCompare.profundidadHoy].icon}</span>
-                {RUTA_BANDA_META[termoCompare.profundidadHoy].label}
+              <p className="text-[7px] text-slate-500 uppercase tracking-wider">Resistencia</p>
+              <p className="text-sm font-black leading-tight" style={{ color: FASE_ATENCIONAL_COLOR[termoCompare.estadoHoy] }}>
+                {FASE_ATENCIONAL_LABEL[termoCompare.estadoHoy]}
               </p>
-              {termoCompare.profundidadAyer && (
+              <p className="text-[7px] text-slate-500 mt-0.5 tabular-nums">índice {termoCompare.indiceHoy}</p>
+              {termoCompare.estadoAyer && (
                 <p className="text-[7px] text-slate-600 mt-0.5">
-                  ayer {RUTA_BANDA_META[termoCompare.profundidadAyer].icon}{" "}
-                  {RUTA_BANDA_META[termoCompare.profundidadAyer].label}
+                  ayer {FASE_ATENCIONAL_LABEL[termoCompare.estadoAyer]} · {termoCompare.indiceAyer ?? "—"}
                 </p>
               )}
             </div>
@@ -4402,37 +4711,34 @@ export default function Planeacion() {
           </div>
 
           <div className="grid grid-cols-2 gap-1.5">
-            {termoCompare.rows
-              .filter(r => r.key !== "descansos" || r.today > 0 || r.yesterday > 0)
-              .slice(0, 4)
-              .map(row => {
+            {termoCompare.rows.slice(0, 4).map(row => {
                 const rowColor =
-                  row.key === "limite"
-                    ? RUTA_BANDA_META.limite.color
-                    : row.key === "concentrado"
-                      ? RUTA_BANDA_META.concentrado.color
-                      : row.key === "descansos"
-                        ? "#10b981"
+                  row.key === "dominio_fluido"
+                    ? FASE_ATENCIONAL_COLOR.dominio_fluido
+                    : row.key === "ganancia"
+                      ? EMERALD
+                      : row.key === "friccion"
+                        ? RUTA_BANDA_META.limite.color
                         : row.key === "bloques"
                           ? "#38BDF8"
                           : GOLD;
                 const rowIcon =
-                  row.key === "limite" || row.key === "concentrado"
-                    ? RUTA_BANDA_META[row.key as "limite" | "concentrado"].icon
-                    : row.key === "descansos"
+                  row.key === "dominio_fluido"
+                    ? "~"
+                    : row.key === "ganancia"
                       ? "+"
-                      : row.key === "bloques"
-                        ? "#"
-                        : "*";
-                const up = row.betterWhenHigher ? row.delta > 0 : false;
-                const down = row.betterWhenHigher ? row.delta < 0 : false;
-                const deltaColor = row.key === "descansos"
-                  ? "#10b981"
-                  : up
-                    ? EMERALD
-                    : down
-                      ? "#94a3b8"
-                      : "rgba(255,255,255,0.5)";
+                      : row.key === "friccion"
+                        ? RUTA_BANDA_META.concentrado.icon
+                        : row.key === "bloques"
+                          ? "#"
+                          : "*";
+                const improved = row.betterWhenHigher ? row.delta > 0 : row.delta < 0;
+                const worsened = row.betterWhenHigher ? row.delta < 0 : row.delta > 0;
+                const deltaColor = improved
+                  ? EMERALD
+                  : worsened
+                    ? "#94a3b8"
+                    : "rgba(255,255,255,0.5)";
                 const deltaText =
                   row.delta === 0
                     ? "="
@@ -4478,7 +4784,104 @@ export default function Planeacion() {
           </div>
         </motion.div>
 
-        {/* Disciplina — minutos hasta entrar al trabajo */}
+        {/* Atención Panorámica — puertas conscientes */}
+        {planilla && planilla.segmentos.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-3 rounded-xl border overflow-hidden"
+            style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}
+            data-testid="atencion-card"
+          >
+            <div className="flex items-start justify-between gap-2 mb-2.5">
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: VIOLET }}>
+                  Atención Panorámica
+                </p>
+                <p className="text-[7px] text-slate-500 mt-0.5">
+                  Puertas conscientes ±5 min · voz al minuto 4 · AV = antes de voz · DV = después
+                </p>
+              </div>
+              <div
+                className="shrink-0 px-2.5 py-1.5 rounded-lg border text-center"
+                style={{ backgroundColor: `${VIOLET}12`, borderColor: `${VIOLET}40` }}
+              >
+                <p className="text-[7px] text-slate-500 uppercase tracking-wider">Hoy</p>
+                <p className="text-sm font-black leading-tight" style={{ color: VIOLET }}>
+                  {atencionLive.indiceAtencion}
+                </p>
+              </div>
+            </div>
+
+            <div
+              className="p-2.5 rounded-lg mb-2.5 border"
+              style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.06)" }}
+            >
+              <p className="text-[10px] font-bold text-white leading-snug">{atencionCompare.headline}</p>
+              <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{atencionCompare.motivacion}</p>
+              <div className="flex gap-3 mt-2 text-[8px] flex-wrap">
+                <span className="text-slate-500">
+                  Puertas: <span className="font-bold text-slate-300">{atencionLive.puertasAbiertas}</span>
+                </span>
+                <span className="text-slate-500">
+                  Perdidas: <span className="font-bold text-slate-300">{atencionLive.puertasPerdidas}</span>
+                </span>
+                <span className="text-slate-500">
+                  Cierres: <span className="font-bold text-slate-300">{atencionLive.cierresConscientes}</span>
+                </span>
+                {atencionLive.ratioAntesVoz != null && (
+                  <span className="text-slate-500">
+                    AV: <span className="font-bold" style={{ color: VIOLET }}>{atencionLive.ratioAntesVoz}%</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1 max-h-36 overflow-y-auto">
+              {atencionLive.segmentos.map(sa => {
+                const badge = atencionBadgeLabel(sa);
+                const badgeColor =
+                  sa.puertaPerdida
+                    ? BLOOD
+                    : sa.puertaTiming === "antes_voz"
+                      ? VIOLET
+                      : sa.puertaTiming === "despues_voz"
+                        ? GOLD
+                        : sa.ventanaPuertaAbierta
+                          ? CYAN
+                          : "#64748b";
+                return (
+                  <div
+                    key={sa.segmentoId}
+                    className="flex items-start gap-2 px-2 py-1.5 rounded-lg border"
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.03)",
+                      borderColor: `${badgeColor}25`,
+                    }}
+                    data-testid={`atencion-row-${sa.segmentoId}`}
+                  >
+                    <span
+                      className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0 mt-0.5"
+                      style={{ backgroundColor: `${badgeColor}18`, color: badgeColor }}
+                    >
+                      {badge ?? "…"}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[9px] font-bold text-slate-200 truncate">
+                        {sa.nombre} · {sa.horaInicio}
+                      </p>
+                      <p className="text-[7px] text-slate-500 leading-snug">
+                        {describeSegmentoAtencion(sa)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Disciplina — vehículos conscientes en segmento */}
         {planilla && planilla.segmentos.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
@@ -4493,7 +4896,7 @@ export default function Planeacion() {
                   Disciplina
                 </p>
                 <p className="text-[7px] text-slate-500 mt-0.5">
-                  Minutos hasta entrar al trabajo (desde inicio y desde puerta)
+                  Entrada al trabajo con vehículos conscientes (independiente de la puerta)
                 </p>
               </div>
               <div
@@ -4566,11 +4969,6 @@ export default function Planeacion() {
                 {disciplinaLive.deltaMedioDesdeInicioMin != null && (
                   <span className="text-slate-500">
                     Δ inicio: <span className="font-bold text-slate-300">+{disciplinaLive.deltaMedioDesdeInicioMin} min</span>
-                  </span>
-                )}
-                {disciplinaLive.deltaMedioDesdePuertaMin != null && (
-                  <span className="text-slate-500">
-                    Δ puerta: <span className="font-bold text-slate-300">+{disciplinaLive.deltaMedioDesdePuertaMin} min</span>
                   </span>
                 )}
                 {disciplinaLive.montajes > 0 && (
@@ -4652,7 +5050,7 @@ export default function Planeacion() {
           <div className="min-w-0">
             <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · Planificación</p>
             <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
-              Alertas = cupo situacional, voz y notificaciones · Tick = pitido del reloj en foco
+              Alertas = cupo situacional · Puerta = voz min 4 · Tick = pitido del reloj
             </p>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles(true)}</div>
@@ -4724,15 +5122,16 @@ export default function Planeacion() {
           void anilloTick;
           const segs = planilla?.segmentos || [];
           const nowMs = Date.now();
+          const vehiculosAnillo = filterVehiclesForEntropy(vehicles, nowMs);
           const metricas = calcularMetricasAnilloConciencia({
             segmentos: segs,
-            vehiculos: vehicles,
+            vehiculos: vehiculosAnillo,
             now: nowMs,
           });
-          const anilloEstado = computeAnilloEstado({ segmentos: segs, vehiculos: vehicles, now: nowMs });
+          const anilloEstado = computeAnilloEstado({ segmentos: segs, vehiculos: vehiculosAnillo, now: nowMs });
           const pointerLap = nowToHalfDayLap(nowMs);
-          const timelineArcs = computeTimelineClockArcs({ vehiculos: vehicles, segmentos: segs, now: nowMs });
-          const dayStats = computeTimelineDayStats({ vehiculos: vehicles, segmentos: segs, now: nowMs });
+          const timelineArcs = computeTimelineClockArcs({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
+          const dayStats = computeTimelineDayStats({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
           const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
           return (
             <motion.div
@@ -5398,6 +5797,9 @@ export default function Planeacion() {
                         proyectos={proyectosHub}
                         compact
                       />
+                      {nuevoSegProyectoId && (
+                        <RutasMentalesEditor rutas={nuevoSegRutas} onChange={setNuevoSegRutas} />
+                      )}
                       <div>
                         <label className="text-[9px] text-gray-500 uppercase tracking-wider mb-1.5 block">
                           Color
@@ -5470,14 +5872,18 @@ export default function Planeacion() {
                         const isClosedManual = seg.estado === "cerrado_manual";
                         const isPendiente = seg.estado === "pendiente";
                         const nowMsSeg = Date.now();
-                        const activarVentanaAbierta = isWithinSegmentTimeMargin(
-                          nowMsSeg, seg.horaInicio, seg.horaFin, "inicio", 5
+                        const dayStartSeg = getJournalDayStartMs(nowMsSeg);
+                        const puertaVentanaAbierta = isWithinPuertaWindow(
+                          nowMsSeg, seg.horaInicio, dayStartSeg
                         );
+                        const activarVentanaAbierta = puertaVentanaAbierta;
                         const cierreVentanaAbierta = seg.horaFin
                           ? isWithinSegmentTimeMargin(nowMsSeg, seg.horaInicio, seg.horaFin, "fin", 5)
                           : true;
                         const discSeg = disciplinaBySegmentId.get(seg.id);
                         const discBadge = discSeg ? disciplinaBadgeLabel(discSeg) : null;
+                        const atencSeg = atencionBySegmentId.get(seg.id);
+                        const atencBadge = atencSeg ? atencionBadgeLabel(atencSeg) : null;
                         const dotColor = isActive
                           ? EMERALD
                           : isClosedManual
@@ -5503,9 +5909,11 @@ export default function Planeacion() {
                               : "border-gray-800",
                         ].join(" ");
                         const hasActions =
+                          isEntropia ||
                           (isActive && cierreVentanaAbierta) ||
                           (isActive && !cierreVentanaAbierta && !!seg.horaFin) ||
-                          isPendiente;
+                          isPendiente ||
+                          (isActive && !!seg.puertaTiming);
                         return (
                           <div key={seg.id} className={cardClass} data-testid={`segment-card-${seg.id}`}>
                             <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center">
@@ -5524,13 +5932,22 @@ export default function Planeacion() {
                                 <p className="text-gray-200 font-semibold tracking-wide truncate">
                                   {seg.nombre}
                                 </p>
+                                {atencBadge && (
+                                  <span
+                                    className="text-[7px] font-black px-1.5 py-0.5 rounded uppercase shrink-0 border border-violet-900/50 bg-violet-950/30 text-violet-300"
+                                    title={atencSeg ? describeSegmentoAtencion(atencSeg) : undefined}
+                                    data-testid={`segment-atencion-${seg.id}`}
+                                  >
+                                    {atencBadge}
+                                  </span>
+                                )}
                                 {discBadge && (
                                   <span
                                     className="text-[7px] font-black px-1.5 py-0.5 rounded uppercase shrink-0 border border-gray-800 bg-gray-900/80 text-gray-400"
                                     title={discSeg ? describeSegmentoDisciplina(discSeg) : undefined}
                                     data-testid={`segment-disciplina-${seg.id}`}
                                   >
-                                    {discBadge}
+                                    D:{discBadge}
                                   </span>
                                 )}
                               </div>
@@ -5550,43 +5967,57 @@ export default function Planeacion() {
                             </div>
 
                             {hasActions && (
-                              <div className="mt-3 pt-3 border-t border-gray-800/80 flex flex-wrap items-center justify-end gap-2">
+                              <div className="mt-3 pt-3 border-t border-gray-800/80 flex flex-wrap items-center justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  {isEntropia && (
+                                    <p className="text-[7px] text-red-400/90 leading-tight">
+                                      Entropía de atención — puerta no marcada a tiempo
+                                    </p>
+                                  )}
+                                  {isActive && seg.puertaTiming && (
+                                    <p className="text-[7px] text-violet-300/80 leading-tight">
+                                      Puerta abierta {seg.puertaTiming === "antes_voz" ? "antes de la voz" : "tras la voz"}
+                                    </p>
+                                  )}
+                                  {isPendiente && !activarVentanaAbierta && (
+                                    <p className="text-[7px] text-gray-500 leading-tight">
+                                      Puerta de atención: ±5 min de {seg.horaInicio} · voz al min 4
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
                                 {isActive && cierreVentanaAbierta && (
                                   <button
                                     onClick={() => cerrarSegmentoManual(seg.id)}
                                     className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-red-900/40 text-red-300/90 bg-red-950/20 hover:bg-red-950/35"
                                     data-testid={`button-close-segment-${seg.id}`}
                                   >
-                                    <Square size={10} /> Cerrar (+2 PS)
+                                    <Square size={10} /> Cerrar puerta (+2 PS)
                                   </button>
                                 )}
                                 {isActive && !cierreVentanaAbierta && seg.horaFin && (
                                   <span className="text-[7px] text-gray-500 text-right max-w-[14rem] leading-tight">
-                                    Puerta sellada — entropía inminente si no cierras ±5 min de {seg.horaFin}
+                                    Cierre disponible ±5 min de {seg.horaFin}
                                   </span>
                                 )}
                                 {isPendiente &&
                                   (activarVentanaAbierta ? (
                                     <button
                                       onClick={() => activarSegmento(seg.id)}
-                                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-emerald-900/40 text-emerald-400/90 bg-emerald-950/20 hover:bg-emerald-950/35"
+                                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-violet-900/50 text-violet-300/95 bg-violet-950/25 hover:bg-violet-950/40"
                                       data-testid={`button-start-segment-${seg.id}`}
                                     >
-                                      <Play size={10} /> Activar +2 PS
+                                      <Play size={10} /> Abrir puerta (+2 PS)
                                     </button>
                                   ) : (
-                                    <div className="flex flex-col items-end gap-0.5 max-w-[12rem]">
-                                      <span className="text-[7px] text-gray-500 text-right leading-tight">
-                                        Activar disponible ±5 min de {seg.horaInicio}
-                                      </span>
-                                      <span
-                                        className="text-[8px] px-2 py-0.5 rounded-md text-gray-500 bg-gray-900/60 border border-gray-800"
-                                        title={`Ventana: ${seg.horaInicio} ± 5 min`}
-                                      >
-                                        Esperando horario
-                                      </span>
-                                    </div>
+                                    <span
+                                      className="text-[8px] px-2 py-0.5 rounded-md text-gray-500 bg-gray-900/60 border border-gray-800"
+                                      title={`Ventana puerta: ${seg.horaInicio} ± 5 min`}
+                                    >
+                                      Esperando ventana
+                                    </span>
                                   ))}
+                                </div>
                               </div>
                             )}
 
@@ -5710,7 +6141,7 @@ export default function Planeacion() {
               <div ref={flotaActivosRef} className="scroll-mt-4">
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length} defaultOpen>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreRutaPatron(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
                 ))}
               </AccordionSection>
               </div>
@@ -6619,6 +7050,7 @@ export default function Planeacion() {
             setCierreEnergiaSeleccion(null);
             setCierreRutaSeleccion(new Set());
             setCierreRutaSinUso(false);
+            setCierreRutaPatron(null);
           };
           const confirmCierreEnergia = () => {
             const p = cierreEnergiaPending;
@@ -6673,26 +7105,21 @@ export default function Planeacion() {
                 ))}
               </div>
               {showRuta && (
-                <div className="space-y-2 pt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                  <p className="text-[9px] font-bold text-violet-300 uppercase tracking-wider text-center">¿Qué tramos de la ruta recorriste?</p>
-                  {mergedCruzada && (
-                    <p className="text-[7px] text-center text-slate-600 font-mono">
-                      Detectado: {(["fluido", "concentrado", "limite"] as const).filter(b => mergedCruzada[b]).map(b => RUTA_BANDA_META[b].icon).join(" ") || "—"}
-                    </p>
-                  )}
-                  <div className="space-y-1.5">
-                    {(["fluido", "concentrado", "limite"] as const).map(banda => {
-                      const meta = RUTA_BANDA_META[banda];
-                      const checked = cierreRutaSeleccion.has(banda);
-                      return (
-                        <label key={banda} className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer" style={{ backgroundColor: checked ? "rgba(139,92,246,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${checked ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.06)"}` }}>
-                          <input type="checkbox" checked={checked} disabled={cierreRutaSinUso} onChange={() => { setCierreRutaSinUso(false); setCierreRutaSeleccion(prev => { const next = new Set(prev); if (next.has(banda)) next.delete(banda); else next.add(banda); return next; }); }} className="accent-violet-500" />
-                          <span className="text-[10px] text-white">{meta.icon} {meta.label}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  <button type="button" onClick={() => { setCierreRutaSinUso(true); setCierreRutaSeleccion(new Set()); }} className="w-full py-2 rounded-lg text-[9px] font-bold text-slate-400" style={{ backgroundColor: cierreRutaSinUso ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.04)", border: `1px solid ${cierreRutaSinUso ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.06)"}` }}>No usé ruta / solo cumplí a mi ritmo</button>
+                <div className="pt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                  <RutaSeguimientoPicker
+                    cruzadaReferencia={mergedCruzada}
+                    seleccion={cierreRutaSeleccion}
+                    sinUso={cierreRutaSinUso}
+                    patronActivo={cierreRutaPatron}
+                    onSeleccionChange={(bandas, patron) => {
+                      setCierreRutaSeleccion(bandas);
+                      setCierreRutaPatron(patron);
+                    }}
+                    onSinUsoChange={sin => {
+                      setCierreRutaSinUso(sin);
+                      if (sin) setCierreRutaPatron("sin_ruta");
+                    }}
+                  />
                 </div>
               )}
               <div className="flex gap-2">
@@ -6706,7 +7133,8 @@ export default function Planeacion() {
                 <button
                   type="button"
                   onClick={confirmCierreEnergia}
-                  className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider"
+                  disabled={showRuta && !rutaSeguimientoPickerCanConfirm(cierreRutaSinUso, cierreRutaSeleccion)}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider disabled:opacity-40"
                   style={{ backgroundColor: VIOLET, color: "#fff" }}
                 >
                   Confirmar
@@ -6921,7 +7349,7 @@ export default function Planeacion() {
                 });
                 const balance = calcularBalanceConquistaJornada({
                   segmentos: planilla?.segmentos || [],
-                  vehiculos: vehicles,
+                  vehiculos: filterVehiclesForEntropy(vehicles),
                   now: Date.now(),
                   dayStartMs,
                 });
@@ -6949,6 +7377,13 @@ export default function Planeacion() {
                   vacioMin: balance.vacioMin,
                 });
                 await savePlanillaDailySnapshot(user.uid, snapshot);
+                const sealPel = await sealPeldanosFromSegmentos(user.uid, {
+                  fecha,
+                  segmentos: planilla?.segmentos ?? [],
+                  vehicles: jornadaVehicles,
+                  dayStartMs,
+                  events: todayEvents,
+                });
                 const sealed: CierreJornadaLog = {
                   ...cierre,
                   totalPS: fresh.total,
@@ -6963,6 +7398,12 @@ export default function Planeacion() {
                 };
                 await saveCierreJornada(user.uid, sealed);
                 setTodayCierreJornada(sealed);
+                if (sealPel.sealed > 0) {
+                  toast.success(`${sealPel.sealed} peldaño(s) en Proyectos`, {
+                    description: "Segmentos cerrados sellados en tu escalera.",
+                    style: { backgroundColor: PIZARRA, border: `1px solid ${CYAN}`, color: CYAN },
+                  });
+                }
                 toast.success("Jornada Sellada", {
                   description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${sealed.totalPS} PS · ${snapshot.bloquesCompletados} bloques`,
                   style: { backgroundColor: PIZARRA, border: `2px solid ${GOLD}`, color: GOLD }
@@ -7011,7 +7452,7 @@ function AccordionSection({ title, subtitle, icon: Icon, color, count, children,
 }
 
 const EXPRESS_PS: Record<string, { cumple: number; arch: number }> = {
-  hora: { cumple: 10, arch: 5 },
+  hora: { cumple: VEHICLE_CUMPLIDO_BASE_PS, arch: VEHICLE_ARCHIVADO_BASE_PS },
   situacion: { cumple: 5, arch: 2 },
   omitido: { cumple: 1, arch: 0 },
 };
@@ -7025,17 +7466,36 @@ function calculateVehicleScore(vehicle: Vehicle): {
   blandoCount: number;
 } {
   if (vehicle.tipoReloj === "desglosador") {
-    return { difficulty: "facil", potentialCPCumplido: 10, potentialCPArchivado: 0, scorePercent: 50, retoCount: 0, blandoCount: 0 };
+    const subs = vehicle.subVehiculos ?? [];
+    const depth = vehicle.desglosadorBloqueDepthPsGranted ?? 0;
+    return {
+      difficulty: "facil",
+      potentialCPCumplido: estimateDesglosadorSessionPs(subs, depth),
+      potentialCPArchivado: 0,
+      scorePercent: 50,
+      retoCount: 0,
+      blandoCount: 0,
+    };
   }
   if (vehicle.tipoFlota === "situacion") {
     return { difficulty: "facil", potentialCPCumplido: 5, potentialCPArchivado: 0, scorePercent: 50, retoCount: 0, blandoCount: 0 };
   }
   if (vehicle.tipoTerminoRapido) {
-    const ps = EXPRESS_PS[vehicle.tipoTerminoRapido] ?? { cumple: 10, arch: 5 };
+    const ps = EXPRESS_PS[vehicle.tipoTerminoRapido] ?? {
+      cumple: VEHICLE_CUMPLIDO_BASE_PS,
+      arch: VEHICLE_ARCHIVADO_BASE_PS,
+    };
     return { difficulty: "facil", potentialCPCumplido: ps.cumple, potentialCPArchivado: ps.arch, scorePercent: 50, retoCount: 0, blandoCount: 0 };
   }
   if (vehicle.tipoFlota === "tiempo") {
-    return { difficulty: "media", potentialCPCumplido: 10, potentialCPArchivado: 5, scorePercent: 50, retoCount: 0, blandoCount: 0 };
+    return {
+      difficulty: "media",
+      potentialCPCumplido: VEHICLE_CUMPLIDO_BASE_PS,
+      potentialCPArchivado: VEHICLE_ARCHIVADO_BASE_PS,
+      scorePercent: 50,
+      retoCount: 0,
+      blandoCount: 0,
+    };
   }
   if (vehicle.tipoFlota === "descanso") {
     return { difficulty: "facil", potentialCPCumplido: 10, potentialCPArchivado: 5, scorePercent: 50, retoCount: 0, blandoCount: 0 };
@@ -7137,6 +7597,7 @@ function VehicleCard({
     status: "cumplido" | "fallado";
     verdict: SubCloseVerdict;
     deltaSec: number;
+    conquistaFluidezAbsoluta?: boolean;
   };
   const [ultimoCierreSub, setUltimoCierreSub] = useState<UltimoCierreSub | null>(null);
   const [futuroSubLabel, setFuturoSubLabel] = useState<string>("—");
@@ -7168,20 +7629,14 @@ function VehicleCard({
   }>(null);
   const [subRutaSel, setSubRutaSel] = useState<Set<RutaBandaId>>(new Set());
   const [subRutaSinUso, setSubRutaSinUso] = useState(false);
+  const [subRutaPatron, setSubRutaPatron] = useState<RutaSeguimientoPatron | null>(null);
 
-  useEffect(() => {
-    if (!subRutaModal) return;
-    const sub = (vehicle.subVehiculos || []).find(s => s.id === subRutaModal.subId);
-    const cruzada = sub?.rutaEnfoque?.cruzado;
-    if (cruzada) {
-      const pre = (["fluido", "concentrado", "limite"] as const).filter(b => cruzada[b]);
-      setSubRutaSel(new Set(pre));
-      setSubRutaSinUso(pre.length === 0);
-    } else {
-      setSubRutaSel(new Set(["fluido"]));
-      setSubRutaSinUso(false);
-    }
-  }, [subRutaModal, vehicle.subVehiculos]);
+  const openSubRutaModal = (payload: NonNullable<typeof subRutaModal>) => {
+    setSubRutaSel(new Set());
+    setSubRutaSinUso(false);
+    setSubRutaPatron(null);
+    setSubRutaModal(payload);
+  };
 
   const [showPausaForm, setShowPausaForm] = useState(false);
   const [pausaTitulo, setPausaTitulo] = useState("");
@@ -7527,8 +7982,7 @@ function VehicleCard({
       } else {
         playChime();
       }
-      const msg = alert === "concentrado" ? "Entrando en concentrado" : "Último tramo: al límite";
-      speakUbicacionSingle(msg, "desglosador");
+      speakUbicacionQueue(rutaVozPartsForBanda(alert), false, "desglosador");
     }
     const cruzadoChanged =
       nextRuta.cruzado.concentrado !== activeSub.rutaEnfoque.cruzado.concentrado ||
@@ -7549,7 +8003,7 @@ function VehicleCard({
     if (subStartVoiceRef.current.has(key)) return;
     subStartVoiceRef.current.add(key);
     speakUbicacionQueue(
-      [cleanSubTitulo(activeSub.titulo), "Entrando en modo fluido"],
+      rutaVozFluidoParts(cleanSubTitulo(activeSub.titulo)),
       true,
       "desglosador"
     );
@@ -7567,23 +8021,19 @@ function VehicleCard({
     const allSubs = [...(vehicle.subVehiculos || [])];
     const idx = allSubs.findIndex(s => s.id === activeSubId);
     if (idx === -1) return;
-    allSubs[idx] = {
+    const baseSub: SubVehiculo = {
       ...allSubs[idx],
       status,
       cierreAt: now,
       duracionFinal: duracionCompletado,
-      ...(status === "cumplido" && allSubs[idx].cantidadObjetivo ? { cantidadLograda: cantidad } : {}),
-      ...(allSubs[idx].rutaEnfoque?.activa
-        ? {
-            rutaDeclarada:
-              rutaDeclarada && rutaDeclarada.length > 0
-                ? rutaDeclarada
-                : (["fluido", "concentrado", "limite"] as const).filter(
-                    b => allSubs[idx].rutaEnfoque!.cruzado[b]
-                  ),
-          }
+      ...(status === "cumplido" && allSubs[idx].cantidadObjetivo
+        ? { cantidadLograda: cantidad }
         : {}),
     };
+    allSubs[idx] =
+      baseSub.rutaEnfoque?.activa
+        ? enrichSubRutaCierre(baseSub, rutaDeclarada ?? [])
+        : baseSub;
     onBloqueCierre?.({ vehicleId: vehicle.id, sub: allSubs[idx], status });
     const closed = allSubs[idx];
     const veredicto = computeSubCloseVerdict(closed);
@@ -7593,6 +8043,7 @@ function VehicleCard({
       status: status,
       verdict: veredicto.verdict,
       deltaSec: veredicto.deltaSec,
+      conquistaFluidezAbsoluta: closed.conquistaFluidezAbsoluta,
     });
     const nextPending = allSubs.findIndex((s, i) => i > idx && s.status === "pendiente");
     if (nextPending !== -1) {
@@ -7605,6 +8056,7 @@ function VehicleCard({
     setSubRutaModal(null);
     setSubRutaSel(new Set());
     setSubRutaSinUso(false);
+    setSubRutaPatron(null);
   };
 
   const tipoFlota = vehicle.tipoFlota;
@@ -8010,11 +8462,15 @@ function VehicleCard({
                   const deltaPerdiendo = hasSugerido && deltaTotalSec > 5;
                   const deltaColor = deltaGanando ? "#00C851" : deltaPerdiendo ? "#FF3131" : "#D4AF37";
                   const deltaLabel = deltaGanando ? `↓ ${fmtSec(Math.abs(deltaTotalSec))} ganado` : deltaPerdiendo ? `↑ ${fmtSec(deltaTotalSec)} extra` : "→ en tiempo";
-                  const psBase = 10;
-                  const psCumplidos = cumplidos * 2;
                   const psProfundidad = vehicle.desglosadorBloqueDepthPsGranted ?? 0;
-                  const psRutaResumen = computeRutaEnfoquePSFromSubs(subs);
-                  const totalPS = psBase + psCumplidos + psProfundidad + psRutaResumen;
+                  const subsPsGranted = sumDesglosadorSubsPsAlreadyGranted(subs);
+                  const totalPS = estimateDesglosadorSessionPs(subs, psProfundidad);
+                  const psCumplidosEst = subs
+                    .filter(s => s.status === "cumplido")
+                    .reduce(
+                      (sum, s) => sum + (s.psOtorgados ?? computeDesglosadorSubAwardPS(s)),
+                      0
+                    );
                   return (
                     <div className="pt-3">
                       <div className="p-4 rounded-xl border-2 space-y-3" style={{ backgroundColor: "rgba(212,175,55,0.05)", borderColor: "#D4AF37", boxShadow: "0 0 20px rgba(212,175,55,0.15)" }}>
@@ -8068,7 +8524,7 @@ function VehicleCard({
                         {/* PS breakdown */}
                         <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ backgroundColor: "rgba(212,175,55,0.08)", border: "1px solid rgba(212,175,55,0.15)" }}>
                           <span className="text-[8px] font-black uppercase tracking-widest" style={{ color: "#D4AF37" }}>PS</span>
-                          <span className="text-[8px] font-bold flex-1" style={{ color: "rgba(255,255,255,0.78)" }}>Base +{psBase} · {cumplidos}×cumplido +{psCumplidos}{psProfundidad > 0 ? ` · profundidad +${psProfundidad}` : ""}{psRutaResumen > 0 ? ` · ruta +${psRutaResumen}` : ""}{fallados > 0 ? ` · ${fallados} fallado(s) sin PS` : ""}</span>
+                          <span className="text-[8px] font-bold flex-1" style={{ color: "rgba(255,255,255,0.78)" }}>Subs +{psCumplidosEst}{subsPsGranted < psCumplidosEst ? ` (${subsPsGranted} ya en barra)` : ""} · cierre +{DESGLOSADOR_CYCLE_CLOSE_BASE_PS}{psProfundidad > 0 ? ` · profundidad +${psProfundidad}` : ""}{fallados > 0 ? ` · ${fallados} fallado(s) sin PS` : ""}</span>
                           <span className="text-[10px] font-black" style={{ color: "#D4AF37" }}>={totalPS}</span>
                         </div>
 
@@ -8227,6 +8683,11 @@ function VehicleCard({
                           <p className="text-sm font-black mt-0.5" style={{ color: badgeColor, fontFamily: "JetBrains Mono, monospace" }}>
                             {label}
                           </p>
+                          {ultimoCierreSub.conquistaFluidezAbsoluta && (
+                            <p className="text-[8px] font-bold mt-1" style={{ color: "#38BDF8" }}>
+                              Conquista de fluidez absoluta · segmento A
+                            </p>
+                          )}
                         </motion.div>
                       );
                     })()}
@@ -8441,7 +8902,7 @@ function VehicleCard({
                                       if (idx === -1) return;
                                       const duracionCompletado = allSubs[idx].aperturaAt ? Math.floor((now - allSubs[idx].aperturaAt!) / 1000) : undefined;
                                       if (activeSub.rutaEnfoque?.activa) {
-                                        setSubRutaModal({ subId: activeSub.id, status: "cumplido", cantidadRealizada: Number(cantidadRealizada) || 0, duracionCompletado });
+                                        openSubRutaModal({ subId: activeSub.id, status: "cumplido", cantidadRealizada: Number(cantidadRealizada) || 0, duracionCompletado });
                                         return;
                                       }
                                       finalizeSubClose(activeSub.id, "cumplido", Number(cantidadRealizada) || 0, duracionCompletado);
@@ -8463,7 +8924,7 @@ function VehicleCard({
                                       if (idx === -1) return;
                                       const duracionFallado = allSubs[idx].aperturaAt ? Math.floor((now - allSubs[idx].aperturaAt!) / 1000) : undefined;
                                       if (activeSub.rutaEnfoque?.activa) {
-                                        setSubRutaModal({ subId: activeSub.id, status: "fallado", cantidadRealizada: Number(cantidadRealizada) || 0, duracionCompletado: duracionFallado });
+                                        openSubRutaModal({ subId: activeSub.id, status: "fallado", cantidadRealizada: Number(cantidadRealizada) || 0, duracionCompletado: duracionFallado });
                                         return;
                                       }
                                       finalizeSubClose(activeSub.id, "fallado", Number(cantidadRealizada) || 0, duracionFallado);
@@ -9714,29 +10175,37 @@ function VehicleCard({
       </AnimatePresence>
       {subRutaModal && (() => {
         const subForModal = (vehicle.subVehiculos || []).find(s => s.id === subRutaModal.subId);
-        const cruzada = subForModal?.rutaEnfoque?.cruzado;
+        const cruzada = subForModal?.rutaEnfoque?.cruzado ?? null;
+        const canConfirm = rutaSeguimientoPickerCanConfirm(subRutaSinUso, subRutaSel);
         return (
           <motion.div className="fixed inset-0 z-[230] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.85)" }} role="dialog" aria-modal="true">
-            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm rounded-2xl border p-4 space-y-3" style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}>
-              <p className="text-sm font-bold text-white text-center">Ruta de este subvehículo</p>
-              <p className="text-[9px] text-slate-500 text-center">¿Qué tramos recorriste en «{subForModal?.titulo}»?</p>
-              {cruzada && (
-                <p className="text-[7px] text-center text-slate-600 font-mono">
-                  Detectado: {(["fluido", "concentrado", "limite"] as const).filter(b => cruzada[b]).map(b => RUTA_BANDA_META[b].icon).join(" ") || "—"}
-                </p>
-              )}
-              <div className="space-y-1.5">
-                {(["fluido", "concentrado", "limite"] as const).map(banda => (
-                  <label key={banda} className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer" style={{ backgroundColor: subRutaSel.has(banda) ? "rgba(139,92,246,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${subRutaSel.has(banda) ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.06)"}` }}>
-                    <input type="checkbox" checked={subRutaSel.has(banda)} disabled={subRutaSinUso} onChange={() => { setSubRutaSinUso(false); setSubRutaSel(prev => { const n = new Set(prev); if (n.has(banda)) n.delete(banda); else n.add(banda); return n; }); }} className="accent-violet-500" />
-                    <span className="text-[10px] text-white">{RUTA_BANDA_META[banda].icon} {RUTA_BANDA_META[banda].label}</span>
-                  </label>
-                ))}
-              </div>
-              <button type="button" onClick={() => { setSubRutaSinUso(true); setSubRutaSel(new Set()); }} className="w-full py-2 rounded-lg text-[9px] font-bold text-slate-400" style={{ backgroundColor: subRutaSinUso ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.04)", border: `1px solid ${subRutaSinUso ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.06)"}` }}>No usé ruta / solo cumplí a mi ritmo</button>
+            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm rounded-2xl border p-4 space-y-3 max-h-[90vh] overflow-y-auto" style={{ backgroundColor: PIZARRA, borderColor: "rgba(139,92,246,0.35)" }}>
+              <RutaSeguimientoPicker
+                tituloContexto={cleanSubTitulo(subForModal?.titulo || "")}
+                cruzadaReferencia={cruzada}
+                seleccion={subRutaSel}
+                sinUso={subRutaSinUso}
+                patronActivo={subRutaPatron}
+                onSeleccionChange={(bandas, patron) => {
+                  setSubRutaSel(bandas);
+                  setSubRutaPatron(patron);
+                }}
+                onSinUsoChange={sin => {
+                  setSubRutaSinUso(sin);
+                  if (sin) setSubRutaPatron("sin_ruta");
+                }}
+              />
               <div className="flex gap-2">
-                <button type="button" onClick={() => { setSubRutaModal(null); setSubRutaSel(new Set()); setSubRutaSinUso(false); }} className="flex-1 py-2 rounded-xl text-xs text-slate-400 bg-white/5">Cancelar</button>
-                <button type="button" onClick={() => finalizeSubClose(subRutaModal.subId, subRutaModal.status, subRutaModal.cantidadRealizada, subRutaModal.duracionCompletado, subRutaSinUso ? [] : [...subRutaSel])} className="flex-1 py-2 rounded-xl text-xs font-bold" style={{ backgroundColor: "rgba(139,92,246,0.25)", color: "#c4b5fd" }}>Confirmar sub</button>
+                <button type="button" onClick={() => { setSubRutaModal(null); setSubRutaSel(new Set()); setSubRutaSinUso(false); setSubRutaPatron(null); }} className="flex-1 py-2 rounded-xl text-xs text-slate-400 bg-white/5">Cancelar</button>
+                <button
+                  type="button"
+                  disabled={!canConfirm}
+                  onClick={() => finalizeSubClose(subRutaModal.subId, subRutaModal.status, subRutaModal.cantidadRealizada, subRutaModal.duracionCompletado, subRutaSinUso ? [] : [...subRutaSel])}
+                  className="flex-1 py-2 rounded-xl text-xs font-bold disabled:opacity-40"
+                  style={{ backgroundColor: "rgba(139,92,246,0.25)", color: "#c4b5fd" }}
+                >
+                  Confirmar sub
+                </button>
               </div>
             </motion.div>
           </motion.div>
@@ -9937,7 +10406,7 @@ function CierreJornadaModal({
     () =>
       calcularBalanceConquistaJornada({
         segmentos,
-        vehiculos: vehicles,
+        vehiculos: filterVehiclesForEntropy(vehicles),
         now: Date.now(),
         dayStartMs: segmentDayStartMs,
       }),
@@ -9950,6 +10419,7 @@ function CierreJornadaModal({
   const cerrados = cumplidos + archivados;
   const segmentosManual = segmentos.filter(s => s.estado === "cerrado_manual").length;
   const segmentosEntropia = segmentos.filter(s => s.estado === "entropia").length;
+  const peldañosListos = countSegmentosListosParaSellar(segmentos);
   const porcentajeCumplidos = cerrados > 0 ? Math.round((cumplidos / cerrados) * 100) : 0;
   const flotaTypes: TipoFlota[] = ["tiempo", "situacion", "descanso", "verdad"];
   const flotaLabels: Record<TipoFlota, string> = { tiempo: "TIEMPO", situacion: "SITUACIÓN", descanso: "DESCANSO", verdad: "VERDAD" };
@@ -10083,6 +10553,15 @@ function CierreJornadaModal({
             <p className="text-xs text-slate-400 mt-1">
               {(existingCierre as any).porcentajeDiaIdeal ?? existingCierre.porcentajeSoberania}% Día Ideal · {existingCierre.totalPS} PS
             </p>
+          </div>
+        )}
+
+        {peldañosListos > 0 && !alreadySealed && (
+          <div className="p-2.5 rounded-xl border text-center" style={{ backgroundColor: "rgba(0,255,195,0.06)", borderColor: "rgba(0,255,195,0.25)" }}>
+            <p className="text-[9px] font-bold" style={{ color: CYAN }}>
+              {peldañosListos} peldaño{peldañosListos !== 1 ? "s" : ""} irán a Proyectos al sellar
+            </p>
+            <p className="text-[8px] text-slate-500 mt-0.5">Segmentos con cierre manual vinculados a tu escalera</p>
           </div>
         )}
 

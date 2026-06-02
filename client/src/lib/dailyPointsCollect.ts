@@ -21,7 +21,8 @@ export function mergeSovereigntyPointsLogs(logs: SpLogEntry[]): SpLogEntry[] {
   for (const entry of logs) {
     if (seenIds.has(entry.id)) continue;
     const ms = spLogEffectiveMs(entry);
-    const key = `${entry.amount}|${Math.floor(ms / 10000)}`;
+    const sourceKey = (entry.source || "Sistema").slice(0, 48);
+    const key = `${entry.amount}|${sourceKey}|${Math.floor(ms / 10000)}`;
     if (seenKeys.has(key)) continue;
     seenIds.add(entry.id);
     seenKeys.add(key);

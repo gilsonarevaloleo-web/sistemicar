@@ -4,12 +4,41 @@ import {
   buildDailySnapshot,
   classifyPsSource,
   computeEspectroBloques,
+  computeResistenciaDia,
   computeTermodinamicaCompare,
+  computeTermodinamicaCompareV2,
   inferBandaBloque,
+  inferFaseAtencional,
   maxBanda,
+  subEnDominioFluido,
+  subTuvoFriccion,
 } from "./termodinamicaAtencional.ts";
 import type { SubVehiculo, Vehicle } from "./persistence.ts";
 import { createRutaEnfoqueState } from "./rutaEnfoque.ts";
+
+function makeDesglosadorVehicle(
+  subs: SubVehiculo[],
+  overrides: Partial<Vehicle> = {}
+): Vehicle {
+  return {
+    id: "v1",
+    titulo: "Costura",
+    criterioFin: "cantidad",
+    criterioDetalle: "",
+    tiempoInicio: new Date(),
+    ejes: {
+      enfoque: { texto: "", trifecta: "blando" },
+      conflicto: { texto: "", trifecta: "blando" },
+      pasos: { texto: "", trifecta: "blando" },
+      alcance: { texto: "", trifecta: "blando" },
+    },
+    status: "cumplido",
+    tipoReloj: "desglosador",
+    cierreAt: Date.now(),
+    subVehiculos: subs,
+    ...overrides,
+  } as Vehicle;
+}
 
 describe("termodinamicaAtencional", () => {
   it("inferBandaBloque usa rutaDeclarada sobre cruzado", () => {
@@ -26,21 +55,15 @@ describe("termodinamicaAtencional", () => {
   it("computeEspectroBloques cuenta cada tramo de ruta por bloque cumplido", () => {
     const dayStart = Date.now() - 3600_000;
     const vehicles: Vehicle[] = [
-      {
-        id: "v1",
-        titulo: "Costura",
-        criterioFin: "cantidad",
-        criterioDetalle: "",
-        tiempoInicio: new Date(),
-        ejes: { enfoque: { texto: "", trifecta: "blando" }, conflicto: { texto: "", trifecta: "blando" }, pasos: { texto: "", trifecta: "blando" }, alcance: { texto: "", trifecta: "blando" } },
-        status: "cumplido",
-        tipoReloj: "desglosador",
-        cierreAt: Date.now(),
-        subVehiculos: [
-          { id: "s1", titulo: "Bloque pequeño", status: "cumplido", rutaDeclarada: ["fluido"] },
-          { id: "s2", titulo: "Bloque grande", status: "cumplido", rutaDeclarada: ["concentrado", "limite"] },
-        ],
-      } as Vehicle,
+      makeDesglosadorVehicle([
+        { id: "s1", titulo: "Bloque pequeño", status: "cumplido", rutaDeclarada: ["fluido"] },
+        {
+          id: "s2",
+          titulo: "Bloque grande",
+          status: "cumplido",
+          rutaDeclarada: ["concentrado", "limite"],
+        },
+      ]),
     ];
     const espectro = computeEspectroBloques(vehicles, dayStart);
     assert.equal(espectro.fluido, 1);
@@ -53,18 +76,10 @@ describe("termodinamicaAtencional", () => {
     const ruta = createRutaEnfoqueState(8);
     ruta.cruzado = { fluido: true, concentrado: true, limite: true };
     const vehicles: Vehicle[] = [
-      {
-        id: "v1",
-        titulo: "Pieza",
-        criterioFin: "cantidad",
-        criterioDetalle: "",
-        tiempoInicio: new Date(),
-        ejes: { enfoque: { texto: "", trifecta: "blando" }, conflicto: { texto: "", trifecta: "blando" }, pasos: { texto: "", trifecta: "blando" }, alcance: { texto: "", trifecta: "blando" } },
-        status: "activo",
-        tipoReloj: "desglosador",
-        aperturaAt: dayStart + 1000,
-        subVehiculos: [{ id: "s1", titulo: "Sub", status: "cumplido", cierreAt: Date.now(), rutaEnfoque: ruta }],
-      } as Vehicle,
+      makeDesglosadorVehicle(
+        [{ id: "s1", titulo: "Sub", status: "cumplido", cierreAt: Date.now(), rutaEnfoque: ruta }],
+        { status: "activo", aperturaAt: dayStart + 1000 }
+      ),
     ];
     const espectro = computeEspectroBloques(vehicles, dayStart);
     assert.equal(espectro.fluido, 1);
@@ -72,18 +87,38 @@ describe("termodinamicaAtencional", () => {
     assert.equal(espectro.limite, 1);
   });
 
-  it("classifyPsSource separa panor�mico y veh�culos", () => {
-    assert.equal(classifyPsSource("Cierre consciente: Ma�ana"), "panoramico");
+  it("classifyPsSource separa panorámico y vehículos", () => {
+    assert.equal(classifyPsSource("Cierre consciente: Mañana"), "panoramico");
     assert.equal(classifyPsSource("Ciclo Desglosador completado: Costura"), "vehiculos");
     assert.equal(classifyPsSource("Profundidad ruta enfoque"), "espectro");
   });
 
-  it("buildDailySnapshot arma ratio y profundidad por bloques", () => {
+  it("buildDailySnapshot incluye schemaVersion 2 y resistencia", () => {
     const snap = buildDailySnapshot({
       fecha: "2026-05-18",
       segmentos: [
-        { id: "seg1", nombre: "AM", horaInicio: "08:00", horaFin: "12:00", color: "#fff", icono: "sun", estado: "cerrado_manual", eventos: [], psGanados: 2 },
-        { id: "seg2", nombre: "PM", horaInicio: "14:00", horaFin: "18:00", color: "#fff", icono: "moon", estado: "entropia", eventos: [], psGanados: 0 },
+        {
+          id: "seg1",
+          nombre: "AM",
+          horaInicio: "08:00",
+          horaFin: "12:00",
+          color: "#fff",
+          icono: "sun",
+          estado: "cerrado_manual",
+          eventos: [],
+          psGanados: 2,
+        },
+        {
+          id: "seg2",
+          nombre: "PM",
+          horaInicio: "14:00",
+          horaFin: "18:00",
+          color: "#fff",
+          icono: "moon",
+          estado: "entropia",
+          eventos: [],
+          psGanados: 0,
+        },
       ],
       vehicles: [],
       dayStartMs: Date.now() - 86400_000,
@@ -95,10 +130,88 @@ describe("termodinamicaAtencional", () => {
     assert.equal(snap.segmentosCerradosManual, 1);
     assert.equal(snap.segmentosEntropia, 1);
     assert.equal(snap.psDesglose.panoramico, 2);
+    assert.equal(snap.schemaVersion, 2);
+    assert.ok(snap.resistencia);
+    assert.equal(snap.estadoAtencional, snap.resistencia?.fase);
     assert.equal(maxBanda("concentrado", "fluido"), "concentrado");
   });
 
-  it("computeTermodinamicaCompare detecta mejora en bloques al l�mite", () => {
+  it("subTuvoFriccion detecta cruce concentrado en rutaEnfoque", () => {
+    const dayStart = Date.now() - 3600_000;
+    const ruta = createRutaEnfoqueState(6);
+    ruta.activa = true;
+    ruta.cruzado = { fluido: true, concentrado: true, limite: false };
+    const sub: SubVehiculo = {
+      id: "s1",
+      titulo: "Sub",
+      status: "cumplido",
+      rutaEnfoque: ruta,
+    };
+    assert.equal(subTuvoFriccion(sub, [], dayStart), true);
+    assert.equal(subEnDominioFluido(sub, [], dayStart), false);
+  });
+
+  it("computeResistenciaDia usa declaración del usuario, no solo cruce automático", () => {
+    const dayStart = Date.now() - 3600_000;
+    const rutaAuto = createRutaEnfoqueState(6);
+    rutaAuto.activa = true;
+    rutaAuto.cruzado = { fluido: true, concentrado: true, limite: true };
+
+    const entrenamiento = computeResistenciaDia(
+      [
+        makeDesglosadorVehicle([
+          {
+            id: "s1",
+            titulo: "A",
+            status: "cumplido",
+            cierreAt: Date.now(),
+            rutaEnfoque: rutaAuto,
+            rutaDeclarada: ["fluido", "concentrado", "limite"],
+          },
+        ]),
+      ],
+      dayStart
+    );
+    assert.equal(entrenamiento.friccionBloques, 1);
+    assert.equal(entrenamiento.bloquesDominioFluido, 0);
+
+    const dominio = computeResistenciaDia(
+      [
+        makeDesglosadorVehicle([
+          {
+            id: "s1",
+            titulo: "A",
+            status: "cumplido",
+            cierreAt: Date.now(),
+            rutaEnfoque: rutaAuto,
+            rutaDeclarada: ["fluido"],
+            tiempoSugeridoSeg: 600,
+            duracionFinal: 400,
+            cantidadObjetivo: 10,
+            tiempoRecordMinPerUnit: 1,
+          },
+        ]),
+      ],
+      dayStart
+    );
+    assert.equal(dominio.bloquesDominioFluido, 1);
+    assert.equal(dominio.friccionBloques, 0);
+  });
+
+  it("inferFaseAtencional clasifica integración en el medio", () => {
+    const fase = inferFaseAtencional({
+      subsConRuta: 4,
+      bloquesDominioFluido: 2,
+      friccionBloques: 2,
+      subsConGanancia: 2,
+      gananciaTiempoSeg: 120,
+      indiceResistencia: 58,
+      fase: "entrenamiento",
+    });
+    assert.equal(fase, "integracion");
+  });
+
+  it("computeTermodinamicaCompare v1 sigue priorizando límite (legacy)", () => {
     const yesterday = buildDailySnapshot({
       fecha: "2026-05-17",
       segmentos: [],
@@ -125,5 +238,74 @@ describe("termodinamicaAtencional", () => {
     assert.equal(cmp.hasYesterday, true);
     assert.match(cmp.headline, /Profundidad superior|encima de ayer/);
     assert.equal(cmp.rows.find(r => r.key === "limite")?.delta, 2);
+  });
+
+  it("computeTermodinamicaCompareV2 premia dominio fluido, no más fricción", () => {
+    const dayStart = Date.now() - 3600_000;
+    const ruta = createRutaEnfoqueState(6);
+    ruta.activa = true;
+
+    const yesterday = buildDailySnapshot({
+      fecha: "2026-05-17",
+      segmentos: [],
+      vehicles: [
+        makeDesglosadorVehicle([
+          {
+            id: "s1",
+            titulo: "A",
+            status: "cumplido",
+            cierreAt: Date.now(),
+            rutaEnfoque: ruta,
+            rutaDeclarada: ["fluido", "concentrado", "limite"],
+          },
+        ]),
+      ],
+      dayStartMs: dayStart,
+      logs: [],
+    });
+
+    const today = buildDailySnapshot({
+      fecha: "2026-05-18",
+      segmentos: [],
+      vehicles: [
+        makeDesglosadorVehicle([
+          {
+            id: "s1",
+            titulo: "A",
+            status: "cumplido",
+            cierreAt: Date.now(),
+            rutaEnfoque: ruta,
+            rutaDeclarada: ["fluido"],
+            tiempoSugeridoSeg: 600,
+            duracionFinal: 500,
+          },
+          {
+            id: "s2",
+            titulo: "B",
+            status: "cumplido",
+            cierreAt: Date.now(),
+            rutaEnfoque: ruta,
+            rutaDeclarada: ["fluido"],
+            tiempoSugeridoSeg: 400,
+            duracionFinal: 360,
+          },
+        ]),
+      ],
+      dayStartMs: dayStart,
+      logs: [],
+    });
+
+    const cmp = computeTermodinamicaCompareV2(yesterday, today);
+    assert.equal(cmp.hasYesterday, true);
+    assert.equal(cmp.rows.find(r => r.key === "dominio_fluido")?.delta, 2);
+    assert.equal(cmp.rows.find(r => r.key === "friccion")?.delta, -1);
+    assert.ok(
+      cmp.headline.includes("dominio fluido") ||
+        cmp.headline.includes("resistencia") ||
+        cmp.estadoHoy === "dominio_fluido" ||
+        cmp.estadoHoy === "integracion"
+    );
+    const frRow = cmp.rows.find(r => r.key === "friccion");
+    assert.equal(frRow?.betterWhenHigher, false);
   });
 });

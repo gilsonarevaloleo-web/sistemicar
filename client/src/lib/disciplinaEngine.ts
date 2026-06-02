@@ -317,12 +317,9 @@ export function computeDisciplinaCompare(
 
   let motivacion: string;
   if (today.deltaMedioDesdeInicioMin != null) {
-    motivacion = `Δ medio ${today.deltaMedioDesdeInicioMin} min desde inicio programado`;
-    if (today.deltaMedioDesdePuertaMin != null) {
-      motivacion += ` · ${today.deltaMedioDesdePuertaMin} min desde puerta`;
-    }
+    motivacion = `Δ medio ${today.deltaMedioDesdeInicioMin} min hasta el primer vehículo consciente`;
   } else {
-    motivacion = "Minutos hasta entrar al trabajo (puerta atencional + ciclo).";
+    motivacion = "Disciplina operativa: cuándo entras al trabajo con vehículos (independiente de la puerta).";
   }
 
   if (deltaIndice != null && deltaIndice > 0) {

@@ -20,7 +20,9 @@ import {
 } from "./firebase";
 import { activateSovereignModeGlobal, deactivateSovereignModeGlobal, backupToLocal, restoreFromLocal } from "./sovereign-mode";
 import type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
+import type { RutaSeguimientoPatron } from "./rutaSeguimiento";
 export type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
+export type { RutaSeguimientoPatron } from "./rutaSeguimiento";
 export {
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
@@ -28,6 +30,7 @@ export {
 } from "./situacionSessionMerge";
 import { mergeActiveVehicleSessionState, isOrphanDesglosadorInterrupt } from "./situacionSessionMerge";
 import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
+import { isGhostActiveVehicle, shouldPreserveLocalActivo } from "./ghostVehicleEngine";
 import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
 import { mergePlantillasRutina } from "./plantillasRutinaMerge";
 import {
@@ -504,9 +507,15 @@ export interface SubVehiculo {
   rutaEnfoque?: RutaEnfoqueState;
   /** Bandas declaradas al cierre de esta sub (opcional). */
   rutaDeclarada?: RutaBandaId[];
+  /** Patrón elegido en «¿qué ruta seguiste?» (verdad del usuario). */
+  rutaSeguimientoPatron?: RutaSeguimientoPatron;
+  /** Cierre en segmento A con solo fluido y ganancia de tiempo. */
+  conquistaFluidezAbsoluta?: boolean;
   tipoSub?: "normal" | "interrupcion";
   /** Interrupciones efímeras no entran al buscador/historial IA. */
   excluirDeHistorial?: boolean;
+  /** PS ya sumados a la barra diaria por este sub (evita doble conteo). */
+  psOtorgados?: number;
 }
 
 export interface EnergiaOscuraEntry {
@@ -678,13 +687,13 @@ export function saveLocalVehicles(vehicles: Vehicle[]): void {
   const newClientRequestIds = new Set(
     vehicles.map(v => v.clientRequestId).filter(Boolean)
   );
+  const nowMs = Date.now();
   const preserved = current.filter(v => {
     if (v.status !== "activo" || v.autoVerdad) return false;
     if (newIds.has(v.id)) return false;
     if (v.clientRequestId && newClientRequestIds.has(v.clientRequestId)) return false;
-    // Skip preservation if THIS specific vehicle was recently closed
     if (wasVehicleRecentlyClosed(v.id)) return false;
-    return true; // locally-active vehicle absent from new data — preserve it
+    return shouldPreserveLocalActivo(v, nowMs);
   });
   if (preserved.length > 0) {
     console.warn(`[saveLocalVehicles] Preservando ${preserved.length} activo(s) no presentes en datos nuevos:`, preserved.map(v => `${v.id}:${v.titulo}`));
@@ -806,9 +815,8 @@ export async function reconcileStaleCentinelaInFirestore(userId: string): Promis
   }
 }
 
-/** Cierra vehículos conscientes activos obsoletos que bloquean al Centinela. */
+/** Cierra vehículos conscientes activos obsoletos que bloquean entropía y al Centinela. */
 export async function reconcileGhostActiveVehicles(userId: string): Promise<string[]> {
-  const { getJournalDayStartMs } = await import("./segmentTime");
   const now = Date.now();
   const dayStartMs = getJournalDayStartMs(now);
   const closedIds: string[] = [];
@@ -827,12 +835,14 @@ export async function reconcileGhostActiveVehicles(userId: string): Promise<stri
     }
   };
 
-  for (const v of getLocalVehicles()) {
-    if (v.status !== "activo" || v.autoVerdad) continue;
+  const local = getLocalVehicles();
+  const byId = new Map(local.map(v => [v.id, v]));
+
+  for (const v of local) {
     if (wasVehicleRecentlyClosed(v.id)) continue;
-    const apertura = v.aperturaAt || v.createdAt?.getTime?.() || 0;
-    const stale = apertura === 0 || apertura < dayStartMs || now - apertura > 12 * 3600_000;
-    if (stale) await closeGhost(v.id, apertura || now - 60000);
+    if (!isGhostActiveVehicle(v, now, dayStartMs, byId)) continue;
+    const apertura = v.aperturaAt || v.createdAt?.getTime?.() || now - 60000;
+    await closeGhost(v.id, apertura);
   }
 
   if (isFirebaseConfigured() && db) {
@@ -840,12 +850,13 @@ export async function reconcileGhostActiveVehicles(userId: string): Promise<stri
       const path = getPrivatePath(userId, "vehicles");
       const snap = await getDocs(collection(db, path));
       for (const d of snap.docs) {
-        const r = d.data() as { status?: string; autoVerdad?: boolean; aperturaAt?: number };
-        if (r.status !== "activo" || r.autoVerdad) continue;
+        if (closedIds.includes(d.id)) continue;
+        const r = d.data() as Vehicle;
+        const vehicle: Vehicle = { ...r, id: d.id, createdAt: r.createdAt ? new Date(r.createdAt as unknown as number) : new Date() };
         if (wasVehicleRecentlyClosed(d.id)) continue;
-        const apertura = r.aperturaAt ?? 0;
-        const stale = apertura === 0 || apertura < dayStartMs || now - apertura > 12 * 3600_000;
-        if (stale) await closeGhost(d.id, apertura || now - 60000);
+        if (!isGhostActiveVehicle(vehicle, now, dayStartMs, byId)) continue;
+        const apertura = vehicle.aperturaAt || 0;
+        await closeGhost(d.id, apertura || now - 60000);
       }
     } catch (e) {
       console.warn("[Centinela] reconcileGhostActiveVehicles Firebase:", e);
@@ -979,16 +990,13 @@ export function subscribeToVehicles(
         );
         const localActivos = existingLocal.filter(v => v.status === "activo" && !v.autoVerdad);
         const snapshotById = new Map(sortedWithSubs.map(v => [v.id, v]));
+        const nowMs = Date.now();
         const orphanedActivos = localActivos.filter(v => {
-          // Already present in Firebase snapshot by Firestore document ID
           if (firebaseIds.has(v.id)) return false;
-          // Present by clientRequestId — provisional was written to Firebase successfully;
-          // the post-write ID replacement in localStorage may not have run yet
           if (v.clientRequestId && firebaseClientRequestIds.has(v.clientRequestId)) return false;
           if (wasVehicleRecentlyClosed(v.id)) return false;
           if (isOrphanDesglosadorInterrupt(v, snapshotById)) return false;
-          // Genuinely not in Firebase — must be preserved
-          return true;
+          return shouldPreserveLocalActivo(v, nowMs);
         });
         if (orphanedActivos.length > 0) {
           console.warn(`[Vehicles] Preservando ${orphanedActivos.length} activo(s) local(es) no en Firebase:`, orphanedActivos.map(v => `${v.id}:${v.titulo}`));
@@ -4925,16 +4933,27 @@ export interface SegmentoV5 {
   psGanados: number;
   activadoAt?: number; // timestamp when activated
   cerradoAt?: number; // timestamp when closed
+  puertaTiming?: "antes_voz" | "despues_voz";
+  vozDisparadaAt?: number;
   reflexion?: string;
   centinelaEnabled?: boolean; // undefined/true = activo (backward compat); false = desactivado
   /** Hub Proyectos y Centros: proyecto o centro al que se vincula este bloque de tiempo. */
   proyectoVinculadoId?: string;
+  /** Peldaño en hub sincronizado desde planificación. */
+  proyectoPeldanoId?: string;
+  /** Rutas mentales A/B/C para imagen antes de actuar. */
+  rutasMentales?: import("./proyectos").RutasMentalesSet;
 }
 
 export interface Planilla {
   id: string;
   fecha: string; // formato "YYYY-MM-DD"
   segmentos: SegmentoV5[];
+  atencionSnapshot?: {
+    indiceAtencion: number;
+    ratioAntesVoz: number | null;
+    puertasAbiertas: number;
+  };
   createdAt: any;
   updatedAt: any;
 }

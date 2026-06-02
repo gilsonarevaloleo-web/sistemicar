@@ -203,7 +203,7 @@ export function CentinelaEngine() {
     };
 
     const localVehicles = getLocalVehicles();
-    if (localVehicles.some(v => v.status === "activo" && !v.autoVerdad)) {
+    if (isCentinelaBlockedByVehicles(localVehicles)) {
       resetTimer();
     }
 

@@ -6,6 +6,25 @@ import type { RutaCruzadaSnapshot } from "./rutaEnfoque";
 export type ProyectoEtiqueta = "proyecto" | "centro";
 export type PeldanoEstado = "idea" | "en_curso" | "conquistado";
 
+export type RutaMentalId = "a" | "b" | "c";
+
+export interface RutaMentalPaso {
+  numero: 1 | 2 | 3;
+  titulo: string;
+}
+
+export interface RutaMental {
+  id: RutaMentalId;
+  label: string;
+  perfil: "solo_fluido" | "fluido_concentrado" | "secuencia_completa";
+  pasos: RutaMentalPaso[];
+}
+
+export interface RutasMentalesSet {
+  rutaActiva: RutaMentalId;
+  rutas: Record<RutaMentalId, RutaMental>;
+}
+
 export interface ProyectoPeldanoResumen {
   subsCumplidos?: number;
   subsTotal?: number;
@@ -18,6 +37,12 @@ export interface ProyectoPeldanoResumen {
     duracionMin?: number;
   }[];
   subTareasResumen?: { texto: string; resultado?: string }[];
+  segmentoResumen?: {
+    rutaMentalActiva?: RutaMentalId;
+    rutaMentalLabel?: string;
+    faseAtencional?: string;
+    vehiculosCerrados?: number;
+  };
 }
 
 export interface ProyectoPeldano {
@@ -32,6 +57,13 @@ export interface ProyectoPeldano {
   vehicleId?: string;
   cerradoAt?: number;
   resumen?: ProyectoPeldanoResumen;
+  /** Peldaño generado desde segmento de planificación. */
+  origenSegmento?: boolean;
+  segmentoId?: string;
+  planillaFecha?: string;
+  horaInicio?: string;
+  horaFin?: string;
+  rutasMentales?: RutasMentalesSet;
   createdAt: number;
   updatedAt: number;
 }
@@ -266,6 +298,65 @@ export async function addPeldanoIdea(
   void syncFirestorePeldano(userId, peldano);
   await updateProyecto(userId, proyectoId, {});
   return peldano;
+}
+
+/** Peldaño sincronizado desde un segmento vinculado en planificación. */
+export async function upsertPeldanoDesdeSegmento(
+  userId: string,
+  params: {
+    proyectoId: string;
+    segmentoId: string;
+    planillaFecha: string;
+    titulo: string;
+    horaInicio: string;
+    horaFin: string;
+    rutasMentales: RutasMentalesSet;
+  }
+): Promise<ProyectoPeldano> {
+  const peldanos = await getPeldanosByProyecto(userId, params.proyectoId);
+  const existing = peldanos.find(
+    p =>
+      p.origenSegmento &&
+      p.segmentoId === params.segmentoId &&
+      p.planillaFecha === params.planillaFecha
+  );
+  if (existing) {
+    const updated = await updatePeldano(userId, existing.id, {
+      titulo: params.titulo,
+      horaInicio: params.horaInicio,
+      horaFin: params.horaFin,
+      rutasMentales: params.rutasMentales,
+    });
+    return updated!;
+  }
+
+  const maxOrden = peldanos.reduce((m, p) => Math.max(m, p.orden), -1);
+  const now = Date.now();
+  const peldano: ProyectoPeldano = {
+    id: `pel_seg_${now}_${Math.random().toString(36).slice(2, 6)}`,
+    proyectoId: params.proyectoId,
+    orden: maxOrden + 1,
+    titulo: params.titulo.trim(),
+    estado: "en_curso",
+    origenSegmento: true,
+    segmentoId: params.segmentoId,
+    planillaFecha: params.planillaFecha,
+    horaInicio: params.horaInicio,
+    horaFin: params.horaFin,
+    rutasMentales: params.rutasMentales,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const all = getLocalPeldanos(userId);
+  all.push(peldano);
+  saveLocalPeldanos(userId, all);
+  void syncFirestorePeldano(userId, peldano);
+  await updateProyecto(userId, params.proyectoId, {});
+  return peldano;
+}
+
+export async function refreshProyectoStatsPublic(userId: string, proyectoId: string): Promise<void> {
+  await refreshProyectoStats(userId, proyectoId);
 }
 
 export async function updatePeldano(

@@ -1,4 +1,5 @@
 import type { Planilla, SegmentoV5, Vehicle } from "./persistence.ts";
+import { hasRealActiveConsciousVehicle } from "./ghostVehicleEngine.ts";
 import {
   getJournalDayStartMs,
   isPastJournalDayStart,
@@ -134,8 +135,8 @@ export function getCentinelaSegmentGate(
   return { allowed: true, segContext: first };
 }
 
-export function isCentinelaBlockedByVehicles(vehicles: Vehicle[]): boolean {
-  return vehicles.some(v => v.status === "activo" && !v.autoVerdad);
+export function isCentinelaBlockedByVehicles(vehicles: Vehicle[], nowMs = Date.now()): boolean {
+  return hasRealActiveConsciousVehicle(vehicles, nowMs);
 }
 
 /** Cierra centinelas activos cuando hay trabajo consciente (evita entropía fantasma en el anillo). */

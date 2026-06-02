@@ -1,16 +1,59 @@
 /** Cola secuencial para speechSynthesis — evita que utterances se cancelen entre sí. */
 
-import { isSituacionAlertsEnabled, isTikSoundEnabled } from "./tikSound";
+import {
+  isDesglosadorVoiceEnabled,
+  isPuertaVozEnabled,
+  isSituacionAlertsEnabled,
+} from "./tikSound";
 
-export type UbicacionVoiceSource = "situacion" | "desglosador";
+export type UbicacionVoiceSource = "situacion" | "desglosador" | "puerta";
 
 function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
-  return isSituacionAlertsEnabled() || isTikSoundEnabled();
+  if (source === "puerta") return isPuertaVozEnabled();
+  if (source === "desglosador") return isDesglosadorVoiceEnabled();
+  return isSituacionAlertsEnabled();
 }
 
 let queue: string[] = [];
 let speaking = false;
-let warmedUp = false;
+let lastWarmupMs = 0;
+let stuckTimer: ReturnType<typeof setTimeout> | null = null;
+
+const STUCK_SPEAK_MS = 45_000;
+const WARMUP_REFRESH_MS = 20 * 60_000;
+
+function clearStuckTimer(): void {
+  if (stuckTimer) {
+    clearTimeout(stuckTimer);
+    stuckTimer = null;
+  }
+}
+
+function armStuckReset(): void {
+  clearStuckTimer();
+  stuckTimer = setTimeout(() => {
+    if (!speaking) return;
+    speaking = false;
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {
+      /* noop */
+    }
+    processQueue();
+  }, STUCK_SPEAK_MS);
+}
+
+/** Libera cola atascada (p. ej. pestaña en segundo plano). */
+export function recoverSpeechQueue(): void {
+  speaking = false;
+  clearStuckTimer();
+  try {
+    window.speechSynthesis?.cancel();
+  } catch {
+    /* noop */
+  }
+  processQueue();
+}
 
 function processQueue(): void {
   if (speaking || queue.length === 0) return;
@@ -20,28 +63,37 @@ function processQueue(): void {
   }
   const text = queue.shift()!;
   speaking = true;
+  armStuckReset();
   try {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = "es-ES";
     u.onend = () => {
       speaking = false;
+      clearStuckTimer();
       processQueue();
     };
     u.onerror = () => {
       speaking = false;
+      clearStuckTimer();
       processQueue();
     };
     window.speechSynthesis.speak(u);
   } catch {
     speaking = false;
+    clearStuckTimer();
     processQueue();
   }
 }
 
-/** Desbloquea autoplay en navegadores que lo exigen tras gesto del usuario. */
-export function warmupSpeechSynthesis(): void {
-  if (warmedUp || typeof window === "undefined" || !window.speechSynthesis) return;
-  warmedUp = true;
+/**
+ * Desbloquea TTS tras gesto del usuario.
+ * Se re-ejecuta si pasó tiempo (navegadores revocan autoplay al cabo de rato).
+ */
+export function warmupSpeechSynthesis(force = false): void {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  const now = Date.now();
+  if (!force && now - lastWarmupMs < WARMUP_REFRESH_MS) return;
+  lastWarmupMs = now;
   try {
     window.speechSynthesis.getVoices();
     const u = new SpeechSynthesisUtterance("");
@@ -64,6 +116,8 @@ export function speakUbicacionQueue(
 
   if (!isVoiceEnabledFor(source)) return;
 
+  warmupSpeechSynthesis();
+
   if (cancelPrevious) {
     try {
       window.speechSynthesis.cancel();
@@ -72,6 +126,7 @@ export function speakUbicacionQueue(
     }
     queue = [];
     speaking = false;
+    clearStuckTimer();
   }
 
   queue.push(...filtered);

@@ -1,5 +1,10 @@
 import type { FocusBandEvent, FocusBandId } from "./focusBandLedger";
 import type { SegmentoV5, SovereigntyPointsLog, SubVehiculo, Vehicle } from "./persistence";
+import { computeSubCloseVerdict } from "./desglosadorClock";
+import {
+  subDominioFluidoPorDeclaracion,
+  subFriccionPorDeclaracion,
+} from "./rutaSeguimiento";
 import { computeRutaEnfoquePS } from "./rutaEnfoque";
 import type { RutaBandaId } from "./rutaEnfoque";
 import { computeDisciplinaDia } from "./disciplinaEngine";
@@ -30,6 +35,19 @@ export interface SegmentoSnapshotResumen {
   psGanados: number;
 }
 
+/** Fase del operador según dominio fluido vs fricción (v2). */
+export type FaseAtencional = "entrenamiento" | "integracion" | "dominio_fluido";
+
+export interface ResistenciaDia {
+  subsConRuta: number;
+  bloquesDominioFluido: number;
+  friccionBloques: number;
+  subsConGanancia: number;
+  gananciaTiempoSeg: number;
+  indiceResistencia: number;
+  fase: FaseAtencional;
+}
+
 export interface PlanillaDailySnapshot {
   id: string;
   fecha: string;
@@ -44,6 +62,10 @@ export interface PlanillaDailySnapshot {
   segmentosTotales: number;
   bloquesCompletados: number;
   disciplina?: DisciplinaDia;
+  /** 2 = termodinámica con resistencia / dominio fluido */
+  schemaVersion?: 1 | 2;
+  resistencia?: ResistenciaDia;
+  estadoAtencional?: FaseAtencional;
 }
 
 const BANDA_RANK: Record<FocusBandId, number> = {
@@ -281,6 +303,128 @@ export function profundidadFromEvents(events: FocusBandEvent[]): FocusBandId {
   return max;
 }
 
+function subEnJornada(sub: SubVehiculo, vehicle: Vehicle, dayStartMs: number): boolean {
+  if (sub.status !== "cumplido") return false;
+  const subTs = sub.cierreAt || vehicle.cierreAt || vehicle.aperturaAt || 0;
+  if (vehicle.status !== "activo" && subTs < dayStartMs) return false;
+  return true;
+}
+
+/** Sub con fricción: declaración del usuario; si no hay, cruce automático / ledger. */
+export function subTuvoFriccion(
+  sub: SubVehiculo,
+  events: FocusBandEvent[],
+  dayStartMs: number
+): boolean {
+  if (sub.rutaDeclarada?.length) return subFriccionPorDeclaracion(sub);
+  const cruzado = sub.rutaEnfoque?.cruzado;
+  if (cruzado?.concentrado || cruzado?.limite) return true;
+  const subKey = sub.id;
+  for (const e of events) {
+    if (e.timestamp < dayStartMs || e.source !== "ruta_cruce") continue;
+    if (e.subVehicleId !== subKey) continue;
+    if (e.banda === "concentrado" || e.banda === "limite") return true;
+  }
+  return false;
+}
+
+export function subEnDominioFluido(
+  sub: SubVehiculo,
+  events: FocusBandEvent[],
+  dayStartMs: number
+): boolean {
+  if (!sub.rutaEnfoque?.activa || sub.status !== "cumplido") return false;
+  if (sub.rutaDeclarada?.length) return subDominioFluidoPorDeclaracion(sub);
+  return !subTuvoFriccion(sub, events, dayStartMs);
+}
+
+export function inferFaseAtencional(r: ResistenciaDia): FaseAtencional {
+  if (r.subsConRuta === 0) return "entrenamiento";
+  const dominioPct = (100 * r.bloquesDominioFluido) / r.subsConRuta;
+  const gananciaPct = (100 * r.subsConGanancia) / r.subsConRuta;
+  const friccionPct = (100 * r.friccionBloques) / r.subsConRuta;
+  if (dominioPct >= 60 && friccionPct <= 35) return "dominio_fluido";
+  if (dominioPct >= 35 || gananciaPct >= 45 || r.indiceResistencia >= 55) return "integracion";
+  return "entrenamiento";
+}
+
+export const FASE_ATENCIONAL_LABEL: Record<FaseAtencional, string> = {
+  entrenamiento: "Entrenamiento",
+  integracion: "Integración",
+  dominio_fluido: "Dominio fluido",
+};
+
+export const FASE_ATENCIONAL_COLOR: Record<FaseAtencional, string> = {
+  entrenamiento: "#94a3b8",
+  integracion: "#A855F7",
+  dominio_fluido: "#38BDF8",
+};
+
+function clampIndex(n: number): number {
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+/** Métricas v2: dominio fluido, fricción y ganancia de tiempo (desglosador tiempo + ruta). */
+export function computeResistenciaDia(
+  vehicles: Vehicle[],
+  dayStartMs: number,
+  events: FocusBandEvent[] = []
+): ResistenciaDia {
+  let subsConRuta = 0;
+  let bloquesDominioFluido = 0;
+  let friccionBloques = 0;
+  let subsConGanancia = 0;
+  let gananciaTiempoSeg = 0;
+
+  for (const v of vehicles) {
+    if (v.tipoReloj !== "desglosador") continue;
+    for (const sub of v.subVehiculos || []) {
+      if (!sub.rutaEnfoque?.activa || !subEnJornada(sub, v, dayStartMs)) continue;
+      subsConRuta++;
+      const friccion = subTuvoFriccion(sub, events, dayStartMs);
+      if (friccion) friccionBloques++;
+      else bloquesDominioFluido++;
+
+      const verdict = computeSubCloseVerdict(sub);
+      if (verdict.verdict === "gain") {
+        subsConGanancia++;
+        if (verdict.refSec != null && verdict.realSec != null) {
+          gananciaTiempoSeg += Math.max(0, verdict.refSec - verdict.realSec);
+        }
+      }
+    }
+  }
+
+  if (subsConRuta === 0) {
+    return {
+      subsConRuta: 0,
+      bloquesDominioFluido: 0,
+      friccionBloques: 0,
+      subsConGanancia: 0,
+      gananciaTiempoSeg: 0,
+      indiceResistencia: 0,
+      fase: "entrenamiento",
+    };
+  }
+
+  const dominioPct = (100 * bloquesDominioFluido) / subsConRuta;
+  const gananciaPct = (100 * subsConGanancia) / subsConRuta;
+  const friccionPct = (100 * friccionBloques) / subsConRuta;
+  const indiceResistencia = clampIndex(
+    0.5 * dominioPct + 0.4 * gananciaPct + 0.1 * (100 - friccionPct)
+  );
+  const base: ResistenciaDia = {
+    subsConRuta,
+    bloquesDominioFluido,
+    friccionBloques,
+    subsConGanancia,
+    gananciaTiempoSeg,
+    indiceResistencia,
+    fase: "entrenamiento",
+  };
+  return { ...base, fase: inferFaseAtencional({ ...base, indiceResistencia }) };
+}
+
 export function buildDailySnapshot(params: {
   fecha: string;
   segmentos: SegmentoV5[];
@@ -332,10 +476,14 @@ export function buildDailySnapshot(params: {
     dayStartMs: getLimaDayStartMs(),
   });
 
+  const resistencia = computeResistenciaDia(vehicles, dayStartMs, events);
+  const estadoAtencional = resistencia.fase;
+
   return {
     id: `snap_${fecha}_${Date.now()}`,
     fecha,
     timestamp: Date.now(),
+    schemaVersion: 2,
     segmentos: segmentos.map(s => ({
       id: s.id,
       nombre: s.nombre,
@@ -344,6 +492,8 @@ export function buildDailySnapshot(params: {
     })),
     espectroBloques,
     profundidadMaxima,
+    resistencia,
+    estadoAtencional,
     psDesglose: computePsDesglose(logs, introspeccionPs),
     ratioConquista: Math.round(ratioConquista * 100) / 100,
     segmentosCerradosManual: cerradosManual,
@@ -459,6 +609,103 @@ export function computeTermodinamicaCompare(
     profundidadAyer,
     headline,
     motivacion,
+  };
+}
+
+function resistenciaFromSnapshot(snap: PlanillaDailySnapshot): ResistenciaDia | null {
+  if (snap.resistencia && snap.schemaVersion === 2) return snap.resistencia;
+  return null;
+}
+
+export type TermodinamicaCompareV2Model = TermodinamicaCompareModel & {
+  estadoHoy: FaseAtencional;
+  estadoAyer: FaseAtencional | null;
+  indiceHoy: number;
+  indiceAyer: number | null;
+};
+
+/** Comparativa v2: dominio fluido y resistencia (no premia más fricción). */
+export function computeTermodinamicaCompareV2(
+  yesterday: PlanillaDailySnapshot | null,
+  today: PlanillaDailySnapshot
+): TermodinamicaCompareV2Model {
+  const rHoy = today.resistencia ?? resistenciaFromSnapshot(today);
+  const rAyer = yesterday ? (yesterday.resistencia ?? resistenciaFromSnapshot(yesterday)) : null;
+
+  const indiceHoy = rHoy?.indiceResistencia ?? 0;
+  const indiceAyer = rAyer?.indiceResistencia ?? null;
+  const estadoHoy = today.estadoAtencional ?? rHoy?.fase ?? "entrenamiento";
+  const estadoAyer = yesterday?.estadoAtencional ?? rAyer?.fase ?? null;
+
+  const rows: TermodinamicaCompareRow[] = [
+    compareRow(
+      "dominio_fluido",
+      "Bloques dominio fluido",
+      rHoy?.bloquesDominioFluido ?? 0,
+      rAyer?.bloquesDominioFluido ?? 0
+    ),
+    compareRow(
+      "ganancia",
+      "Subs con ganancia de tiempo",
+      rHoy?.subsConGanancia ?? 0,
+      rAyer?.subsConGanancia ?? 0
+    ),
+    compareRow(
+      "bloques",
+      "Bloques completados",
+      today.bloquesCompletados,
+      yesterday?.bloquesCompletados ?? 0
+    ),
+    compareRow(
+      "friccion",
+      "Fricción (conc/límite)",
+      rHoy?.friccionBloques ?? 0,
+      rAyer?.friccionBloques ?? 0,
+      false
+    ),
+  ];
+
+  const hasYesterday = yesterday != null;
+  let headline: string;
+  let motivacion: string;
+
+  if (!hasYesterday) {
+    headline = `${FASE_ATENCIONAL_LABEL[estadoHoy]} · índice ${indiceHoy}`;
+    motivacion = "Sella la jornada hoy para comparar resistencia mañana.";
+  } else if (indiceAyer != null && indiceHoy - indiceAyer >= 12) {
+    headline = `+${indiceHoy - indiceAyer} puntos de resistencia vs ayer`;
+    motivacion =
+      estadoHoy === "dominio_fluido"
+        ? "El fluido gana terreno — menos fricción, más ganancia de tiempo."
+        : "La secuencia pesa menos; sigue entrenando el piloto automático.";
+  } else {
+    const domRow = rows.find(r => r.key === "dominio_fluido");
+    const frRow = rows.find(r => r.key === "friccion");
+    if (domRow && domRow.delta > 0 && frRow && frRow.delta < 0) {
+      headline = "Más dominio fluido y menos fricción que ayer";
+      motivacion = FASE_ATENCIONAL_LABEL[estadoHoy];
+    } else if (indiceHoy < (indiceAyer ?? 0)) {
+      headline = "Día de más fricción — normal en la curva de aprendizaje";
+      motivacion = "Los márgenes concentrado/límite son andamiaje, no el premio final.";
+    } else {
+      headline = `Estado: ${FASE_ATENCIONAL_LABEL[estadoHoy]}`;
+      motivacion = "Compites contigo de ayer en dominio fluido y tiempo ganado.";
+    }
+  }
+
+  const legacy = computeTermodinamicaCompare(yesterday, today);
+
+  return {
+    ...legacy,
+    rows,
+    headline,
+    motivacion,
+    profundidadHoy: estadoHoy as unknown as FocusBandId,
+    profundidadAyer: estadoAyer as unknown as FocusBandId | null,
+    estadoHoy,
+    estadoAyer,
+    indiceHoy,
+    indiceAyer,
   };
 }
 

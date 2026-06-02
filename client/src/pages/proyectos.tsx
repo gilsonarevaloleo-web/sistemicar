@@ -32,6 +32,7 @@ import {
   type ProyectoEtiqueta,
 } from "@/lib/proyectos";
 import { RUTA_BANDA_META } from "@/lib/rutaEnfoque";
+import { RutasMentalesGrafo } from "@/components/RutasMentalesGrafo";
 
 const PIZARRA = "#0a0a0a";
 const CYAN = "#00FFC3";
@@ -107,6 +108,10 @@ export default function ProyectosPage() {
       peldanos
         .filter(p => p.estado === "conquistado")
         .sort((a, b) => (b.cerradoAt ?? 0) - (a.cerradoAt ?? 0)),
+    [peldanos]
+  );
+  const enCursoPlan = useMemo(
+    () => peldanos.filter(p => p.estado === "en_curso" && p.origenSegmento),
     [peldanos]
   );
 
@@ -204,6 +209,33 @@ export default function ProyectosPage() {
             className="w-full bg-transparent text-[11px] text-slate-300 placeholder:text-slate-600 resize-none min-h-[60px] focus:outline-none"
           />
         </div>
+
+        {enCursoPlan.length > 0 && (
+          <div className="mb-4">
+            <p className="text-[10px] font-black uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: CYAN }}>
+              <Clock size={12} /> Desde planificaci&oacute;n hoy
+            </p>
+            <div className="space-y-2">
+              {enCursoPlan.map(pel => (
+                <div
+                  key={pel.id}
+                  className="p-3 rounded-xl border"
+                  style={{ borderColor: `${CYAN}30`, backgroundColor: "rgba(0,255,195,0.04)" }}
+                >
+                  <p className="text-sm font-bold text-white">{pel.titulo}</p>
+                  <p className="text-[8px] text-slate-500 mt-0.5">
+                    {pel.horaInicio} – {pel.horaFin} · opera en Planificaci&oacute;n
+                  </p>
+                  {pel.rutasMentales && (
+                    <div className="mt-2 pt-2 border-t border-white/5">
+                      <RutasMentalesGrafo rutas={pel.rutasMentales} compact />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="mb-4">
           <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: CYAN }}>
@@ -315,15 +347,26 @@ export default function ProyectosPage() {
                     )}
                   </button>
                   <AnimatePresence>
-                    {expandedConq === pel.id && pel.resumen && (
+                    {expandedConq === pel.id && (
                       <motion.div
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         className="overflow-hidden border-t border-white/5"
                       >
-                        <div className="p-3 text-[10px] text-slate-400 space-y-1">
-                          {pel.resumen.subsCumplidos != null && (
+                        <div className="p-3 text-[10px] text-slate-400 space-y-2">
+                          {pel.rutasMentales && (
+                            <RutasMentalesGrafo rutas={pel.rutasMentales} compact />
+                          )}
+                          {pel.resumen?.segmentoResumen?.rutaMentalLabel && (
+                            <p className="text-[9px]" style={{ color: CYAN }}>
+                              Ruta: {pel.resumen.segmentoResumen.rutaMentalLabel}
+                              {pel.resumen.segmentoResumen.faseAtencional
+                                ? ` · ${pel.resumen.segmentoResumen.faseAtencional}`
+                                : ""}
+                            </p>
+                          )}
+                          {pel.resumen?.subsCumplidos != null && (
                             <p>
                               Bloques: {pel.resumen.subsCumplidos}/{pel.resumen.subsTotal} �{" "}
                               {pel.resumen.duracionMin ?? 0} min � {pel.resumen.psGanados ?? 0} PS
@@ -334,7 +377,7 @@ export default function ProyectosPage() {
                               ? {s.titulo} ({s.status})
                             </p>
                           ))}
-                          {pel.resumen.subTareasResumen?.map((s, j) => (
+                          {pel.resumen?.subTareasResumen?.map((s, j) => (
                             <p key={j} className="pl-2 text-slate-500">
                               ? {s.texto} ({s.resultado ?? "�"})
                             </p>
