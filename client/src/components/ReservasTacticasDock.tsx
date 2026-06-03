@@ -68,6 +68,8 @@ export default function ReservasTacticasDock({
     try {
       await onQuickAdd(texto, rutaDraft);
       setDraft("");
+    } catch {
+      // El padre muestra toast; mantener draft para reintentar
     } finally {
       setAdding(false);
     }
@@ -157,11 +159,13 @@ export default function ReservasTacticasDock({
                   type="button"
                   disabled={!draft.trim() || adding}
                   onClick={() => void submitQuickAdd()}
-                  className="px-2.5 py-2 rounded-lg border flex items-center justify-center disabled:opacity-40"
+                  className="px-2.5 py-2 rounded-lg border flex items-center justify-center gap-1 disabled:opacity-40 min-w-[4.5rem]"
                   style={{ borderColor: `${colors.plata}40`, backgroundColor: `${colors.plata}12`, color: colors.plata }}
                   data-testid="reserva-tactica-add"
+                  aria-label="Guardar reserva táctica"
                 >
                   <Plus size={14} />
+                  <span className="text-[8px] font-black uppercase">{adding ? "…" : "Guardar"}</span>
                 </button>
               </div>
 

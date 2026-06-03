@@ -122,8 +122,66 @@ function getAllLocalReserva(): SituacionReservaItem[] {
 }
 
 function saveAllLocalReserva(items: SituacionReservaItem[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  } catch (err) {
+    const isQuota =
+      err &&
+      typeof err === "object" &&
+      ((err as { name?: string }).name === "QuotaExceededError" ||
+        (err as { code?: number }).code === 22);
+    if (isQuota) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, 200)));
+    } else {
+      throw err;
+    }
+  }
   window.dispatchEvent(new CustomEvent(SITUACION_RESERVA_EVENT));
+}
+
+/** Conserva reservas locales aún no reflejadas en Firebase (evita que onSnapshot las borre). */
+function mergeReservaRemoteWithLocalPending(
+  userId: string,
+  remote: SituacionReservaItem[]
+): SituacionReservaItem[] {
+  const remoteIds = new Set(remote.map(r => r.id));
+  const now = Date.now();
+  const pendingMs = 5 * 60 * 1000;
+  const localPending = getLocalSituacionReserva(userId).filter(
+    i =>
+      i.estado === "activa" &&
+      !remoteIds.has(i.id) &&
+      (i.id.startsWith("reserva_") || now - (i.reservadaAt ?? 0) < pendingMs)
+  );
+  return sortReservasTacticas([...remote, ...localPending]);
+}
+
+function buildFirestoreReservaPayload(
+  userId: string,
+  payload: {
+    texto: string;
+    reservadaAt: number;
+    ruta: ReservaTacticaRuta;
+    origenVehiculoTitulo?: string | null;
+    origenVehiculoId?: string | null;
+    minutosCupo?: number | null;
+    detalles?: DetalleSubTarea[] | null;
+    estado: string;
+  }
+): Record<string, unknown> {
+  const doc: Record<string, unknown> = {
+    texto: payload.texto,
+    reservadaAt: payload.reservadaAt,
+    ruta: payload.ruta,
+    userId,
+    estado: payload.estado,
+    createdAt: serverTimestamp(),
+  };
+  if (payload.origenVehiculoTitulo) doc.origenVehiculoTitulo = payload.origenVehiculoTitulo;
+  if (payload.origenVehiculoId) doc.origenVehiculoId = payload.origenVehiculoId;
+  if (payload.minutosCupo != null && payload.minutosCupo > 0) doc.minutosCupo = payload.minutosCupo;
+  if (payload.detalles?.length) doc.detalles = payload.detalles;
+  return doc;
 }
 
 export function getLocalSituacionReserva(userId: string): SituacionReservaItem[] {
@@ -164,12 +222,12 @@ export function subscribeToSituacionReserva(
             retomadaEnVehiculoId: row.retomadaEnVehiculoId,
           });
         });
-        const sorted = sortReservasTacticas(data);
+        const merged = mergeReservaRemoteWithLocalPending(userId, data);
         deactivateSovereignModeGlobal();
         const others = getAllLocalReserva().filter(i => i.userId !== userId);
-        saveAllLocalReserva([...others, ...sorted]);
-        backupToLocal("situacionReserva", sorted);
-        onData(sorted);
+        saveAllLocalReserva([...others, ...merged]);
+        backupToLocal("situacionReserva", merged);
+        onData(merged);
       },
       error => {
         console.error("Firebase SituacionReserva Error:", error);
@@ -195,51 +253,54 @@ export type NuevaSituacionReserva = Omit<SituacionReservaItem, "id" | "userId" |
 
 export async function addSituacionReserva(userId: string, item: NuevaSituacionReserva): Promise<string> {
   const ruta = item.ruta ?? inferRutaFromRow(item);
-  const payload = {
-    texto: item.texto,
-    reservadaAt: Date.now(),
+  const reservadaAt = Date.now();
+  const estado = (item.estado ?? "activa") as SituacionReservaEstado;
+  const tempId = `reserva_${reservadaAt}_${Math.random().toString(36).slice(2, 6)}`;
+
+  const created: SituacionReservaItem = {
+    id: tempId,
+    userId,
+    texto: item.texto.trim(),
+    reservadaAt,
     ruta,
-    origenVehiculoTitulo: item.origenVehiculoTitulo ?? null,
-    origenVehiculoId: item.origenVehiculoId ?? null,
-    minutosCupo: item.minutosCupo ?? null,
-    detalles: item.detalles ?? null,
-    estado: item.estado ?? "activa",
+    estado,
+    ...(item.origenVehiculoTitulo ? { origenVehiculoTitulo: item.origenVehiculoTitulo } : {}),
+    ...(item.origenVehiculoId ? { origenVehiculoId: item.origenVehiculoId } : {}),
+    ...(item.minutosCupo != null && item.minutosCupo > 0 ? { minutosCupo: item.minutosCupo } : {}),
+    ...(item.detalles?.length ? { detalles: item.detalles } : {}),
   };
 
+  const withoutDup = getAllLocalReserva().filter(i => i.id !== tempId);
+  saveAllLocalReserva([created, ...withoutDup]);
+
   if (isFirebaseConfigured() && db) {
-    const path = getPrivatePath(userId, "situacionReserva");
-    const docRef = await addDoc(collection(db, path), {
-      ...payload,
-      userId,
-      createdAt: serverTimestamp(),
-    });
-    const created: SituacionReservaItem = {
-      id: docRef.id,
-      userId,
-      texto: payload.texto,
-      reservadaAt: payload.reservadaAt,
-      ruta: payload.ruta,
-      ...(item.origenVehiculoTitulo ? { origenVehiculoTitulo: item.origenVehiculoTitulo } : {}),
-      ...(item.origenVehiculoId ? { origenVehiculoId: item.origenVehiculoId } : {}),
-      ...(item.minutosCupo != null && item.minutosCupo > 0 ? { minutosCupo: item.minutosCupo } : {}),
-      ...(item.detalles?.length ? { detalles: item.detalles } : {}),
-      estado: payload.estado as SituacionReservaEstado,
-    };
-    const withoutDup = getAllLocalReserva().filter(i => i.id !== docRef.id);
-    saveAllLocalReserva([created, ...withoutDup]);
-    return docRef.id;
+    try {
+      const path = getPrivatePath(userId, "situacionReserva");
+      const docRef = await addDoc(
+        collection(db, path),
+        buildFirestoreReservaPayload(userId, {
+          texto: created.texto,
+          reservadaAt,
+          ruta,
+          origenVehiculoTitulo: item.origenVehiculoTitulo ?? null,
+          origenVehiculoId: item.origenVehiculoId ?? null,
+          minutosCupo: item.minutosCupo ?? null,
+          detalles: item.detalles ?? null,
+          estado,
+        })
+      );
+      const withFirebaseId = getAllLocalReserva().map(i =>
+        i.id === tempId && i.userId === userId ? { ...i, id: docRef.id } : i
+      );
+      saveAllLocalReserva(withFirebaseId);
+      return docRef.id;
+    } catch (error) {
+      console.error("[addSituacionReserva] Firebase falló; reserva quedó en local:", error);
+      return tempId;
+    }
   }
 
-  const id = `reserva_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const all = getAllLocalReserva();
-  all.unshift({
-    id,
-    userId,
-    ...payload,
-    estado: payload.estado as SituacionReservaEstado,
-  });
-  saveAllLocalReserva(all);
-  return id;
+  return tempId;
 }
 
 export async function updateSituacionReservaEstado(
@@ -280,11 +341,16 @@ export async function updateSituacionReservaRuta(
 }
 
 export async function deleteSituacionReserva(userId: string, reservaId: string): Promise<void> {
-  if (isFirebaseConfigured() && db) {
-    const path = getPrivatePath(userId, "situacionReserva");
-    await deleteDoc(doc(db, path, reservaId));
-    return;
-  }
+  saveAllLocalReserva(
+    getAllLocalReserva().filter(i => !(i.id === reservaId && i.userId === userId))
+  );
 
-  saveAllLocalReserva(getAllLocalReserva().filter(i => !(i.id === reservaId && i.userId === userId)));
+  if (isFirebaseConfigured() && db && !reservaId.startsWith("reserva_")) {
+    try {
+      const path = getPrivatePath(userId, "situacionReserva");
+      await deleteDoc(doc(db, path, reservaId));
+    } catch (error) {
+      console.error("[deleteSituacionReserva] Firebase:", error);
+    }
+  }
 }

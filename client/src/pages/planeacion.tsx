@@ -243,6 +243,7 @@ import {
   addSituacionReserva,
   deleteSituacionReserva,
   getReservaActivas,
+  RUTA_TACTICA_META,
   subscribeToSituacionReserva,
   updateSituacionReservaEstado,
   updateSituacionReservaRuta,
@@ -4148,17 +4149,26 @@ export default function Planeacion() {
   }, [vehicles, expandedId]);
 
   const handleReservaTacticaQuickAdd = async (texto: string, ruta: ReservaTacticaRuta) => {
-    if (!user) return;
+    if (!user) {
+      toast.error("Inicia sesión para guardar reservas");
+      throw new Error("no-user");
+    }
+    const trimmed = texto.trim();
+    if (!trimmed) return;
     try {
-      await addSituacionReserva(user.uid, { texto, ruta });
-      toast.info("Reserva táctica guardada", {
-        description: texto.length > 48 ? `${texto.slice(0, 48)}…` : texto,
+      await addSituacionReserva(user.uid, { texto: trimmed, ruta });
+      toast.success("Reserva táctica guardada", {
+        description: `[${RUTA_TACTICA_META[ruta].short}] ${trimmed.length > 48 ? `${trimmed.slice(0, 48)}…` : trimmed}`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
-        duration: 2200,
+        duration: 2800,
       });
     } catch (e) {
       console.error("[handleReservaTacticaQuickAdd]", e);
-      toast.error("No se pudo guardar la reserva");
+      toast.error("No se pudo guardar la reserva", {
+        description: "Quedó intento local; revisa conexión y pulsa Guardar otra vez.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
+      throw e;
     }
   };
 
