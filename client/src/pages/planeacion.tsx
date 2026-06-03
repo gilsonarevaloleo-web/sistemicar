@@ -4664,12 +4664,14 @@ export default function Planeacion() {
           </motion.div>
         )}
 
-        {compactLayout && (
-          <PlanificacionCockpit
+        <PlanificacionCockpit
             compact={compactLayout}
             onToggleCompact={() => setPlanLayout(v => (v === "compact" ? "full" : "compact"))}
             tab={planTab}
-            onTabChange={setPlanTab}
+            onTabChange={(tab) => {
+              setPlanTab(tab);
+              if (planLayout === "full") setPlanLayout("compact");
+            }}
             psLine={(
               <p className="text-[10px] font-black tabular-nums" style={{ color: CYAN }} data-testid="cockpit-ps-line">
                 {dailyPsBar.todayPs} PS · {dailyPsBar.pctOfReference}%
@@ -4704,7 +4706,6 @@ export default function Planeacion() {
               )
             )}
           />
-        )}
 
         {/* MONITOR DE ESTADOS */}
         {(planLayout === "full" || planTab === "meta") && monitorState && (

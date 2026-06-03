@@ -58,25 +58,27 @@ export default function PlanificacionCockpit({
           </button>
         </div>
 
-        <div className="mt-2 flex items-center gap-2">
-          <div className="shrink-0">{anillo}</div>
-          <div className="min-w-0 flex-1">{segmentoChip}</div>
-        </div>
+        {compact && (
+          <div className="mt-2 flex items-center gap-2">
+            <div className="shrink-0">{anillo}</div>
+            <div className="min-w-0 flex-1">{segmentoChip}</div>
+          </div>
+        )}
 
-        <div className="mt-2 flex gap-1.5">
+        <div className={`flex gap-1.5 ${compact ? "mt-2" : "mt-1.5"}`}>
           <button
             type="button"
             onClick={() => onTabChange("operar")}
             className="flex-1 rounded-xl border px-2 py-2"
             style={{
-              borderColor: tab === "operar" ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.08)",
-              backgroundColor: tab === "operar" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.18)",
+              borderColor: tab === "operar" ? "rgba(16,185,129,0.45)" : "rgba(255,255,255,0.08)",
+              backgroundColor: tab === "operar" ? "rgba(16,185,129,0.12)" : "rgba(0,0,0,0.18)",
             }}
             data-testid="plan-tab-operar"
           >
             <span className="inline-flex items-center gap-1.5 justify-center w-full">
-              <Layers size={12} className="text-slate-400" />
-              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Operar</span>
+              <Layers size={12} style={{ color: tab === "operar" ? "#10b981" : "#94a3b8" }} />
+              <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: tab === "operar" ? "#10b981" : "#94a3b8" }}>Operar</span>
             </span>
           </button>
           <button
@@ -84,14 +86,14 @@ export default function PlanificacionCockpit({
             onClick={() => onTabChange("metricas")}
             className="flex-1 rounded-xl border px-2 py-2"
             style={{
-              borderColor: tab === "metricas" ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.08)",
-              backgroundColor: tab === "metricas" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.18)",
+              borderColor: tab === "metricas" ? "rgba(56,189,248,0.45)" : "rgba(255,255,255,0.08)",
+              backgroundColor: tab === "metricas" ? "rgba(56,189,248,0.12)" : "rgba(0,0,0,0.18)",
             }}
             data-testid="plan-tab-metricas"
           >
             <span className="inline-flex items-center gap-1.5 justify-center w-full">
-              <Target size={12} className="text-slate-400" />
-              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Métricas</span>
+              <Target size={12} style={{ color: tab === "metricas" ? "#38bdf8" : "#94a3b8" }} />
+              <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: tab === "metricas" ? "#38bdf8" : "#94a3b8" }}>Métricas</span>
             </span>
           </button>
           <button
@@ -99,12 +101,12 @@ export default function PlanificacionCockpit({
             onClick={() => onTabChange("meta")}
             className="flex-1 rounded-xl border px-2 py-2"
             style={{
-              borderColor: tab === "meta" ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.08)",
-              backgroundColor: tab === "meta" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.18)",
+              borderColor: tab === "meta" ? "rgba(212,175,55,0.45)" : "rgba(255,255,255,0.08)",
+              backgroundColor: tab === "meta" ? "rgba(212,175,55,0.12)" : "rgba(0,0,0,0.18)",
             }}
             data-testid="plan-tab-meta"
           >
-            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Meta</span>
+            <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: tab === "meta" ? "#d4af37" : "#94a3b8" }}>Meta</span>
           </button>
         </div>
       </div>
