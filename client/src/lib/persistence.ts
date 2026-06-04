@@ -5149,12 +5149,66 @@ export async function addSegmentoToPlanilla(userId: string, segmento: SegmentoV5
   return planilla;
 }
 
-export async function updateSegmentoInPlanilla(userId: string, segmentoId: string, updates: Partial<SegmentoV5>): Promise<Planilla> {
-  const planilla = await getPlanillaHoy(userId);
+const SEGMENT_STATE_RANK: Record<SegmentoV5["estado"], number> = {
+  pendiente: 0,
+  activo: 1,
+  cerrado_manual: 2,
+  entropia: 3,
+};
+
+/** Evita que snapshots de Firebase viejos reviertan una puerta recién abierta en local. */
+export function mergePlanillaSegmentosWithLocal(
+  firebaseSegmentos: SegmentoV5[],
+  localSegmentos: SegmentoV5[] | undefined,
+  nowMs = Date.now()
+): SegmentoV5[] {
+  if (!localSegmentos?.length) return firebaseSegmentos;
+  if (!firebaseSegmentos.length) return localSegmentos;
+
+  const localById = new Map(localSegmentos.map(s => [s.id, s]));
+  const merged = firebaseSegmentos.map(fbSeg => {
+    const local = localById.get(fbSeg.id);
+    if (!local) return fbSeg;
+
+    const fbRank = SEGMENT_STATE_RANK[fbSeg.estado] ?? 0;
+    const locRank = SEGMENT_STATE_RANK[local.estado] ?? 0;
+    const pickLocal =
+      locRank > fbRank ||
+      (local.psGanados ?? 0) > (fbSeg.psGanados ?? 0) ||
+      (local.activadoAt != null && fbSeg.activadoAt == null) ||
+      (fbSeg.estado === "pendiente" &&
+        local.estado === "activo" &&
+        local.activadoAt != null &&
+        nowMs - local.activadoAt < 120_000);
+
+    if (pickLocal) {
+      return {
+        ...fbSeg,
+        ...local,
+        eventos: (local.eventos?.length ?? 0) >= (fbSeg.eventos?.length ?? 0) ? local.eventos : fbSeg.eventos,
+      };
+    }
+    return fbSeg;
+  });
+
+  const fbIds = new Set(firebaseSegmentos.map(s => s.id));
+  const extras = localSegmentos.filter(s => !fbIds.has(s.id));
+  return extras.length > 0 ? [...merged, ...extras] : merged;
+}
+
+export async function updateSegmentoInPlanilla(
+  userId: string,
+  segmentoId: string,
+  updates: Partial<SegmentoV5>,
+  basePlanilla?: Planilla
+): Promise<Planilla> {
+  const planilla = basePlanilla ?? (await getPlanillaHoy(userId));
   const idx = planilla.segmentos.findIndex(s => s.id === segmentoId);
-  if (idx !== -1) {
-    planilla.segmentos[idx] = { ...planilla.segmentos[idx], ...updates };
+  if (idx === -1) {
+    console.warn("[updateSegmentoInPlanilla] Segmento no encontrado:", segmentoId);
+    return planilla;
   }
+  planilla.segmentos[idx] = { ...planilla.segmentos[idx], ...updates };
   await savePlanilla(userId, planilla);
   return planilla;
 }
@@ -5194,7 +5248,7 @@ export function subscribeToPlanilla(
         const segmentos =
           fbSegmentos.length === 0 && (localPlanilla?.segmentos.length ?? 0) > 0
             ? localPlanilla!.segmentos
-            : fbSegmentos;
+            : mergePlanillaSegmentosWithLocal(fbSegmentos, localPlanilla?.segmentos);
         const planilla: Planilla = {
           id: snapshot.docs[0].id,
           fecha: data.fecha,

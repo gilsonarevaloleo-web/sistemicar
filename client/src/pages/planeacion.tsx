@@ -1170,6 +1170,7 @@ export default function Planeacion() {
   const [closedSegmentDuration, setClosedSegmentDuration] = useState(0);
   const [closedSegmentName, setClosedSegmentName] = useState("");
   const [segmentTick, setSegmentTick] = useState(0);
+  const [activandoSegId, setActivandoSegId] = useState<string | null>(null);
   const [showCierreJornada, setShowCierreJornada] = useState(false);
   const [todayCierreJornada, setTodayCierreJornada] = useState<CierreJornadaLog | null>(null);
   const [cierreEnergiaPending, setCierreEnergiaPending] = useState<CierreEnergiaModalPayload | null>(null);
@@ -1825,8 +1826,12 @@ export default function Planeacion() {
     };
 
     const interval = setInterval(checkPuertaAtencion, 30000);
+    const tickFast = setInterval(() => setSegmentTick(t => t + 1), 15_000);
     checkPuertaAtencion();
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearInterval(tickFast);
+    };
   }, [user, planilla]);
 
   useEffect(() => {
@@ -2659,11 +2664,28 @@ export default function Planeacion() {
   };
 
   const activarSegmento = async (segId: string) => {
-    if (!user || !planilla) return;
+    if (!user) {
+      toast.error("Inicia sesión para abrir la puerta");
+      return;
+    }
+    if (!planilla) {
+      toast.error("No hay planilla del día cargada");
+      return;
+    }
+    if (activandoSegId) return;
     const seg = planilla.segmentos.find(s => s.id === segId);
-    if (!seg) return;
+    if (!seg) {
+      toast.error("Segmento no encontrado");
+      return;
+    }
+    if (seg.estado !== "pendiente") {
+      toast.info("Este segmento ya no está pendiente", {
+        description: seg.estado === "activo" ? "La puerta ya fue abierta." : `Estado: ${seg.estado}`,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
+      });
+      return;
+    }
     const nowMs = Date.now();
-    // HH:mm de segmentos anclado a medianoche Lima (igual que UI y checkPuertaAtencion)
     const dayStart = getLimaDayStartMs(nowMs);
     if (!isWithinPuertaWindow(nowMs, seg.horaInicio, dayStart)) {
       toast.warning("Ventana de puerta cerrada", {
@@ -2674,21 +2696,61 @@ export default function Planeacion() {
       return;
     }
     const puertaTiming = classifyPuertaTiming(nowMs, seg.horaInicio, dayStart);
-    const updated = await updateSegmentoInPlanilla(user.uid, segId, {
-      estado: "activo",
+    const patch = {
+      estado: "activo" as const,
       activadoAt: nowMs,
       puertaTiming,
-      psGanados: (seg.psGanados || 0) + 2
-    });
-    setPlanilla(updated);
-    const ok = await safeAwardPS(2, "Puerta de atención: " + seg.nombre);
-    const timingLabel = puertaTiming === "antes_voz" ? "antes de la voz" : "tras la voz";
-    toast.success("+2 PS Puerta de atención abierta", {
-      description: `${seg.nombre} · ${timingLabel}`,
-      style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD }
-    });
-    if (ok) toastDailyPSTotal();
-    registrarEvento(COMPONENTES.PLANIFICACION);
+      psGanados: (seg.psGanados || 0) + 2,
+    };
+    setActivandoSegId(segId);
+    setPlanilla(prev =>
+      prev
+        ? {
+            ...prev,
+            segmentos: prev.segmentos.map(s => (s.id === segId ? { ...s, ...patch } : s)),
+          }
+        : prev
+    );
+    setSegmentTick(t => t + 1);
+    try {
+      const updated = await updateSegmentoInPlanilla(user.uid, segId, patch, planilla);
+      setPlanilla(updated);
+      const ok = await safeAwardPS(2, "Puerta de atención: " + seg.nombre);
+      const timingLabel = puertaTiming === "antes_voz" ? "antes de la voz" : "tras la voz";
+      toast.success("+2 PS Puerta de atención abierta", {
+        description: `${seg.nombre} · ${timingLabel}`,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
+      });
+      if (ok) toastDailyPSTotal();
+      registrarEvento(COMPONENTES.PLANIFICACION);
+    } catch (err) {
+      console.error("[activarSegmento]", err);
+      setPlanilla(prev =>
+        prev
+          ? {
+              ...prev,
+              segmentos: prev.segmentos.map(s =>
+                s.id === segId
+                  ? {
+                      ...s,
+                      estado: "pendiente" as const,
+                      activadoAt: undefined,
+                      puertaTiming: undefined,
+                      psGanados: seg.psGanados || 0,
+                    }
+                  : s
+              ),
+            }
+          : prev
+      );
+      toast.error("No se pudo abrir la puerta", {
+        description: "Revisa la conexión e intenta de nuevo en unos segundos.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5000,
+      });
+    } finally {
+      setActivandoSegId(null);
+    }
   };
 
   const cerrarSegmentoManual = async (segId: string) => {
@@ -6342,6 +6404,7 @@ export default function Planeacion() {
                   {planilla && planilla.segmentos.length > 0 ? (
                     <div className="space-y-2">
                       {planilla.segmentos.map((seg) => {
+                        void segmentTick;
                         const isActive = seg.estado === "activo";
                         const isEntropia = seg.estado === "entropia";
                         const isClosedManual = seg.estado === "cerrado_manual";
@@ -6479,11 +6542,14 @@ export default function Planeacion() {
                                 {isPendiente &&
                                   (activarVentanaAbierta ? (
                                     <button
-                                      onClick={() => activarSegmento(seg.id)}
-                                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-violet-900/50 text-violet-300/95 bg-violet-950/25 hover:bg-violet-950/40"
+                                      type="button"
+                                      disabled={activandoSegId === seg.id}
+                                      onClick={() => void activarSegmento(seg.id)}
+                                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-violet-900/50 text-violet-300/95 bg-violet-950/25 hover:bg-violet-950/40 disabled:opacity-50"
                                       data-testid={`button-start-segment-${seg.id}`}
                                     >
-                                      <Play size={10} /> Abrir puerta (+2 PS)
+                                      <Play size={10} />
+                                      {activandoSegId === seg.id ? "Abriendo…" : "Abrir puerta (+2 PS)"}
                                     </button>
                                   ) : (
                                     <span
