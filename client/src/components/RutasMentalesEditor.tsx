@@ -1,4 +1,4 @@
-import type { RutaMentalId, RutasMentalesSet } from "@/lib/proyectos";
+import type { ProyectoEtiqueta, RutaMentalId, RutasMentalesSet } from "@/lib/proyectos";
 import { RutasMentalesGrafo } from "./RutasMentalesGrafo";
 
 const RUTA_COLOR: Record<RutaMentalId, string> = {
@@ -10,10 +10,13 @@ const RUTA_COLOR: Record<RutaMentalId, string> = {
 type Props = {
   rutas: RutasMentalesSet;
   onChange: (next: RutasMentalesSet) => void;
+  etiqueta?: ProyectoEtiqueta;
+  /** true = edición en Hub (fuente de verdad); false = ajuste solo del bloque de hoy */
+  desdeProyecto?: boolean;
 };
 
-/** Editor compacto: elige ruta A/B/C y ajusta pasos 2 y 3 (imagen mental). */
-export function RutasMentalesEditor({ rutas, onChange }: Props) {
+/** Editor compacto: claridad mental A/B/C (no pasos biológicos del desglosador). */
+export function RutasMentalesEditor({ rutas, onChange, etiqueta = "proyecto", desdeProyecto = false }: Props) {
   const activa = rutas.rutas[rutas.rutaActiva];
 
   const setRutaActiva = (id: RutaMentalId) => {
@@ -36,10 +39,13 @@ export function RutasMentalesEditor({ rutas, onChange }: Props) {
     >
       <div>
         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">
-          Rutas mentales · imagen antes de actuar
+          {desdeProyecto ? "Dirección de claridad (Hub)" : "Claridad de este bloque (hoy)"}
         </p>
         <p className="text-[8px] text-slate-600 mt-0.5 leading-relaxed">
-          Elige la profundidad que quieres visualizar. Paso 1 = ahora; 2 y 3 = horizonte cercano.
+          {etiqueta === "centro"
+            ? "Centro = deber por circunstancia. Paso 1 = este bloque; 2 y 3 = cierre y handoff."
+            : "Proyecto = lo que eliges crecer. Paso 1 = este bloque; 2 y 3 = entrega y oleada."}
+          {!desdeProyecto && " La rutina no guarda pasos: se leen del proyecto al cargar el día."}
         </p>
       </div>
 

@@ -1,26 +1,34 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  buildDefaultRutasMentales,
+  buildDefaultClaridadDireccion,
   countSegmentosListosParaSellar,
-  refreshRutasTituloBase,
+  refreshClaridadPaso1,
 } from "./segmentoPeldanoBridge.ts";
 import type { SegmentoV5 } from "./persistence.ts";
 
 describe("segmentoPeldanoBridge", () => {
-  it("buildDefaultRutasMentales crea A/B/C con 3 pasos", () => {
-    const r = buildDefaultRutasMentales("Costura AM");
+  it("buildDefaultClaridadDireccion crea A/B/C con 3 pasos de claridad", () => {
+    const r = buildDefaultClaridadDireccion({
+      tituloProyecto: "Costura",
+      etiqueta: "centro",
+      segmentoNombre: "Costura AM",
+    });
     assert.equal(r.rutaActiva, "a");
     assert.equal(r.rutas.a.pasos.length, 3);
-    assert.match(r.rutas.a.pasos[0].titulo, /Costura AM/);
-    assert.equal(r.rutas.b.perfil, "fluido_concentrado");
-    assert.equal(r.rutas.c.perfil, "secuencia_completa");
+    assert.match(r.rutas.a.pasos[0].titulo, /Costura AM|debo cumplir/i);
+    assert.equal(r.rutas.b.perfil, "media");
+    assert.equal(r.rutas.c.perfil, "profunda");
   });
 
-  it("refreshRutasTituloBase actualiza paso 1", () => {
-    const base = buildDefaultRutasMentales("A");
-    const next = refreshRutasTituloBase(base, "Bloque PM");
-    assert.match(next.rutas.a.pasos[0].titulo, /Bloque PM/);
+  it("refreshClaridadPaso1 actualiza paso 1", () => {
+    const base = buildDefaultClaridadDireccion({
+      tituloProyecto: "P",
+      etiqueta: "proyecto",
+      segmentoNombre: "A",
+    });
+    const next = refreshClaridadPaso1(base, "Bloque PM", "Oleada", "proyecto");
+    assert.match(next.rutas.a.pasos[0].titulo, /Bloque PM|Oleada/i);
     assert.equal(next.rutas.a.pasos[1].titulo, base.rutas.a.pasos[1].titulo);
   });
 

@@ -80,8 +80,10 @@ export default function VendedoresPlanificacion() {
             <DollarSign size={16} style={{ color: GOLD }} />
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">Comisiùn</h2>
           </div>
-          <p className="text-sm text-white font-bold">{Math.round(SELLER_COMMISSION_RATE * 100)}% del primer pago</p>
-          <p className="text-[11px] text-slate-500 mt-1">MercadoPago con tu link ù Yape/PayPal vùa WhatsApp a Gilson</p>
+          <p className="text-sm text-white font-bold">{Math.round(SELLER_COMMISSION_RATE * 100)}% cada mes que el cliente pague</p>
+          <p className="text-[11px] text-slate-500 mt-1">
+            Recurrente en suscripciones. Si el usuario cancela, deja de generarse comisiÛn. MercadoPago con tu link; Yape/PayPal vÌa Gilson.
+          </p>
         </section>
 
         {/* Stacks */}
@@ -94,7 +96,7 @@ export default function VendedoresPlanificacion() {
                 <p className="text-[10px] text-slate-500 mb-2">{s.modules}</p>
                 <p className="text-lg font-black" style={{ color: GOLD }}>~${s.total.toFixed(2)}<span className="text-xs text-slate-500 font-normal">/mes</span></p>
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">{s.desc}</p>
-                <p className="text-[9px] text-emerald-400/80 mt-2">Comisiùn ejemplo 1er mes: ~${s.comisionEjemplo.toFixed(2)}</p>
+                <p className="text-[9px] text-emerald-400/80 mt-2">Comisiùn ~${s.comisionEjemplo.toFixed(2)}/mes mientras renueve</p>
               </div>
             ))}
           </div>
@@ -112,7 +114,10 @@ export default function VendedoresPlanificacion() {
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="font-black" style={{ color: p.color }}>${p.price}<span className="text-[10px] text-slate-500">{p.period === "/mes" ? "/mes" : ""}</span></p>
-                  <p className="text-[9px] text-emerald-400">Comisiùn ${p.comision.toFixed(2)}</p>
+                  <p className="text-[9px] text-emerald-400">
+                    Comisiùn ${p.comision.toFixed(2)}
+                    {p.period === "/mes" ? "/mes" : " (˙nico)"}
+                  </p>
                 </div>
               </div>
             ))}
@@ -160,7 +165,7 @@ export default function VendedoresPlanificacion() {
         {/* Acciones */}
         <div className="flex flex-col sm:flex-row gap-3">
           <a
-            href="/docs/KIT_Vendedores_Planificacion.md"
+            href="/docs/KIT_VENDEDORES_PLANIFICACION.md"
             download
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-white/10 text-sm text-slate-300 hover:bg-white/5"
           >

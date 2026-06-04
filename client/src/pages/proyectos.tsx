@@ -27,12 +27,22 @@ import {
   computeProyectoStats,
   subscribeToProyectos,
   buildLaunchUrl,
+  updateProyectoClaridadActiva,
+  setOleadaComoDireccion,
   type Proyecto,
   type ProyectoPeldano,
   type ProyectoEtiqueta,
 } from "@/lib/proyectos";
+import {
+  buildDefaultClaridadDireccion,
+  getOleadaEnCurso,
+  resolveClaridadParaProyecto,
+  type RutasMentalesSet,
+} from "@/lib/claridadDireccion";
 import { RUTA_BANDA_META } from "@/lib/rutaEnfoque";
 import { RutasMentalesGrafo } from "@/components/RutasMentalesGrafo";
+import { RutasMentalesEditor } from "@/components/RutasMentalesEditor";
+import { PeldanoSituacionArbol } from "@/components/PeldanoSituacionArbol";
 
 const PIZARRA = "#0a0a0a";
 const CYAN = "#00FFC3";
@@ -43,8 +53,28 @@ const NARANJA = "#F97316";
 const PROYECTO_COLORS = ["#38BDF8", "#A855F7", "#F97316", "#10b981", "#D4AF37", "#f87171"];
 
 function formatFecha(ts?: number) {
-  if (!ts) return "�";
+  if (!ts) return "—";
   return new Date(ts).toLocaleDateString("es-PE", { day: "numeric", month: "short" });
+}
+
+function formatTipoOrigen(tipo?: "tiempo" | "situacion") {
+  if (tipo === "tiempo") return "Tiempo";
+  if (tipo === "situacion") return "Situación";
+  return "—";
+}
+
+function ProyectoIcono({
+  etiqueta,
+  color,
+  size = 22,
+}: {
+  etiqueta: ProyectoEtiqueta;
+  color?: string;
+  size?: number;
+}) {
+  const tint = color ?? (etiqueta === "centro" ? GOLD : CYAN);
+  if (etiqueta === "centro") return <Sparkles size={size} style={{ color: tint }} />;
+  return <Layers size={size} style={{ color: tint }} />;
 }
 
 export default function ProyectosPage() {
@@ -65,6 +95,9 @@ export default function ProyectosPage() {
   const [newIdeaTitulo, setNewIdeaTitulo] = useState("");
   const [expandedConq, setExpandedConq] = useState<string | null>(null);
   const [notaEdit, setNotaEdit] = useState("");
+  const [claridadEdit, setClaridadEdit] = useState<RutasMentalesSet | null>(null);
+  const [oleadaTituloEdit, setOleadaTituloEdit] = useState("");
+  const [guardandoClaridad, setGuardandoClaridad] = useState(false);
 
   const reloadList = useCallback(async () => {
     if (!user) return;
@@ -80,6 +113,17 @@ export default function ProyectosPage() {
     setProyecto(p);
     setPeldanos(pel);
     setNotaEdit(p?.nota ?? "");
+    setOleadaTituloEdit(p?.oleadaTitulo ?? "");
+    if (p) {
+      const claridad = resolveClaridadParaProyecto(p, pel) ?? buildDefaultClaridadDireccion({
+        tituloProyecto: p.titulo,
+        etiqueta: p.etiqueta,
+        focoTitulo: p.oleadaTitulo ?? p.titulo,
+      });
+      setClaridadEdit(claridad);
+    } else {
+      setClaridadEdit(null);
+    }
   }, [user, detailId]);
 
   useEffect(() => {
@@ -114,6 +158,24 @@ export default function ProyectosPage() {
     () => peldanos.filter(p => p.estado === "en_curso" && p.origenSegmento),
     [peldanos]
   );
+  const oleadaActiva = useMemo(() => getOleadaEnCurso(peldanos), [peldanos]);
+
+  const handleGuardarClaridad = async () => {
+    if (!user || !detailId || !claridadEdit) return;
+    setGuardandoClaridad(true);
+    try {
+      await updateProyectoClaridadActiva(user.uid, detailId, claridadEdit, oleadaTituloEdit);
+      await reloadDetail();
+    } finally {
+      setGuardandoClaridad(false);
+    }
+  };
+
+  const handleUsarIdeaComoOleada = async (peldanoId: string) => {
+    if (!user || !detailId) return;
+    await setOleadaComoDireccion(user.uid, detailId, peldanoId);
+    await reloadDetail();
+  };
 
   const handleCreateProyecto = async () => {
     if (!user || !newTitulo.trim()) return;
@@ -123,7 +185,6 @@ export default function ProyectosPage() {
       etiqueta: newEtiqueta,
       nota: newNota.trim() || undefined,
       color,
-      icono: newEtiqueta === "centro" ? "?" : "??",
     });
     setShowNew(false);
     setNewTitulo("");
@@ -147,7 +208,7 @@ export default function ProyectosPage() {
   if (!user) {
     return (
       <div className="p-6 text-center text-slate-500 text-sm min-h-screen" style={{ backgroundColor: "#020202" }}>
-        Inicia sesi&oacute;n para ver tus proyectos.
+        Inicia sesión para ver tus proyectos.
       </div>
     );
   }
@@ -173,17 +234,61 @@ export default function ProyectosPage() {
               </span>
               <h1 className="text-xl font-black text-white mt-0.5">{proyecto.titulo}</h1>
             </div>
-            <span className="text-2xl">{proyecto.icono ?? "??"}</span>
+            <ProyectoIcono etiqueta={proyecto.etiqueta} color={proyecto.color} size={28} />
           </div>
           <p className="text-[9px] text-slate-500 mt-3 leading-relaxed">
-            Tu escalera, no tu deuda � cada pelda&ntilde;o es un desglosador real, no una promesa en papel.
+            {proyecto.etiqueta === "centro"
+              ? "Centro = deber por circunstancia (ej. costura). La rutina solo reserva el hueco; la claridad vive aquí."
+              : "Proyecto = lo que eliges crecer (ej. Sistemicar). La rutina no repite pasos: los segmentos leen esta dirección."}
           </p>
         </div>
+
+        {claridadEdit && (
+          <div className="mb-4 space-y-2">
+            <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block">
+              Oleada / objetivo actual
+            </label>
+            <input
+              value={oleadaTituloEdit}
+              onChange={e => setOleadaTituloEdit(e.target.value)}
+              placeholder={
+                proyecto.etiqueta === "centro"
+                  ? "Ej: Lote entrega viernes — 10 días"
+                  : "Ej: Módulo pagos — sprint 10 días"
+              }
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder:text-slate-600 focus:outline-none"
+            />
+            {oleadaActiva && !oleadaActiva.origenSegmento && (
+              <p className="text-[8px] text-slate-500">
+                Oleada en curso: <span className="text-slate-300">{oleadaActiva.titulo}</span>
+              </p>
+            )}
+            <RutasMentalesEditor
+              rutas={claridadEdit}
+              onChange={setClaridadEdit}
+              etiqueta={proyecto.etiqueta}
+              desdeProyecto
+            />
+            <button
+              type="button"
+              disabled={guardandoClaridad}
+              onClick={() => void handleGuardarClaridad()}
+              className="w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
+              style={{
+                backgroundColor: `${proyecto.color ?? CYAN}18`,
+                color: proyecto.color ?? CYAN,
+                border: `1px solid ${proyecto.color ?? CYAN}40`,
+              }}
+            >
+              {guardandoClaridad ? "Guardando…" : "Guardar dirección (sincroniza segmentos al cargar rutina)"}
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-2 mb-4">
           <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
             <p className="text-lg font-black text-white">{stats.conquistados}</p>
-            <p className="text-[7px] uppercase text-slate-500 tracking-wider">Pelda&ntilde;os</p>
+            <p className="text-[7px] uppercase text-slate-500 tracking-wider">Peldaños</p>
           </div>
           <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
             <p className="text-lg font-black" style={{ color: RUTA_BANDA_META[stats.profundidadMaxima].color }}>
@@ -199,13 +304,13 @@ export default function ProyectosPage() {
 
         <div className="p-3 rounded-xl border border-white/10 mb-4" style={{ backgroundColor: PIZARRA }}>
           <p className="text-[9px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: GOLD }}>
-            <Sparkles size={12} /> Por qu&eacute; te emociona
+            <Sparkles size={12} /> Por qué te emociona
           </p>
           <textarea
             value={notaEdit}
             onChange={e => setNotaEdit(e.target.value)}
             onBlur={() => void handleSaveNota()}
-            placeholder="Ej: Cada bloque de costura me deja m&aacute;s tiempo libre al atardecer�"
+            placeholder="Ej: Cada bloque de costura me deja más tiempo libre al atardecer…"
             className="w-full bg-transparent text-[11px] text-slate-300 placeholder:text-slate-600 resize-none min-h-[60px] focus:outline-none"
           />
         </div>
@@ -213,7 +318,7 @@ export default function ProyectosPage() {
         {enCursoPlan.length > 0 && (
           <div className="mb-4">
             <p className="text-[10px] font-black uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: CYAN }}>
-              <Clock size={12} /> Desde planificaci&oacute;n hoy
+              <Clock size={12} /> Desde planificación hoy
             </p>
             <div className="space-y-2">
               {enCursoPlan.map(pel => (
@@ -224,7 +329,7 @@ export default function ProyectosPage() {
                 >
                   <p className="text-sm font-bold text-white">{pel.titulo}</p>
                   <p className="text-[8px] text-slate-500 mt-0.5">
-                    {pel.horaInicio} – {pel.horaFin} · opera en Planificaci&oacute;n
+                    {pel.horaInicio} – {pel.horaFin} · opera en Planificación
                   </p>
                   {pel.rutasMentales && (
                     <div className="mt-2 pt-2 border-t border-white/5">
@@ -245,7 +350,7 @@ export default function ProyectosPage() {
             <input
               value={newIdeaTitulo}
               onChange={e => setNewIdeaTitulo(e.target.value)}
-              placeholder="Nueva idea / bloque�"
+              placeholder="Nueva idea / bloque…"
               className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder:text-slate-600 focus:outline-none"
               onKeyDown={e => e.key === "Enter" && void handleAddIdea()}
             />
@@ -261,7 +366,7 @@ export default function ProyectosPage() {
           <div className="space-y-2">
             {ideas.length === 0 && (
               <p className="text-[10px] text-slate-600 text-center py-4">
-                A&ntilde;ade ideas opcionales � no son deuda, son pelda&ntilde;os posibles.
+                Añade ideas opcionales — no son deuda, son peldaños posibles.
               </p>
             )}
             {ideas.map(pel => (
@@ -293,6 +398,20 @@ export default function ProyectosPage() {
                     </button>
                   </div>
                 </div>
+                {pel.plantillaSubTareas && pel.plantillaSubTareas.length > 0 && (
+                  <p className="text-[8px] text-slate-500 mb-2 leading-relaxed">
+                    {pel.plantillaSubTareas.length} detalle
+                    {pel.plantillaSubTareas.length !== 1 ? "s" : ""} pendiente
+                    {pel.plantillaSubTareas.length !== 1 ? "s" : ""} de profundidad
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleUsarIdeaComoOleada(pel.id)}
+                  className="w-full mb-2 py-1.5 rounded-lg text-[8px] font-bold uppercase tracking-wider text-slate-400 border border-white/10 hover:border-white/20"
+                >
+                  Usar como oleada activa
+                </button>
                 <div className="flex gap-2">
                   <button
                     onClick={() => navigate(buildLaunchUrl(detailId, pel.id, "desglosador_tiempo"))}
@@ -306,7 +425,7 @@ export default function ProyectosPage() {
                     className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[9px] font-bold uppercase"
                     style={{ backgroundColor: `${PLATA}15`, color: PLATA, border: `1px solid ${PLATA}35` }}
                   >
-                    <Flag size={12} /> Situaci&oacute;n
+                    <Flag size={12} /> Situación
                   </button>
                 </div>
               </div>
@@ -316,11 +435,11 @@ export default function ProyectosPage() {
 
         <div>
           <p className="text-[10px] font-black uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: GOLD }}>
-            <TrendingUp size={12} /> Tu escalera � conquistados
+            <TrendingUp size={12} /> Tu escalera — conquistados
           </p>
           {conquistados.length === 0 ? (
             <p className="text-[10px] text-slate-600 text-center py-6 border border-dashed border-white/10 rounded-xl">
-              Lanza un desglosador y ci&eacute;rralo � aqu&iacute; aparecer&aacute; tu progreso real.
+              Lanza un desglosador y ciérralo — aquí aparecerá tu progreso real.
             </p>
           ) : (
             <div className="space-y-2">
@@ -336,7 +455,7 @@ export default function ProyectosPage() {
                   >
                     <div>
                       <p className="text-[8px] text-slate-500 uppercase">
-                        Pelda&ntilde;o {conquistados.length - i} � {formatFecha(pel.cerradoAt)} � {pel.tipoOrigen ?? "�"}
+                        Peldaño {conquistados.length - i} · {formatFecha(pel.cerradoAt)} · {formatTipoOrigen(pel.tipoOrigen)}
                       </p>
                       <p className="text-sm font-bold text-white">{pel.titulo}</p>
                     </div>
@@ -368,20 +487,27 @@ export default function ProyectosPage() {
                           )}
                           {pel.resumen?.subsCumplidos != null && (
                             <p>
-                              Bloques: {pel.resumen.subsCumplidos}/{pel.resumen.subsTotal} �{" "}
-                              {pel.resumen.duracionMin ?? 0} min � {pel.resumen.psGanados ?? 0} PS
+                              Bloques: {pel.resumen.subsCumplidos}/{pel.resumen.subsTotal} ·{" "}
+                              {pel.resumen.duracionMin ?? 0} min · {pel.resumen.psGanados ?? 0} PS
+                              {(pel.resumen.minutosGanados ?? 0) > 0 && (
+                                <span style={{ color: CYAN }}>
+                                  {" "}
+                                  · +{pel.resumen.minutosGanados} min recuperados
+                                </span>
+                              )}
                             </p>
                           )}
                           {pel.resumen.subResumen?.map((s, j) => (
                             <p key={j} className="pl-2 text-slate-500">
-                              ? {s.titulo} ({s.status})
+                              • {s.titulo} ({s.status})
                             </p>
                           ))}
-                          {pel.resumen?.subTareasResumen?.map((s, j) => (
-                            <p key={j} className="pl-2 text-slate-500">
-                              ? {s.texto} ({s.resultado ?? "�"})
-                            </p>
-                          ))}
+                          {pel.resumen?.subTareasResumen && pel.resumen.subTareasResumen.length > 0 && (
+                            <PeldanoSituacionArbol
+                              subTareas={pel.resumen.subTareasResumen}
+                              compact
+                            />
+                          )}
                         </div>
                       </motion.div>
                     )}
@@ -404,7 +530,7 @@ export default function ProyectosPage() {
           Proyectos y Centros
         </h1>
         <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-          Construye tu futuro pelda&ntilde;o a pelda&ntilde;o. Sin calendario. Sin semana que traiciona.
+          Construye tu futuro peldaño a peldaño. Sin calendario. Sin semana que traiciona.
         </p>
       </header>
 
@@ -428,7 +554,7 @@ export default function ProyectosPage() {
             <input
               value={newTitulo}
               onChange={e => setNewTitulo(e.target.value)}
-              placeholder="Nombre (ej: Costura, Salud�)"
+              placeholder="Nombre (ej: Costura, Salud…)"
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm focus:outline-none"
             />
             <div className="flex gap-2">
@@ -453,7 +579,7 @@ export default function ProyectosPage() {
             <textarea
               value={newNota}
               onChange={e => setNewNota(e.target.value)}
-              placeholder="Opcional: qu&eacute; tiempo te libera esto�"
+              placeholder="Opcional: qué tiempo te libera esto…"
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-slate-300 text-[11px] resize-none min-h-[50px] focus:outline-none"
             />
             <div className="flex gap-2">
@@ -473,11 +599,11 @@ export default function ProyectosPage() {
       </AnimatePresence>
 
       {loading ? (
-        <p className="text-center text-slate-600 text-sm py-8">Cargando�</p>
+        <p className="text-center text-slate-600 text-sm py-8">Cargando…</p>
       ) : proyectos.length === 0 ? (
         <div className="text-center py-12 border border-dashed border-white/10 rounded-xl">
           <Layers size={32} className="mx-auto mb-3 text-slate-600" />
-          <p className="text-sm text-slate-500">Sin proyectos a&uacute;n</p>
+          <p className="text-sm text-slate-500">Sin proyectos aún</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -493,10 +619,10 @@ export default function ProyectosPage() {
                   <span className="text-[8px] font-bold uppercase text-slate-500">{p.etiqueta}</span>
                   <p className="text-base font-black text-white">{p.titulo}</p>
                 </div>
-                <span className="text-xl">{p.icono ?? "??"}</span>
+                <ProyectoIcono etiqueta={p.etiqueta} color={p.color} />
               </div>
               <div className="flex gap-4 mt-3 text-[9px] font-bold uppercase tracking-wider">
-                <span style={{ color: GOLD }}>{p.peldanosConquistados} pelda&ntilde;os</span>
+                <span style={{ color: GOLD }}>{p.peldanosConquistados} peldaños</span>
                 {p.profundidadMaxima && (
                   <span style={{ color: RUTA_BANDA_META[p.profundidadMaxima].color }}>
                     {RUTA_BANDA_META[p.profundidadMaxima].label}

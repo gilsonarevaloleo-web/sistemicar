@@ -45,6 +45,7 @@ import { LEY_RESISTENCIA_CASCADA } from "./knowledge/ley-resistencia-cascada";
 import { MATRIZ_SEDUCCION_10X10 } from "./knowledge/matriz-seduccion-10x10";
 import { PROTOCOLO_CERTEZA_TERRITORIOS } from "./knowledge/protocolo-certeza-territorios";
 import { LEY_REDACCION_ESCRITOR } from "./knowledge/ley-redaccion-escritor";
+import { buildPlanificacionTutorSystemPrompt } from "../shared/planificacionDoctorPrompt";
 import { PSICOLOGIA_MADUREZ_SEDUCCION } from "./knowledge/psicologia-madurez-seduccion";
 import {
   buildChapterContextCore,
@@ -1614,6 +1615,10 @@ Umbral de Soberanía Total: 700 PS + convicción 4 + ≥10 sesiones Espejo compl
 
     const moduleInfo = moduleContext ? `\nCONTEXTO DEL MÓDULO ABIERTO: El usuario está en la sección "${moduleContext}" de SISTEMICAR.` : "";
 
+    const isPlanificacionTutor =
+      !isCreator &&
+      (moduleContext === "Planificación" || moduleContext === "Planificacion");
+
     let systemPrompt: string;
 
     if (isCreator) {
@@ -1669,6 +1674,29 @@ MENSAJE ACTUAL DE GILSON:
 INSTRUCCIONES DE ACCESO A DATOS: Tienes acceso COMPLETO a todos los registros de Gilson en SISTEMICAR y al contenido íntegro del libro "El Espejo del Mendigo" con las 10 Interfaces (M01-M10). Usa estos datos para analizar patrones, detectar comportamientos recurrentes, extraer principios y formular leyes. Cuando Gilson pregunte sobre sus datos, SIEMPRE responde con datos concretos — cita el código diagnóstico exacto, la interfaz, la tasa de éxito, los PS acumulados. Cuando detectes patrones del Mendigo en sus registros, clasifícalos según la Interfaz correspondiente. Nunca digas que no tienes acceso.
 
 Responde de forma conversacional, directa y analítica. Si Gilson pide formular una ley, inclúyela en formato claro precedida por "LEY PROPUESTA:" para que pueda sellarla. No uses JSON, responde en texto natural.`;
+    } else if (isPlanificacionTutor) {
+      const planProfile =
+        req.body.planificacionProfile === "produccion" ||
+        req.body.planificacionProfile === "estudiante"
+          ? req.body.planificacionProfile
+          : "base";
+      systemPrompt = `${buildPlanificacionTutorSystemPrompt({
+        userName: userName || "Usuario",
+        planProfile,
+        primerDiaSummary:
+          typeof req.body.planificacionPrimerDiaSummary === "string"
+            ? req.body.planificacionPrimerDiaSummary
+            : undefined,
+        registrosResumen: registrosContext || undefined,
+      })}
+
+HISTORIAL DE CONVERSACIÓN:
+${historyContext || "Inicio de sesión."}
+
+MENSAJE DEL USUARIO:
+"${userText}"
+
+Responde como guía de Planificación. No uses JSON.`;
     } else {
       const msgCount = messageCount || session.messages.length;
       const shouldSuggestPremium = msgCount > 0 && msgCount % 6 === 0;
@@ -1748,7 +1776,10 @@ MENSAJE DEL USUARIO (${userName || "Usuario"}):
 Responde de forma conversacional, clínica y directa. Aplica las leyes. No uses JSON, responde en texto natural.`;
     }
 
-    const content = await callGemini(systemPrompt, isCreator ? 1200 : 500);
+    const content = await callGemini(
+      systemPrompt,
+      isCreator ? 1200 : isPlanificacionTutor ? 450 : 500
+    );
 
     session.messages.push({ role: "assistant", text: content });
 

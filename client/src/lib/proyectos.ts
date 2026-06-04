@@ -2,27 +2,38 @@ import type { FocusBandId } from "./focusBandLedger";
 import type { SubTarea, SubVehiculo, Vehicle, TipoFlota } from "./persistence";
 import { maxBanda, inferBandaBloque } from "./termodinamicaAtencional";
 import type { RutaCruzadaSnapshot } from "./rutaEnfoque";
+import {
+  buildDefaultClaridadDireccion,
+  normalizeRutasMentales,
+  type ClaridadProfundidad,
+  type ProyectoEtiqueta,
+  type RutaMental,
+  type RutaMentalId,
+  type RutaMentalPaso,
+  type RutasMentalesSet,
+} from "./claridadDireccion";
 
-export type ProyectoEtiqueta = "proyecto" | "centro";
+export type {
+  ClaridadProfundidad,
+  ProyectoEtiqueta,
+  RutaMental,
+  RutaMentalId,
+  RutaMentalPaso,
+  RutasMentalesSet,
+} from "./claridadDireccion";
+
 export type PeldanoEstado = "idea" | "en_curso" | "conquistado";
 
-export type RutaMentalId = "a" | "b" | "c";
-
-export interface RutaMentalPaso {
-  numero: 1 | 2 | 3;
-  titulo: string;
+export interface ProyectoDetalleResumen {
+  texto: string;
+  entregado: boolean;
+  casa?: boolean;
 }
 
-export interface RutaMental {
-  id: RutaMentalId;
-  label: string;
-  perfil: "solo_fluido" | "fluido_concentrado" | "secuencia_completa";
-  pasos: RutaMentalPaso[];
-}
-
-export interface RutasMentalesSet {
-  rutaActiva: RutaMentalId;
-  rutas: Record<RutaMentalId, RutaMental>;
+export interface ProyectoSubTareaResumen {
+  texto: string;
+  resultado?: string;
+  detalles?: ProyectoDetalleResumen[];
 }
 
 export interface ProyectoPeldanoResumen {
@@ -36,7 +47,11 @@ export interface ProyectoPeldanoResumen {
     status: "cumplido" | "fallado" | "pendiente";
     duracionMin?: number;
   }[];
-  subTareasResumen?: { texto: string; resultado?: string }[];
+  subTareasResumen?: ProyectoSubTareaResumen[];
+  /** Minutos recuperados por eficiencia al cerrar desglose situacional. */
+  minutosGanados?: number;
+  minutosGanadosSesion?: number;
+  retoNumero?: number;
   segmentoResumen?: {
     rutaMentalActiva?: RutaMentalId;
     rutaMentalLabel?: string;
@@ -90,6 +105,10 @@ export interface Proyecto {
   minutosTotales?: number;
   /** Acumulado desde segmentos vinculados en Planificación (sin peldaño). */
   metricasSegmentoVinculado?: ProyectoMetricasFlota;
+  /** Fuente de verdad: pasos de claridad para segmentos (rutina solo copia al aplicar). */
+  claridadActiva?: RutasMentalesSet;
+  /** Oleada / objetivo actual (ej. producción 10 días). */
+  oleadaTitulo?: string;
 }
 
 const PROYECTOS_KEY = "sistemicar_proyectos";
@@ -218,9 +237,17 @@ export async function addProyecto(
   data: Omit<Proyecto, "id" | "createdAt" | "updatedAt" | "peldanosConquistados" | "minutosTotales">
 ): Promise<Proyecto> {
   const now = Date.now();
+  const claridadActiva =
+    data.claridadActiva ??
+    buildDefaultClaridadDireccion({
+      tituloProyecto: data.titulo,
+      etiqueta: data.etiqueta,
+      focoTitulo: data.oleadaTitulo ?? data.titulo,
+    });
   const proyecto: Proyecto = {
     id: `proy_${now}_${Math.random().toString(36).slice(2, 6)}`,
     ...data,
+    claridadActiva,
     peldanosConquistados: 0,
     minutosTotales: 0,
     createdAt: now,
@@ -231,6 +258,48 @@ export async function addProyecto(
   saveLocalProyectos(userId, list);
   void syncFirestoreProyecto(userId, proyecto);
   return proyecto;
+}
+
+/** Guarda dirección de claridad en el Hub (sincroniza a segmentos al aplicar rutina o crear bloque). */
+export async function updateProyectoClaridadActiva(
+  userId: string,
+  proyectoId: string,
+  claridadActiva: RutasMentalesSet,
+  oleadaTitulo?: string
+): Promise<Proyecto | null> {
+  return updateProyecto(userId, proyectoId, {
+    claridadActiva: normalizeRutasMentales(claridadActiva),
+    ...(oleadaTitulo !== undefined ? { oleadaTitulo: oleadaTitulo.trim() || undefined } : {}),
+  });
+}
+
+/** Marca una oleada (peldaño) como dirección activa del proyecto. */
+export async function setOleadaComoDireccion(
+  userId: string,
+  proyectoId: string,
+  peldanoId: string
+): Promise<Proyecto | null> {
+  const [proyecto, peldanos] = await Promise.all([
+    getProyectoById(userId, proyectoId),
+    getPeldanosByProyecto(userId, proyectoId),
+  ]);
+  const pel = peldanos.find(p => p.id === peldanoId);
+  if (!pel || !proyecto) return null;
+  const claridad =
+    pel.rutasMentales ??
+    buildDefaultClaridadDireccion({
+      tituloProyecto: proyecto.titulo,
+      etiqueta: proyecto.etiqueta,
+      focoTitulo: pel.titulo,
+    });
+  for (const p of peldanos.filter(x => x.estado === "en_curso" && x.id !== peldanoId)) {
+    await updatePeldano(userId, p.id, { estado: "idea" });
+  }
+  await updatePeldano(userId, peldanoId, { estado: "en_curso", rutasMentales: claridad });
+  return updateProyecto(userId, proyectoId, {
+    oleadaTitulo: pel.titulo,
+    claridadActiva: claridad,
+  });
 }
 
 export async function updateProyecto(
@@ -472,16 +541,101 @@ export async function markPeldanoConquistadoTiempo(
   await refreshProyectoStats(userId, vehicle.proyectoId);
 }
 
+/** Resumen anidado subtarea → detalles para aterrizaje en Hub de Proyectos. */
+export function buildSubTareasResumenFromVehicle(subTareas: SubTarea[]): ProyectoSubTareaResumen[] {
+  return subTareas
+    .filter(st => st.enDesgloseCronometro || (st.detalles?.length ?? 0) > 0)
+    .map(st => ({
+      texto: st.texto,
+      resultado:
+        st.resultadoSituacion ??
+        (st.completada ? "cumplido" : st.enDesgloseCronometro ? "pendiente" : undefined),
+      detalles: (st.detalles ?? []).map(d => ({
+        texto: d.texto,
+        entregado: d.entregado,
+        ...(d.casa ? { casa: true } : {}),
+      })),
+    }));
+}
+
+function profundidadFromSituacionSubTareas(subTareas: SubTarea[]): FocusBandId {
+  const entregados = subTareas.reduce(
+    (n, st) => n + (st.detalles?.filter(d => d.entregado && !d.casa).length ?? 0),
+    0
+  );
+  if (entregados >= 8) return "limite";
+  if (entregados >= 3) return "concentrado";
+  return "fluido";
+}
+
+/** Ramas incompletas → ideas en el Hub (sin duplicar títulos de ideas existentes). */
+export function collectRamasIncompletas(
+  subTareas: SubTarea[]
+): Array<{ titulo: string; plantillaSubTareas?: string[] }> {
+  const out: Array<{ titulo: string; plantillaSubTareas?: string[] }> = [];
+  for (const st of subTareas) {
+    const pendingDetalles = (st.detalles ?? []).filter(d => !d.entregado && !d.casa);
+    const isSubIncomplete =
+      st.enDesgloseCronometro && st.resultadoSituacion !== "cumplido";
+
+    if (isSubIncomplete) {
+      out.push({
+        titulo: `Retomar: ${st.texto}`,
+        plantillaSubTareas:
+          pendingDetalles.length > 0 ? pendingDetalles.map(d => d.texto) : undefined,
+      });
+    } else if (pendingDetalles.length > 0) {
+      out.push({
+        titulo: `Profundizar: ${st.texto}`,
+        plantillaSubTareas: pendingDetalles.map(d => d.texto),
+      });
+    }
+  }
+  return out;
+}
+
+async function spawnIdeasFromRamasIncompletas(
+  userId: string,
+  proyectoId: string,
+  subTareas: SubTarea[]
+): Promise<number> {
+  const ramas = collectRamasIncompletas(subTareas);
+  if (ramas.length === 0) return 0;
+
+  const existing = await getPeldanosByProyecto(userId, proyectoId);
+  const existingTitles = new Set(
+    existing.filter(p => p.estado === "idea").map(p => p.titulo.trim().toLowerCase())
+  );
+
+  let created = 0;
+  for (const rama of ramas) {
+    const key = rama.titulo.trim().toLowerCase();
+    if (existingTitles.has(key)) continue;
+    await addPeldanoIdea(userId, proyectoId, rama.titulo, {
+      plantillaSubTareas: rama.plantillaSubTareas,
+    });
+    existingTitles.add(key);
+    created++;
+  }
+  return created;
+}
+
 export async function markPeldanoConquistadoSituacion(
   userId: string,
   vehicle: Vehicle,
-  opts: { duracionMin: number; psGanados: number; subTareas: SubTarea[] }
-): Promise<void> {
-  if (!vehicle.proyectoId || !vehicle.proyectoPeldanoId) return;
-  const cumplidas = opts.subTareas.filter(st => st.resultadoSituacion === "cumplido").length;
-  const subTareasResumen = opts.subTareas
-    .filter(st => st.enDesgloseCronometro)
-    .map(st => ({ texto: st.texto, resultado: st.resultadoSituacion }));
+  opts: {
+    duracionMin: number;
+    psGanados: number;
+    subTareas: SubTarea[];
+    minutosGanados?: number;
+    minutosGanadosSesion?: number;
+    retoNumero?: number;
+  }
+): Promise<{ ideasCreadas: number }> {
+  if (!vehicle.proyectoId || !vehicle.proyectoPeldanoId) return { ideasCreadas: 0 };
+  const cronometradas = opts.subTareas.filter(st => st.enDesgloseCronometro);
+  const cumplidas = cronometradas.filter(st => st.resultadoSituacion === "cumplido").length;
+  const subTareasResumen = buildSubTareasResumenFromVehicle(opts.subTareas);
 
   await updatePeldano(userId, vehicle.proyectoPeldanoId, {
     estado: "conquistado",
@@ -490,14 +644,23 @@ export async function markPeldanoConquistadoSituacion(
     vehicleId: vehicle.id,
     resumen: {
       subsCumplidos: cumplidas,
-      subsTotal: subTareasResumen.length,
+      subsTotal: cronometradas.length,
       duracionMin: opts.duracionMin,
-      profundidadMaxima: "concentrado",
+      profundidadMaxima: profundidadFromSituacionSubTareas(opts.subTareas),
       psGanados: opts.psGanados,
       subTareasResumen,
+      minutosGanados: opts.minutosGanados,
+      minutosGanadosSesion: opts.minutosGanadosSesion,
+      retoNumero: opts.retoNumero,
     },
   });
   await refreshProyectoStats(userId, vehicle.proyectoId);
+  const ideasCreadas = await spawnIdeasFromRamasIncompletas(
+    userId,
+    vehicle.proyectoId,
+    opts.subTareas
+  );
+  return { ideasCreadas };
 }
 
 export function computeProyectoStats(peldanos: ProyectoPeldano[]) {

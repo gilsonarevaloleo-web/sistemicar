@@ -4,7 +4,11 @@ import {
   buildDailySnapshot,
   classifyPsSource,
   computeEspectroBloques,
+  countBloquesCompletados,
   computeResistenciaDia,
+  subCumplidoEnJornada,
+  vehicleEnTermoJornada,
+  countBloquesDesglosadorSubsHoy,
   computeTermodinamicaCompare,
   computeTermodinamicaCompareV2,
   inferBandaBloque,
@@ -52,23 +56,26 @@ describe("termodinamicaAtencional", () => {
     assert.equal(inferBandaBloque(sub), "limite");
   });
 
-  it("computeEspectroBloques cuenta cada tramo de ruta por bloque cumplido", () => {
+  it("computeEspectroBloques cuenta un bloque por sub (profundidad máxima)", () => {
     const dayStart = Date.now() - 3600_000;
+    const now = Date.now();
     const vehicles: Vehicle[] = [
       makeDesglosadorVehicle([
-        { id: "s1", titulo: "Bloque pequeño", status: "cumplido", rutaDeclarada: ["fluido"] },
+        { id: "s1", titulo: "Bloque pequeño", status: "cumplido", cierreAt: now, rutaDeclarada: ["fluido"] },
         {
           id: "s2",
           titulo: "Bloque grande",
           status: "cumplido",
+          cierreAt: now,
           rutaDeclarada: ["concentrado", "limite"],
         },
       ]),
     ];
     const espectro = computeEspectroBloques(vehicles, dayStart);
     assert.equal(espectro.fluido, 1);
-    assert.equal(espectro.concentrado, 1);
+    assert.equal(espectro.concentrado, 0);
     assert.equal(espectro.limite, 1);
+    assert.equal(countBloquesCompletados(vehicles, dayStart), 2);
   });
 
   it("computeEspectroBloques usa cruzado cuando no hay rutaDeclarada", () => {
@@ -82,9 +89,48 @@ describe("termodinamicaAtencional", () => {
       ),
     ];
     const espectro = computeEspectroBloques(vehicles, dayStart);
-    assert.equal(espectro.fluido, 1);
-    assert.equal(espectro.concentrado, 1);
+    assert.equal(espectro.fluido, 0);
+    assert.equal(espectro.concentrado, 0);
     assert.equal(espectro.limite, 1);
+  });
+
+  it("dos desglosadores con varios subs suman bloques por sub", () => {
+    const dayStart = Date.now() - 3600_000;
+    const now = Date.now();
+    const mkSubs = (n: number, prefix: string): SubVehiculo[] =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `${prefix}-s${i}`,
+        titulo: `${prefix} ${i}`,
+        status: "cumplido" as const,
+        cierreAt: now,
+        rutaDeclarada: ["fluido"],
+      }));
+    const vehicles: Vehicle[] = [
+      makeDesglosadorVehicle(mkSubs(7, "a"), { id: "d1", titulo: "Costura A" }),
+      makeDesglosadorVehicle(mkSubs(5, "b"), { id: "d2", titulo: "Costura B" }),
+    ];
+    assert.equal(countBloquesDesglosadorSubsHoy(vehicles, dayStart), 12);
+    assert.equal(countBloquesCompletados(vehicles, dayStart), 12);
+    const espectro = computeEspectroBloques(vehicles, dayStart);
+    assert.equal(espectro.fluido, 12);
+  });
+
+  it("desglosador activo no arrastra subs cumplidos de jornadas anteriores", () => {
+    const dayStart = Date.now() - 3600_000;
+    const ayer = dayStart - 86400_000;
+    const vehicles: Vehicle[] = [
+      makeDesglosadorVehicle(
+        [
+          { id: "s-old", titulo: "Ayer", status: "cumplido", cierreAt: ayer, rutaDeclarada: ["fluido"] },
+          { id: "s-new", titulo: "Hoy", status: "cumplido", cierreAt: Date.now(), rutaDeclarada: ["fluido"] },
+          { id: "s-pend", titulo: "Pendiente", status: "pendiente" },
+        ],
+        { status: "activo", aperturaAt: ayer }
+      ),
+    ];
+    assert.equal(countBloquesCompletados(vehicles, dayStart), 1);
+    assert.equal(subCumplidoEnJornada(vehicles[0].subVehiculos![0], vehicles[0], dayStart), false);
+    assert.equal(subCumplidoEnJornada(vehicles[0].subVehiculos![1], vehicles[0], dayStart), true);
   });
 
   it("classifyPsSource separa panorámico y vehículos", () => {

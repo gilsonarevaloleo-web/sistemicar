@@ -237,51 +237,77 @@ export const MASTER_MANUALS: Record<ManualType, MasterManual> = {
   planificacion: {
     id: "planificacion",
     title: "Manual de Planificación",
-    subtitle: "El Vehículo",
-    principle: "La planificación es una guerra contra la entropía.",
-    icon: "Target",
-    color: "#EF4444",
+    subtitle: "Motor del día · v5.5",
+    principle: "No es una lista: es cerrar el día con segmentos, flota y bloques medidos.",
+    icon: "Compass",
+    color: "#D4AF37",
     benefits: [
-      "Elimina la procrastinación dividiendo tareas en pasos pequeños",
-      "Anticipa obstáculos antes de que te descarrilen",
-      "Crea momentum sostenible a través de enfoque claro",
-      "Construye disciplina sin depender de la motivación"
+      "Segmentos que evitan la omisión (tiempo sin registro)",
+      "La Flota: misiones express o profundas con PS al cerrar",
+      "Desglosadores que miden subs (bloques), no solo intención",
+      "Termodinámica: dominio fluido y fricción vs ayer (Operativo)",
+      "Proyectos con peldaños y claridad mental (Soberanía del día)",
+      "Doctor IA en modo guía dentro de esta pantalla"
     ],
     sections: [
       {
-        title: "ENFOQUE",
-        instruction: "Memoriza el objetivo. Si no puedes repetirlo 3 veces sin mirar, no es tu objetivo.",
+        title: "SEGMENTOS DEL DÍA",
+        instruction:
+          "Parte el día en tramos (mañana, tarde…). Si ninguno está activo, el monitor marca OMISIÓN. Cierra el segmento con cierre manual o registra entropía.",
         checklist: [
-          { key: "planificacion_enfoque_1", text: "El objetivo es claro y memorizable" },
-          { key: "planificacion_enfoque_2", text: "Puedo repetirlo sin mirar el papel" },
-          { key: "planificacion_enfoque_3", text: "Está definido en términos de resultado, no de actividad" }
+          { key: "plan_seg_1", text: "Tengo al menos un segmento con hora inicio y fin" },
+          { key: "plan_seg_2", text: "Sé cuál segmento está activo ahora (o por qué hay omisión)" },
+          { key: "plan_seg_3", text: "Cerré o registré el tramo al terminar (no dejé el día abierto)" }
         ]
       },
       {
-        title: "CONFLICTO",
-        instruction: "Anticípate. ¿Qué va a intentar detenerte (pereza, teléfono, miedo)? Ponle una trampa.",
+        title: "LA FLOTA",
+        instruction:
+          "Cada vehículo es una misión. Express = nombre + tipo de fin rápido. Profundo = 4 ejes con niveles automáticos (blando → reto). Sin cumplido/archivado no hay PS.",
         checklist: [
-          { key: "planificacion_conflicto_1", text: "Identifiqué los obstáculos específicos" },
-          { key: "planificacion_conflicto_2", text: "Definí una trampa/contramedida para cada uno" },
-          { key: "planificacion_conflicto_3", text: "No subestimé la resistencia interna" }
+          { key: "plan_flota_1", text: "Lancé un vehículo con título claro (express o profundo)" },
+          { key: "plan_flota_2", text: "Definí criterio de fin (hora, situación o cantidad)" },
+          { key: "plan_flota_3", text: "Marqué cumplido o archivado al terminar (no lo dejé activo)" }
         ]
       },
       {
-        title: "PASOS",
-        instruction: "Divide hasta que la tarea parezca ridículamente fácil.",
+        title: "DESGLOSADOR (BLOQUES)",
+        instruction:
+          "Requiere add-on: Soberanía del día (situación, bloques 3+3) u Operativo (tiempo, unidades). 1 sub cumplido = 1 bloque en termodinámica. Cierra cada sub antes del ciclo padre.",
         checklist: [
-          { key: "planificacion_pasos_1", text: "Dividí la tarea en pasos pequeños y claros" },
-          { key: "planificacion_pasos_2", text: "Cada paso es ejecutable en 5-15 minutos" },
-          { key: "planificacion_pasos_3", text: "La secuencia tiene sentido lógico" }
+          { key: "plan_desg_1", text: "Abrí un desglosador acorde a mi plan (situación o tiempo)" },
+          { key: "plan_desg_2", text: "Creé subs y los fui cerrando (cumplido/fallado)" },
+          { key: "plan_desg_3", text: "Cerré el ciclo del desglosador al terminar la sesión" }
         ]
       },
       {
-        title: "ALCANCE",
-        instruction: "Define el tiempo de resistencia total. No te detengas hasta que el cronómetro llegue a cero.",
+        title: "CUATRO EJES (VEHÍCULO PROFUNDO)",
+        instruction:
+          "Enfoque, conflicto, pasos, alcance. Más detalle en cada eje = mayor nivel (trifecta) y más PS. El sistema detecta el nivel por cantidad de detalles escritos.",
         checklist: [
-          { key: "planificacion_alcance_1", text: "Definí un tiempo límite específico" },
-          { key: "planificacion_alcance_2", text: "El alcance es realista pero desafiante" },
-          { key: "planificacion_alcance_3", text: "Me comprometí a no parar hasta el final" }
+          { key: "plan_ejes_1", text: "Enfoque: resultado claro, no solo actividad" },
+          { key: "plan_ejes_2", text: "Conflicto: nombré qué me puede frenar hoy" },
+          { key: "plan_ejes_3", text: "Pasos y alcance: secuencia ejecutable y límite de tiempo real" }
+        ]
+      },
+      {
+        title: "TERMODINÁMICA ATENCIONAL",
+        instruction:
+          "V2 (desglosador tiempo): compara hoy vs ayer — dominio fluido, subs completados, fricción. Maestría = más fluido y cierres adelantados, no “llegar al límite” siempre.",
+        checklist: [
+          { key: "plan_termo_1", text: "Revisé la comparativa del día (no solo el total de bloques)" },
+          { key: "plan_termo_2", text: "Entiendo fluido vs concentrado vs límite por sub" },
+          { key: "plan_termo_3", text: "Uso la curva para ver si la fricción baja semana a semana" }
+        ]
+      },
+      {
+        title: "PROYECTOS Y CLARIDAD",
+        instruction:
+          "Hub Proyectos (Soberanía del día): peldaños, oleada/claridad activa. Puedes vincular segmento ↔ proyecto. La rutina da horarios; la claridad viene del Hub.",
+        checklist: [
+          { key: "plan_proy_1", text: "Tengo un proyecto con peldaños visibles" },
+          { key: "plan_proy_2", text: "Marqué un peldaño o avance hoy" },
+          { key: "plan_proy_3", text: "Sé qué segmento sostiene ese norte hoy" }
         ]
       }
     ]

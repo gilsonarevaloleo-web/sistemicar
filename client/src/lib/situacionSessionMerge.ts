@@ -1,4 +1,4 @@
-import type { DetalleSubTarea, SubTarea, Vehicle } from "./persistence";
+import type { DetalleSubTarea, SubTarea, SubVehiculo, Vehicle } from "./persistence";
 
 function countSubTareasEnCronometro(v: Vehicle): number {
   return v.subTareas?.filter(st => st.enDesgloseCronometro).length ?? 0;
@@ -136,11 +136,32 @@ export function applySituacionDesgloseMerge(
 }
 
 /** Fusiona estado de sesi�n local sobre snapshot Firebase (desglosador tiempo + situaci�n). */
+function countSubsCerrados(subs: SubVehiculo[] | undefined): number {
+  return (subs ?? []).filter(s => s.status === "cumplido" || s.status === "fallado").length;
+}
+
+/** Conserva subs locales cuando Firebase pierde el array al cerrar el desglosador. */
+export function shouldPreferLocalSubVehiculos(firebaseV: Vehicle, localV: Vehicle): boolean {
+  if (firebaseV.tipoReloj !== "desglosador" || localV.tipoReloj !== "desglosador") return false;
+  const localSubs = localV.subVehiculos ?? [];
+  if (localSubs.length === 0) return false;
+  const fbSubs = firebaseV.subVehiculos ?? [];
+  if (fbSubs.length === 0) return true;
+  if (localSubs.length > fbSubs.length) return true;
+  if (countSubsCerrados(localSubs) > countSubsCerrados(fbSubs)) return true;
+  return false;
+}
+
 export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehicle | undefined): Vehicle {
   if (!localV) return firebaseV;
 
+  const withLocalSubs = (base: Vehicle): Vehicle =>
+    shouldPreferLocalSubVehiculos(base, localV)
+      ? { ...base, subVehiculos: localV.subVehiculos }
+      : base;
+
   if (localV.status !== "activo" && firebaseV.status === "activo") {
-    return {
+    return withLocalSubs({
       ...firebaseV,
       status: localV.status,
       ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
@@ -151,28 +172,11 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
       ...(localV.notaSalida != null ? { notaSalida: localV.notaSalida } : {}),
       situacionCronometro: localV.situacionCronometro ?? null,
       situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
-    };
+    });
   }
 
   if (firebaseV.status !== "activo" || localV.status !== "activo") {
-    if (
-      firebaseV.tipoReloj === "desglosador" &&
-      localV.subVehiculos &&
-      localV.subVehiculos.length > 0
-    ) {
-      const rutaRichness = (subs: typeof localV.subVehiculos) =>
-        (subs ?? []).filter(
-          s =>
-            s.status === "cumplido" &&
-            ((s.rutaDeclarada?.length ?? 0) > 0 ||
-              s.rutaEnfoque?.cruzado?.concentrado ||
-              s.rutaEnfoque?.cruzado?.limite)
-        ).length;
-      if (rutaRichness(localV.subVehiculos) > rutaRichness(firebaseV.subVehiculos)) {
-        return { ...firebaseV, subVehiculos: localV.subVehiculos };
-      }
-    }
-    return firebaseV;
+    return withLocalSubs(firebaseV);
   }
 
   let merged: Vehicle = { ...firebaseV };

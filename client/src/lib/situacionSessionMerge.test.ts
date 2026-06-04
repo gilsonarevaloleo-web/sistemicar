@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SubTarea, Vehicle } from "./persistence.ts";
+import type { SubVehiculo } from "./persistence.ts";
 import {
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
+  shouldPreferLocalSubVehiculos,
 } from "./situacionSessionMerge.ts";
 
 function st(
@@ -96,6 +98,46 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     const merged = mergeActiveVehicleSessionState(fb, local);
     assert.equal(merged.interrupcionActiva, false);
     assert.equal(merged.desglosadorPausa, undefined);
+  });
+
+  it("shouldPreferLocalSubVehiculos when firebase lost subs array", () => {
+    const subs = (n: number): SubVehiculo[] =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `s${i}`,
+        titulo: `Sub ${i}`,
+        status: "cumplido" as const,
+        cierreAt: Date.now(),
+      }));
+    const fb = { id: "d1", tipoReloj: "desglosador", status: "cumplido", subVehiculos: [] } as Vehicle;
+    const local = { ...fb, subVehiculos: subs(8) } as Vehicle;
+    assert.equal(shouldPreferLocalSubVehiculos(fb, local), true);
+  });
+
+  it("preserves local subs on closed desglosador when firebase has none", () => {
+    const now = Date.now();
+    const localSubs: SubVehiculo[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `s${i}`,
+      titulo: `Bloque ${i}`,
+      status: "cumplido",
+      cierreAt: now,
+      rutaDeclarada: ["fluido"],
+    }));
+    const fb: Vehicle = {
+      id: "d1",
+      titulo: "Costura",
+      status: "cumplido",
+      tipoReloj: "desglosador",
+      cierreAt: now,
+      criterioFin: "cantidad",
+      criterioDetalle: "",
+      ejes: {},
+      tiempoInicio: new Date(),
+      createdAt: new Date(),
+    } as Vehicle;
+    const local: Vehicle = { ...fb, subVehiculos: localSubs };
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.subVehiculos?.length, 6);
+    assert.equal(merged.subVehiculos?.filter(s => s.status === "cumplido").length, 6);
   });
 
   it("merges free-list subtasks when firebase snapshot lacks them", () => {

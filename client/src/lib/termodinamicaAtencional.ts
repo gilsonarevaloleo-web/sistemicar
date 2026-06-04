@@ -61,6 +61,10 @@ export interface PlanillaDailySnapshot {
   segmentosEntropia: number;
   segmentosTotales: number;
   bloquesCompletados: number;
+  /** Subs del desglosador cerrados cumplidos en esta jornada (05:00 Lima). */
+  bloquesDesglosador?: number;
+  /** Misiones no-desglosador cerradas hoy (cumplido/archivado). */
+  bloquesOtros?: number;
   disciplina?: DisciplinaDia;
   /** 2 = termodinámica con resistencia / dominio fluido */
   schemaVersion?: 1 | 2;
@@ -111,25 +115,63 @@ export function inferBandaBloque(sub: SubVehiculo): FocusBandId {
   return "fluido";
 }
 
-function addSubBandasToEspectro(counts: EspectroBloques, sub: SubVehiculo): void {
-  for (const banda of bandasRecoridasSub(sub)) {
-    counts[banda]++;
+/** Un sub cumplido = un bloque; la profundidad es la banda máxima alcanzada (no 3 conteos por tramos). */
+function addSubProfundidadToEspectro(counts: EspectroBloques, sub: SubVehiculo): void {
+  counts[inferBandaBloque(sub)]++;
+}
+
+/** Timestamp de cierre del sub para filtrar la jornada (no el vehículo padre activo). */
+export function subCierreTimestamp(sub: SubVehiculo, vehicle: Vehicle): number {
+  return sub.cierreAt ?? sub.aperturaAt ?? vehicle.cierreAt ?? vehicle.aperturaAt ?? 0;
+}
+
+/** Sub cumplido cerrado en o después del inicio de jornada. */
+export function subCumplidoEnJornada(
+  sub: SubVehiculo,
+  vehicle: Vehicle,
+  dayStartMs: number
+): boolean {
+  if (sub.status !== "cumplido") return false;
+  if (subCierreTimestamp(sub, vehicle) >= dayStartMs) return true;
+  // Sync puede perder cierreAt; si el sub abrió hoy, cuenta en la jornada.
+  if ((sub.aperturaAt ?? 0) >= dayStartMs) return true;
+  return false;
+}
+
+/**
+ * Incluye desglosador activo aunque se abrió en jornada anterior (mientras cierres subs hoy)
+ * y vehículos con actividad hoy por apertura/cierre.
+ */
+export function vehicleEnTermoJornada(vehicle: Vehicle, dayStartMs: number): boolean {
+  if (vehicle.tipoReloj === "desglosador") {
+    const subs = vehicle.subVehiculos ?? [];
+    if (subs.some(s => subCumplidoEnJornada(s, vehicle, dayStartMs))) return true;
+    if (vehicle.status === "activo") return true;
   }
+  const ts = vehicle.cierreAt ?? vehicle.aperturaAt ?? vehicle.createdAt?.getTime?.() ?? 0;
+  if (vehicle.status === "activo") return true;
+  return ts >= dayStartMs;
 }
 
 /** Cruces de umbral en vivo (ledger) — respaldo si el sub perdió cruzado al sincronizar. */
 export function espectroFromRutaCruceEvents(
   events: FocusBandEvent[],
   dayStartMs: number
-): Pick<EspectroBloques, "concentrado" | "limite"> {
+): Pick<EspectroBloques, "fluido" | "concentrado" | "limite"> {
+  const seenFluido = new Set<string>();
   const seenConc = new Set<string>();
   const seenLim = new Set<string>();
+  let fluido = 0;
   let concentrado = 0;
   let limite = 0;
 
   for (const e of events) {
     if (e.timestamp < dayStartMs || e.source !== "ruta_cruce") continue;
     const key = `${e.subVehicleId ?? e.vehicleId ?? e.id}-${e.banda}`;
+    if (e.banda === "fluido" && !seenFluido.has(key)) {
+      seenFluido.add(key);
+      fluido++;
+    }
     if (e.banda === "concentrado" && !seenConc.has(key)) {
       seenConc.add(key);
       concentrado++;
@@ -140,7 +182,7 @@ export function espectroFromRutaCruceEvents(
     }
   }
 
-  return { concentrado, limite };
+  return { fluido, concentrado, limite };
 }
 
 function mergeEspectroWithEvents(
@@ -152,6 +194,7 @@ function mergeEspectroWithEvents(
   const fromEvents = espectroFromRutaCruceEvents(events, dayStartMs);
   return {
     ...espectro,
+    fluido: Math.max(espectro.fluido, fromEvents.fluido),
     concentrado: Math.max(espectro.concentrado, fromEvents.concentrado),
     limite: Math.max(espectro.limite, fromEvents.limite),
   };
@@ -229,11 +272,8 @@ export function computeEspectroBloques(
     descansosCuerpo: 0,
   };
 
-  const inDay = (ts?: number) => (ts ?? 0) >= dayStartMs;
-
   for (const v of vehicles) {
-    const cierre = v.cierreAt || v.aperturaAt || 0;
-    if (!inDay(cierre) && v.status !== "activo") continue;
+    if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
 
     if (v.tipoFlota === "descanso" && (v.status === "cumplido" || v.status === "archivado")) {
       counts.descansosCuerpo++;
@@ -242,10 +282,8 @@ export function computeEspectroBloques(
 
     if (v.tipoReloj === "desglosador") {
       for (const sub of v.subVehiculos || []) {
-        if (sub.status !== "cumplido") continue;
-        const subTs = sub.cierreAt || cierre;
-        if (v.status !== "activo" && !inDay(subTs)) continue;
-        addSubBandasToEspectro(counts, sub);
+        if (!subCumplidoEnJornada(sub, v, dayStartMs)) continue;
+        addSubProfundidadToEspectro(counts, sub);
       }
       continue;
     }
@@ -259,20 +297,28 @@ export function computeEspectroBloques(
   return counts;
 }
 
-/** Bloques únicos cumplidos (no suma tramos de ruta — un sub = un bloque). */
+/** Subs cumplidos hoy en desglosadores (1 sub = 1 bloque). */
+export function countBloquesDesglosadorSubsHoy(vehicles: Vehicle[], dayStartMs: number): number {
+  let total = 0;
+  for (const v of vehicles) {
+    if (v.tipoReloj !== "desglosador" || !vehicleEnTermoJornada(v, dayStartMs)) continue;
+    for (const sub of v.subVehiculos ?? []) {
+      if (subCumplidoEnJornada(sub, v, dayStartMs)) total++;
+    }
+  }
+  return total;
+}
+
+/** Bloques únicos cumplidos hoy: un sub del desglosador = un bloque; otras misiones = 1 c/u. */
 export function countBloquesCompletados(vehicles: Vehicle[], dayStartMs: number): number {
   let total = 0;
-  const inDay = (ts?: number) => (ts ?? 0) >= dayStartMs;
 
   for (const v of vehicles) {
-    const cierre = v.cierreAt || v.aperturaAt || 0;
-    if (!inDay(cierre) && v.status !== "activo") continue;
+    if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
 
     if (v.tipoReloj === "desglosador") {
       for (const sub of v.subVehiculos || []) {
-        if (sub.status !== "cumplido") continue;
-        const subTs = sub.cierreAt || cierre;
-        if (v.status !== "activo" && !inDay(subTs)) continue;
+        if (!subCumplidoEnJornada(sub, v, dayStartMs)) continue;
         total++;
       }
       continue;
@@ -304,10 +350,7 @@ export function profundidadFromEvents(events: FocusBandEvent[]): FocusBandId {
 }
 
 function subEnJornada(sub: SubVehiculo, vehicle: Vehicle, dayStartMs: number): boolean {
-  if (sub.status !== "cumplido") return false;
-  const subTs = sub.cierreAt || vehicle.cierreAt || vehicle.aperturaAt || 0;
-  if (vehicle.status !== "activo" && subTs < dayStartMs) return false;
-  return true;
+  return subCumplidoEnJornada(sub, vehicle, dayStartMs);
 }
 
 /** Sub con fricción: declaración del usuario; si no hay, cruce automático / ledger. */
@@ -468,7 +511,9 @@ export function buildDailySnapshot(params: {
   const ratioConquista =
     jornadaMin > 0 ? conquistaMin / jornadaMin : cerradosManual / Math.max(totalSeg, 1);
 
+  const bloquesDesglosador = countBloquesDesglosadorSubsHoy(vehicles, dayStartMs);
   const bloquesCompletados = countBloquesCompletados(vehicles, dayStartMs);
+  const bloquesOtros = Math.max(0, bloquesCompletados - bloquesDesglosador);
 
   const disciplina = computeDisciplinaDia({
     segmentos,
@@ -500,6 +545,8 @@ export function buildDailySnapshot(params: {
     segmentosEntropia: entropiaSeg,
     segmentosTotales: totalSeg,
     bloquesCompletados,
+    bloquesDesglosador,
+    bloquesOtros,
     disciplina,
   };
 }
@@ -640,7 +687,7 @@ export function computeTermodinamicaCompareV2(
   const rows: TermodinamicaCompareRow[] = [
     compareRow(
       "dominio_fluido",
-      "Bloques dominio fluido",
+      "Dominio fluido (con ruta)",
       rHoy?.bloquesDominioFluido ?? 0,
       rAyer?.bloquesDominioFluido ?? 0
     ),
@@ -652,9 +699,27 @@ export function computeTermodinamicaCompareV2(
     ),
     compareRow(
       "bloques",
-      "Bloques completados",
-      today.bloquesCompletados,
-      yesterday?.bloquesCompletados ?? 0
+      "Subs completados (desglosador)",
+      today.bloquesDesglosador ?? today.bloquesCompletados,
+      yesterday?.bloquesDesglosador ?? yesterday?.bloquesCompletados ?? 0
+    ),
+    compareRow(
+      "espectro_fluido",
+      "Subs en fluido",
+      today.espectroBloques?.fluido ?? 0,
+      yesterday?.espectroBloques?.fluido ?? 0
+    ),
+    compareRow(
+      "espectro_concentrado",
+      "Subs en concentrado",
+      today.espectroBloques?.concentrado ?? 0,
+      yesterday?.espectroBloques?.concentrado ?? 0
+    ),
+    compareRow(
+      "espectro_limite",
+      "Subs en límite",
+      today.espectroBloques?.limite ?? 0,
+      yesterday?.espectroBloques?.limite ?? 0
     ),
     compareRow(
       "friccion",

@@ -11,7 +11,7 @@ const DOCUMENTOS = [
   {
     id: "vendedores",
     titulo: "KIT VENDEDORES — PLANIFICACIÓN",
-    descripcion: "Guía para vender Planificación modular: stacks Estudiante/Producción, comisiones 30%, links ref= y guion de venta.",
+    descripcion: "Playbook de beneficios, stacks, comisión 30% recurrente (mientras el cliente pague), links ref= y guion de venta.",
     archivo: "/vendedores-planificacion",
     icon: Users,
     color: EMERALD,

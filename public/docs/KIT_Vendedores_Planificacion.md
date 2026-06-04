@@ -1,148 +1,245 @@
-# Kit de Vendedores — Planificación SISTEMICAR
+# Kit vendedores — Planificación SISTEMICAR
 
-**Versión:** 1.0 · **Contacto:** Gilson · WhatsApp 918 260 514 · info@sistemicar.app
-
----
-
-## 1. Qué vendes (en una frase)
-
-**SISTEMICAR Planificación** no es un calendario ni una app de listas. Es un **motor del día** con módulos opcionales: uno para **cerrar bloques en tiempo libre** (estudiantes) y otro para **unidades y ritmo en producción repetitiva**.
-
-Tu trabajo: detectar cuál stack necesita la persona y enviarla a pagar con **tu código de vendedor**.
+**Versión:** 1.1 · **Actualizado:** junio 2026  
+**Audiencia:** vendedores afiliados, closers, partners de distribución  
+**Contacto operativo:** Gilson · WhatsApp +51 918 260 514
 
 ---
 
-## 2. Catálogo y precios (solo estos tienen checkout hoy)
+## 1. Resumen en 30 segundos
 
-| Producto | Precio | Comisión 30% (1er pago) |
-|----------|--------|-------------------------|
-| **Espejo** — El Corazón Sabio™ | $17 pago único | **$5.10** |
-| **Planificación Base** | $19.99/mes | **$6.00** |
-| **Soberanía del día** (situacional + Proyectos) | $29.99/mes | **$9.00** |
-| **Operativo** (desglosador tiempo / unidades) | $39.99/mes | **$12.00** |
+SISTEMICAR **no es un calendario ni una lista de tareas**. Es un **motor de cierre del día**: segmentos, flota de misiones, desglosadores con medición de ritmo y fricción mental, y comparativa día a día (termodinámica atencional).
 
-**Stacks orientativos:**
-
-- **Estudiante / tiempo libre:** Base + Soberanía del día ? **$50/mes**
-- **Producción:** Base + Operativo ? **$60/mes**
-
-Los módulos Alquimia, Radar, Proyector, etc. están **en camino** — no prometas fechas ni precios.
+Tú vendes **suscripciones mensuales** (y opcionalmente la entrada Espejo). Tu comisión es **30% recurrente**: cobras cada mes que el cliente siga pagando. Si el cliente cancela o deja de pagar, **deja de generarse comisión**.
 
 ---
 
-## 3. ¿A quién recomendar qué?
+## 2. Comisión del vendedor (regla oficial)
 
-### Stack Estudiante (Soberanía del día)
+| Regla | Detalle |
+|-------|---------|
+| **Porcentaje** | **30%** del monto pagado por el cliente |
+| **Cuándo aplica** | En **cada pago mensual** de suscripción activa (Base, Soberanía del día, Operativo) |
+| **Cuándo se corta** | Si el usuario **deja de pagar**, cancela o pierde acceso por mora ? **no hay más comisión** |
+| **Espejo (Corazón Sabio)** | Pago único $17 ? comisión **una vez** (~$5.10). No es recurrente |
+| **Atribución** | El cliente debe pagar con **tu link** (`ref=TU-CODIGO` en `/pagos`) |
+| **Pago al vendedor** | Gilson liquida comisiones (MercadoPago automático con ref; Yape/PayPal vía coordinación) |
 
-- Procrastina en tiempo libre (noche, mañana, “cuando nadie obliga”)
-- Tiene ideas sueltas y no cierra bloques
-- Estudia o aprende sin horario fijo
-- **Frase clave:** *“3 ideas, cierras bloque — sin calendario rígido.”*
+### Ejemplo mensual recurrente
 
-### Stack Producción (Operativo)
+Cliente con stack **Estudiante** (Base + Soberanía del día ? **$49.98/mes**):
 
-- Trabajo repetitivo por **unidades** (piezas, páginas, lotes, entregables)
-- Pierde días porque el ritmo “a ojo” falla
-- Necesita desglosar tiempo por unidad y récord
-- **Frase clave:** *“Un día mal contabilizado al mes cuesta más que la suscripción.”*
+- Comisión tuya **cada mes activo:** ~**$15.00**
+- 10 clientes activos 12 meses: ~**$1,800/año** solo en ese stack (si todos renuevan)
 
-### Planificación Base (siempre primero para mensual)
+Cliente con stack **Producción** (Base + Operativo ? **$59.98/mes**):
 
-- Motor del día: La Flota, segmentos, vehículos
-- **Obligatorio** antes de Soberanía del día u Operativo
-- Vende Base sola si la persona solo quiere organizar el día sin premium
+- Comisión mensual: ~**$18.00**
 
-### Espejo ($17)
+### Tabla por producto (30% mensual)
 
-- Entrada de bajo riesgo: diagnóstico IA, 10 créditos
-- Buen primer paso antes de suscripción mensual
+| Producto | Precio | Tu comisión / mes* |
+|----------|--------|-------------------|
+| Planificación Base | $19.99/mes | ~$6.00 |
+| Soberanía del día | $29.99/mes | ~$9.00 |
+| Operativo | $39.99/mes | ~$12.00 |
+| Espejo · Corazón Sabio | $17 (único) | ~$5.10 (una vez) |
 
----
+\* Redondeo a 2 decimales. Suma si el cliente tiene varios add-ons activos (cada suscripción genera su propia comisión).
 
-## 4. Guion de venta (3 preguntas)
-
-1. **“¿Tu problema es cerrar bloques cuando nadie te obliga, o contar unidades en trabajo repetitivo?”**  
-   ? Estudiante vs Producción
-
-2. **“¿Has perdido días enteros creyendo que produjiste y al cerrar faltó mucho?”**  
-   ? Operativo (si dice sí)
-
-3. **“¿Comparas esto con Notion o Todoist?”**  
-   ? *“Aquí pagas por unidades, ritmo y cierre de bloque — no por listas.”*
+**Importante:** La comisión recurrente solo existe mientras el pago se registre con tu código y el cliente mantenga la suscripción. No prometas ingresos pasivos sin renovación real del usuario.
 
 ---
 
-## 5. Objeciones frecuentes
+## 3. Catálogo y stacks que recomiendas
 
-| Objeción | Respuesta |
-|----------|-----------|
-| “Es caro” | Para producción: un solo día mal medido al mes supera $40. Para estudiante: un bloque cerrado evita horas perdidas en culpa. |
-| “Ya uso Notion” | Notion guarda notas. SISTEMICAR ejecuta el día con relojes y desglosadores. |
-| “¿Incluye todo?” | No hay “todo incluido”. Cada módulo se paga aparte — solo lo que necesitas. |
-| “¿Y Alquimia / Radar?” | En camino de implementación. Hoy vendemos Planificación + Espejo. |
+### 3.1 Planificación Base (obligatorio)
 
----
+**Para quién:** cualquier persona que quiera ordenar el día con método, no con apps genéricas.
 
-## 6. Tu link de vendedor
+**Incluye:**
 
-Gilson te asigna un código, por ejemplo: `MARIA-PROD`
+- Segmentos del día (mañana, tarde, noche…) y monitor de omisión/entropía
+- **La Flota**: misiones express y profundas
+- Motor de **4 ejes** (enfoque, conflicto, pasos, alcance) con niveles de profundidad automática
+- Vehículos de tiempo, situación y descanso (estructura base)
+- Puntos de Soberanía (PS) y progreso por módulo
 
-**Link de venta:**
+**No incluye (sin add-on):** desglosador situacional premium, desglosador tiempo de producción, hub proyectos completo.
 
-```
-https://sistemicar.app/pagos?ref=TU-CODIGO
-```
-
-El cliente debe pagar **desde ese link** (MercadoPago) para que se registre tu comisión automáticamente.
-
-También funciona: `https://sistemicar.app/?ref=TU-CODIGO` (luego va a Pagos).
+**Frase de venta:** *“Organiza el día y cierra segmentos con datos, no con culpa.”*
 
 ---
 
-## 7. Pagos manuales (Yape / PayPal)
+### 3.2 Soberanía del día (add-on · stack Estudiante)
 
-Si el cliente paga por Yape o PayPal:
+**Para quién:** estudiantes, procrastinación, ideas sueltas, tiempo libre sin jefe que marque horarios.
 
-1. Que te envíe **comprobante + correo** del cliente  
-2. Tú reenvías a Gilson por WhatsApp con: **código vendedor, plan, monto, correo**  
-3. Gilson activa el módulo manualmente y registra tu comisión
+**Dolor que resuelve:** *“Tengo el día libre y al final no cerré nada importante.”*
 
----
+**Incluye:**
 
-## 8. Comisiones y pagos a vendedores
+- **Desglosador situacional** (bloques 3+3, cupos, cronómetro por subtarea)
+- **Hub Proyectos** y peldaños (escalera de avance)
+- Reserva táctica, bolsa de ganancia de tiempo
+- Ideal para “para mañana”, noche, ideas — **sin calendario rígido**
 
-- **30% del primer pago** del módulo vendido (tabla arriba)
-- Solo cuenta venta **confirmada** (MercadoPago aprobado o Yape/PayPal verificado por Gilson)
-- Gilson paga comisiones **mensualmente** (fecha acordada por WhatsApp)
-- Renovaciones mensuales: consultar con Gilson (Fase 2 — comisión recurrente)
+**Requiere:** Planificación Base.
 
----
+**Frase de venta:** *“Tres ideas, un bloque cerrado. Mañana ya sabes qué ganaste.”*
 
-## 9. Después de la venta
-
-1. Cliente paga ? inicia sesión en sistemicar.app con **el mismo correo del pago**  
-2. Módulo se activa (automático o en minutos)  
-3. Cliente entra a **Planificación** (`/planeacion`) o **Espejo** (`/espejo`)  
-4. Soporte técnico: Gilson — tú no das soporte de producto salvo onboarding básico
+**Stack Estudiante:** Base + Soberanía ? **$49.98/mes** ? ~**$15/mes** para ti.
 
 ---
 
-## 10. Qué NO hacer
+### 3.3 Operativo (add-on · stack Producción)
 
-- No prometer módulos “en camino” con fecha  
-- No vender bundles “todo incluido” (no existen)  
-- No inventar precios distintos a la tabla  
-- No compartir tu código con otro vendedor (pierdes atribución)
+**Para quién:** costura, taller, delivery, estudio con unidades, trabajo repetitivo medible.
+
+**Dolor que resuelve:** *“Creí que produje mucho y al cerrar faltó; no sé mi ritmo real.”*
+
+**Incluye:**
+
+- **Desglosador tiempo** (unidades, pitido por unidad, ritmo y récord)
+- Ruta de enfoque: fluido ? concentrado ? límite (voz guía en el contador)
+- Ciclos secuenciales de misión
+- Historial de rendimiento y auto-regulación de tiempo heredado
+- **Termodinámica atencional v2:** dominio fluido, fricción, resistencia del día (comparativa vs ayer)
+
+**Requiere:** Planificación Base.
+
+**Frase de venta:** *“Si pierdes un día de producción al mes por mal ritmo, esto se paga solo.”*
+
+**Stack Producción:** Base + Operativo ? **$59.98/mes** ? ~**$18/mes** para ti.
 
 ---
 
-## 11. Para Gilson (admin)
+### 3.4 Espejo · Corazón Sabio (entrada al ecosistema)
 
-- Crear código: POST `/api/admin/sellers` con `seller_code`, `seller_name`  
-- Ver ventas: Admin Gilson ? pestaña **Vendedores** o GET `/api/admin/seller-sales`  
-- Marcar comisión pagada: botón en admin o POST `/api/admin/seller-sales/:id/paid`  
-- Log local: `data/seller-sales.json` en servidor
+**Para quién:** quien aún no confía en pagar planificación; necesita diagnóstico primero.
+
+**Incluye:** Doctor IA, interfaz de dolor, patrón de boicot, créditos de diagnóstico.
+
+**Rol en el embudo:** puerta de entrada ? luego upsell a Planificación Base.
+
+**Comisión:** 30% del pago único (~$5.10), no recurrente.
 
 ---
 
-*SISTEMICAR © 2026 · Lima, Perú*
+## 4. Matriz de beneficios (lo que seduces)
+
+Usa **dolor ? resultado ? prueba en la app**, no lista de funciones técnicas.
+
+| Persona | Dolor típico | Resultado prometido | Qué mostrar en demo (5 min) |
+|---------|--------------|---------------------|-----------------------------|
+| Estudiante / tiempo libre | Día “se fue” sin bloques cerrados | Bloques 3+3 cerrados + PS del día | Segmento ? desglosador situación ? cerrar 1 bloque |
+| Emprendedor / proyectos | Muchas ideas, poco avance visible | Peldaños conquistados + oleada activa | Hub proyectos ? vínculo a segmento |
+| Producción / costura | Unidades sin ritmo; autoengaño al cerrar | Unidades + récord + termo vs ayer | Desglosador tiempo ? 2–3 subs ? panel termodinámica |
+| Persona con Espejo | Sabe que se sabotea pero no cómo medirlo | Diagnóstico + plan con flota | Espejo ? luego “tu día necesita segmentos” |
+
+### Beneficios transversales (todos los planes con Base)
+
+1. **Cierre consciente del día** — no solo “tareas hechas”, sino segmentos y vehículos con estado cumplido/archivado.
+2. **Profundidad real** — 4 ejes con detección automática de nivel (omisión ? reto); premia el esfuerzo de pensar antes de actuar.
+3. **Economía de hábito** — PS diarios; el cerebro recibe recompensa por cerrar, no por abrir apps.
+4. **Datos vs percepción** — termodinámica compara hoy vs ayer (dominio fluido, fricción, subs completados en desglosador).
+5. **No es Notion/Todoist** — vendes **ritmo, cierre y medición de fricción**, no listas infinitas.
+
+### Beneficios exclusivos por add-on
+
+| Add-on | Beneficio clave |
+|--------|-----------------|
+| Soberanía del día | Cierra bloques en tiempo libre sin calendario corporativo |
+| Operativo | Ritmo por unidad + récord + ruta fluido/concentrado/límite con voz |
+| Proyectos (vía Soberanía) | Escalera de peldaños y claridad/oleada hacia un norte |
+
+---
+
+## 5. Diferenciación (objeciones frecuentes)
+
+**“¿Por qué no uso Notion / Google Calendar?”**  
+Porque aquí pagas por **cierre medido y ritmo**, no por almacenar notas. El sistema pregunta si cumpliste, archivaste con reflexión, y cuánta fricción mental tuviste — no si “pusiste un checkbox”.
+
+**“¿Es muy complicado?”**  
+Hay **Express** (nombre + tipo de fin en 30 segundos) y **Profundo** (7 pasos cuando la misión importa). El desglosador es para quien ya trabaja en bloques.
+
+**“¿Y si no renuevo?”**  
+El cliente pierde acceso al módulo; tú dejas de ganar comisión ese mes. Tu incentivo alineado con **retener** al usuario (onboarding y primer cierre en 48 h).
+
+**“¿Incluye todo SISTEMICAR?”**  
+**No.** No vendas Alquimia, Radar, Depósito, bundles “todo incluido” ni módulos “en camino”. Solo lo del catálogo de pagos.
+
+---
+
+## 6. Guion de venta (3 preguntas + cierre)
+
+1. **¿Cierras bloques en tiempo libre o cuentas unidades en trabajo repetitivo?**  
+   - Tiempo libre ? Stack Estudiante (Soberanía del día).  
+   - Unidades/ritmo ? Stack Producción (Operativo).
+
+2. **¿Has perdido días creyendo que produjiste y al cerrar faltó mucho?**  
+   - Sí ? Desglosador tiempo + termodinámica. Demo de subs y comparativa vs ayer.
+
+3. **¿Comparas con Notion?**  
+   - Aquí pagas por **ritmo y cierre**, no por listas. Mostrar un desglosador cerrado con PS.
+
+**Cierre:**  
+*“Empieza con Base si quieres probar el día; si ya sabes que procrastinas o produces por unidades, el stack completo te sale menos que dos cafés a la semana y te paga comisión recurrente solo si te quedas — yo gano cuando tú realmente usas el sistema.”*
+
+---
+
+## 7. Flujo operativo del vendedor
+
+1. Solicita tu código a Gilson (WhatsApp).
+2. Comparte: `https://[tu-dominio]/pagos?ref=TU-CODIGO`
+3. El cliente elige plan y paga (MercadoPago con ref; otros medios coordinados).
+4. Cada **renovación mensual** con ese cliente activo genera nueva comisión 30%.
+5. Gilson marca pagos en panel admin (`/admin-gilson` ? pestaña Vendedores).
+
+**Kit en la app:** `/vendedores-planificacion` (misma info resumida + copiar link).
+
+---
+
+## 8. Qué NO prometer (lista roja)
+
+- Módulos en desarrollo (Alquimia, Umbral, Radar, Mentor, etc.)
+- “Todo incluido” o precios que no aparecen en `/pagos`
+- Que la app planifica por ti sin que el usuario cierre vehículos/subs
+- Resultados garantizados (“bajarás procrastinación 80%”) — vende **medición y método**
+- Comisión infinita si el cliente cancela — **si deja de pagar, se corta el 30%**
+
+---
+
+## 9. Inventario interno (estado producto · jun 2026)
+
+Para no sobreprometer en demos:
+
+| Área | Estado | Comentario vendedor |
+|------|--------|---------------------|
+| Segmentos + Flota + 4 ejes | Producción | Core estable |
+| Desglosador situación + proyectos | Producción | Stack Estudiante |
+| Desglosador tiempo + ruta voz | Producción | Stack Producción |
+| Termodinámica v2 (resistencia, dominio fluido) | Producción | Mejor tras sync de subs |
+| Claridad mental / oleada en proyectos | En despliegue | Mencionar solo si el cliente ya lo ve en su cuenta |
+| Pagos recurrentes MP + ref vendedor | Producción | Verificar dominio de producción |
+
+---
+
+## 10. Elevator pitch (copiar/pegar)
+
+> **SISTEMICAR Planificación** es el motor de tu día: divides el tiempo en segmentos, lanzas misiones en la Flota y cierras bloques con desglosadores que miden ritmo y fricción mental — no es otra lista. Para estudiantes, **Soberanía del día**; para producción, **Operativo** con unidades y récord. Tú ganas **30% cada mes** que tu referido siga pagando; si cancela, se corta. ¿Cierras bloques o cuentas unidades? Te digo el stack en un minuto.
+
+---
+
+## 11. Documentos relacionados
+
+| Documento | Uso |
+|-----------|-----|
+| `ESPECIFICACION_planificacion.md` | Detalle técnico (equipo dev) |
+| `TERMODINAMICA_ATENCIONAL_V2.md` | Lenguaje de dominio fluido / fricción |
+| `/pagos` | Precios oficiales |
+| `/vendedores-planificacion` | Kit visual en app |
+
+---
+
+*SISTEMICAR · Planificación modular · Comisión vendedor 30% recurrente mientras el cliente mantenga la suscripción activa.*

@@ -1,7 +1,62 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { computeProyectoStats } from "./proyectos.ts";
+import type { SubTarea } from "./persistence.ts";
+import {
+  buildSubTareasResumenFromVehicle,
+  collectRamasIncompletas,
+  computeProyectoStats,
+} from "./proyectos.ts";
 import type { ProyectoPeldano } from "./proyectos.ts";
+
+function st(partial: Partial<SubTarea> & Pick<SubTarea, "id" | "texto">): SubTarea {
+  return {
+    completada: false,
+    creadaAt: 1,
+    ...partial,
+  };
+}
+
+describe("proyectos situacion arbol", () => {
+  it("buildSubTareasResumenFromVehicle anida detalles", () => {
+    const res = buildSubTareasResumenFromVehicle([
+      st({
+        id: "a",
+        texto: "Bloque A",
+        enDesgloseCronometro: true,
+        resultadoSituacion: "cumplido",
+        detalles: [
+          { id: "d1", texto: "Paso 1", entregado: true, creadaAt: 1 },
+          { id: "d2", texto: "Paso 2", entregado: false, creadaAt: 1 },
+        ],
+      }),
+    ]);
+    assert.equal(res.length, 1);
+    assert.equal(res[0]?.detalles?.length, 2);
+    assert.equal(res[0]?.detalles?.[0]?.entregado, true);
+  });
+
+  it("collectRamasIncompletas propone retomar y profundizar", () => {
+    const ramas = collectRamasIncompletas([
+      st({
+        id: "a",
+        texto: "Sin cerrar",
+        enDesgloseCronometro: true,
+        resultadoSituacion: "pendiente",
+      }),
+      st({
+        id: "b",
+        texto: "Hecho",
+        enDesgloseCronometro: true,
+        resultadoSituacion: "cumplido",
+        detalles: [{ id: "d1", texto: "Detalle X", entregado: false, creadaAt: 1 }],
+      }),
+    ]);
+    assert.equal(ramas.length, 2);
+    assert.equal(ramas[0]?.titulo, "Retomar: Sin cerrar");
+    assert.equal(ramas[1]?.titulo, "Profundizar: Hecho");
+    assert.deepEqual(ramas[1]?.plantillaSubTareas, ["Detalle X"]);
+  });
+});
 
 describe("proyectos", () => {
   it("computeProyectoStats suma conquistados y minutos", () => {

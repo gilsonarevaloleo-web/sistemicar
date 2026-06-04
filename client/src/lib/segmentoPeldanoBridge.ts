@@ -7,55 +7,36 @@ import {
   type ProyectoPeldanoResumen,
   type RutasMentalesSet,
 } from "./proyectos";
+import {
+  buildDefaultClaridadDireccion,
+  refreshClaridadPaso1,
+  resolveClaridadParaProyecto,
+} from "./claridadDireccion";
+import { getProyectoById } from "./proyectos";
 import { inferFaseAtencional, computeResistenciaDia } from "./termodinamicaAtencional";
 import type { FocusBandEvent } from "./focusBandLedger";
 
 export type { RutasMentalesSet, RutaMental, RutaMentalId, RutaMentalPaso } from "./proyectos";
 
-/** Tres rutas A/B/C con pasos 1→3 (actual + dos siguientes) para imagen mental. */
-export function buildDefaultRutasMentales(titulo: string): RutasMentalesSet {
-  const t = titulo.trim() || "Este bloque";
-  const pasos = (p1: string, p2: string, p3: string) => [
-    { numero: 1 as const, titulo: p1 },
-    { numero: 2 as const, titulo: p2 },
-    { numero: 3 as const, titulo: p3 },
-  ];
-  return {
-    rutaActiva: "a",
-    rutas: {
-      a: {
-        id: "a",
-        label: "Ruta A · Piloto automático",
-        perfil: "solo_fluido",
-        pasos: pasos(t, `${t} — ritmo sostenido`, `${t} — cierre antes del pitido`),
-      },
-      b: {
-        id: "b",
-        label: "Ruta B · Columna",
-        perfil: "fluido_concentrado",
-        pasos: pasos(`${t} — fluido`, `${t} — enderezar columna`, `${t} — sostener alineación`),
-      },
-      c: {
-        id: "c",
-        label: "Ruta C · Base y respiración",
-        perfil: "secuencia_completa",
-        pasos: pasos(`${t} — entrar`, `${t} — concentrado`, `${t} — base + respiración`),
-      },
-    },
-  };
-}
+export {
+  buildDefaultClaridadDireccion,
+  buildDefaultRutasMentales,
+  refreshClaridadPaso1,
+  refreshRutasTituloBase,
+  resolveClaridadParaProyecto,
+} from "./claridadDireccion";
 
-/** Actualiza paso 1 de cada ruta cuando cambia el título del segmento. */
-export function refreshRutasTituloBase(rutas: RutasMentalesSet, titulo: string): RutasMentalesSet {
-  const fresh = buildDefaultRutasMentales(titulo);
-  return {
-    rutaActiva: rutas.rutaActiva,
-    rutas: {
-      a: { ...fresh.rutas.a, pasos: [fresh.rutas.a.pasos[0], rutas.rutas.a.pasos[1], rutas.rutas.a.pasos[2]] },
-      b: { ...fresh.rutas.b, pasos: [fresh.rutas.b.pasos[0], rutas.rutas.b.pasos[1], rutas.rutas.b.pasos[2]] },
-      c: { ...fresh.rutas.c, pasos: [fresh.rutas.c.pasos[0], rutas.rutas.c.pasos[1], rutas.rutas.c.pasos[2]] },
-      },
-  };
+/** Resuelve claridad desde el Hub y opcionalmente ajusta paso 1 al nombre del bloque. */
+export async function resolveClaridadParaSegmentoVinculado(
+  userId: string,
+  proyectoId: string,
+  segmentoNombre: string
+): Promise<RutasMentalesSet | undefined> {
+  const [proyecto, peldanos] = await Promise.all([
+    getProyectoById(userId, proyectoId),
+    getPeldanosByProyecto(userId, proyectoId),
+  ]);
+  return resolveClaridadParaProyecto(proyecto ?? undefined, peldanos, segmentoNombre);
 }
 
 export async function ensurePeldanoFromSegmento(

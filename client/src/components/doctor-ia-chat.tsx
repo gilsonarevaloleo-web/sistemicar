@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
+import { DOCTOR_IA_OPEN_EVENT } from "@/lib/doctorIaBridge";
+import { PLANIFICACION_DOCTOR_QUICK_PROMPTS } from "@/lib/planificacionOnboarding";
+import {
+  resolvePlanificacionProfile,
+  type PlanificacionPlanProfile,
+} from "@/lib/planificacionProfile";
 import { useAuthContext } from "@/App";
 import { isOwner } from "@/lib/owner";
 import {
@@ -77,6 +83,9 @@ export function DoctorIAChat() {
 
   const isCreator = isOwner(user?.email);
   const currentModule = MODULE_NAMES[location] || null;
+  const isPlanificacionModule = location === "/planeacion";
+  const [planificacionProfile, setPlanificacionProfile] =
+    useState<PlanificacionPlanProfile>("base");
 
   useEffect(() => {
     const unsub = subscribeToPrincipiosMaestros(
@@ -139,9 +148,27 @@ export function DoctorIAChat() {
     const noop = (err: Error) => console.error("Progression sub error:", err);
     const unsub = subscribeToProgression(uid, (prog) => {
       setTotalPsAcumulados(prog.sovereigntyPoints || 0);
+      setPlanificacionProfile(
+        resolvePlanificacionProfile(
+          prog.subscriptionPlan,
+          user.email,
+          prog.rank,
+          prog.activeModules
+        )
+      );
     }, noop);
     return () => unsub();
-  }, [user?.uid]);
+  }, [user?.uid, user?.email]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ message?: string }>).detail;
+      setIsOpen(true);
+      if (detail?.message) setInput(detail.message);
+    };
+    window.addEventListener(DOCTOR_IA_OPEN_EVENT, handler);
+    return () => window.removeEventListener(DOCTOR_IA_OPEN_EVENT, handler);
+  }, []);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -296,6 +323,9 @@ export function DoctorIAChat() {
           moduleContext: currentModule,
           messageCount: messages.filter(m => m.role === "user").length + 1,
           notasEvolucionActiva: notasActivasDoctor,
+          ...(isPlanificacionModule
+            ? { planificacionProfile: planificacionProfile }
+            : {}),
         }),
       });
 
@@ -334,7 +364,34 @@ export function DoctorIAChat() {
     } finally {
       setLoading(false);
     }
-  }, [input, loading, user, principios, genomeLaws, energyLogs, vehicles, misiones, alquimias, bossStep, chispazos, hopeLogs, codices, expedientes, gordaRecord, bossStepsHistory, dailyPointsSemana, totalPsHoy, totalPsAcumulados, isCreator, sessionId, currentModule]);
+  }, [
+    input,
+    loading,
+    user,
+    principios,
+    genomeLaws,
+    energyLogs,
+    vehicles,
+    misiones,
+    alquimias,
+    bossStep,
+    chispazos,
+    hopeLogs,
+    codices,
+    expedientes,
+    gordaRecord,
+    bossStepsHistory,
+    dailyPointsSemana,
+    totalPsHoy,
+    totalPsAcumulados,
+    isCreator,
+    sessionId,
+    currentModule,
+    isPlanificacionModule,
+    planificacionProfile,
+    notasActivasDoctor,
+    messages,
+  ]);
 
   const sealAsLaw = async (messageText: string) => {
     const leyMatch = messageText.match(/LEY PROPUESTA:\s*(.+?)(?:\n|$)/);
@@ -366,8 +423,18 @@ export function DoctorIAChat() {
 
   const COBALT = "#1E40FF";
   const STEEL = "#6B7280";
-  const borderColor = isCreator ? COBALT : STEEL;
-  const accentGlow = isCreator ? "0 0 20px rgba(30,64,255,0.3)" : "0 0 15px rgba(107,114,128,0.2)";
+  const GOLD = "#D4AF37";
+  const borderColor = isCreator ? COBALT : isPlanificacionModule ? GOLD : STEEL;
+  const accentGlow = isCreator
+    ? "0 0 20px rgba(30,64,255,0.3)"
+    : isPlanificacionModule
+      ? "0 0 18px rgba(212,175,55,0.25)"
+      : "0 0 15px rgba(107,114,128,0.2)";
+  const chatTitle = isCreator
+    ? "MODO CREADOR"
+    : isPlanificacionModule
+      ? "GUÍA PLANIFICACIÓN"
+      : "DOCTOR IA - SISTEMICAR";
 
   const hiddenPages = ["/bienvenida", "/acceso", "/pagos", "/terminos-condiciones", "/libro-reclamaciones", "/embudo", "/gracias-compra", "/umbral-leads", "/ventas-espejo"];
   if (!user || hiddenPages.includes(location)) return null;
@@ -425,7 +492,7 @@ export function DoctorIAChat() {
                     style={{ color: borderColor }}
                     data-testid="text-chat-title"
                   >
-                    {isCreator ? "MODO CREADOR" : "DOCTOR IA - SISTEMICAR"}
+                    {chatTitle}
                   </h3>
                   {currentModule && (
                     <p className="text-[9px] text-slate-500">
@@ -458,10 +525,27 @@ export function DoctorIAChat() {
                   <p className="text-xs text-slate-400">
                     {isCreator
                       ? "Modo Entrenamiento activo. Analiza patrones, formula leyes, entrena al sistema."
-                      : "Escribe tu situaci\u00f3n. El Doctor IA aplicar\u00e1 las leyes de SISTEMICAR a tu caso."}
+                      : isPlanificacionModule
+                        ? "Pregunta cómo usar segmentos, la flota o desglosadores. Respuestas cortas con un paso concreto."
+                        : "Escribe tu situaci\u00f3n. El Doctor IA aplicar\u00e1 las leyes de SISTEMICAR a tu caso."}
                   </p>
+                  {isPlanificacionModule && !isCreator && (
+                    <div className="flex flex-wrap gap-1.5 justify-center mt-2">
+                      {PLANIFICACION_DOCTOR_QUICK_PROMPTS.map(q => (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() => setInput(q)}
+                          className="text-[9px] px-2 py-1 rounded-full border border-white/10 text-slate-400 hover:text-white hover:border-amber-500/40"
+                          data-testid={`doctor-quick-${q.slice(0, 12)}`}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {currentModule && (
-                    <p className="text-[10px] text-slate-500">
+                    <p className="text-[10px] text-slate-500 mt-2">
                       Analizando desde: {currentModule}
                     </p>
                   )}
@@ -547,7 +631,13 @@ export function DoctorIAChat() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={isCreator ? "Analiza, formula, entrena..." : "Describe tu situaci\u00f3n..."}
+                  placeholder={
+                    isCreator
+                      ? "Analiza, formula, entrena..."
+                      : isPlanificacionModule
+                        ? "Ej: \u00bfPor d\u00f3nde empiezo hoy?"
+                        : "Describe tu situaci\u00f3n..."
+                  }
                   className="flex-1 bg-transparent text-white text-xs resize-none focus:outline-none placeholder:text-slate-600 max-h-20"
                   rows={1}
                   data-testid="input-doctor-ia-message"

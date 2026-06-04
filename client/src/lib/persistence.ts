@@ -6458,18 +6458,45 @@ export async function deletePlantillaRutina(userId: string, plantillaId: string)
 
 export async function applyPlantillaToday(userId: string, plantilla: PlantillaRutina): Promise<Planilla> {
   const fecha = getTodayDateString();
-  const segmentos: SegmentoV5[] = plantilla.segmentos.map((t) => ({
-    id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    nombre: t.nombre,
-    horaInicio: t.horaInicio,
-    horaFin: t.horaFin,
-    color: t.color,
-    icono: t.icono,
-    estado: "pendiente",
-    eventos: [],
-    psGanados: 0,
-    ...(t.proyectoVinculadoId ? { proyectoVinculadoId: t.proyectoVinculadoId } : {}),
-  }));
+  const { resolveClaridadParaSegmentoVinculado, ensurePeldanoFromSegmento } = await import(
+    "./segmentoPeldanoBridge"
+  );
+
+  const segmentos: SegmentoV5[] = [];
+  for (const t of plantilla.segmentos) {
+    const id = `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    let seg: SegmentoV5 = {
+      id,
+      nombre: t.nombre,
+      horaInicio: t.horaInicio,
+      horaFin: t.horaFin,
+      color: t.color,
+      icono: t.icono,
+      estado: "pendiente",
+      eventos: [],
+      psGanados: 0,
+      ...(t.proyectoVinculadoId ? { proyectoVinculadoId: t.proyectoVinculadoId } : {}),
+    };
+    if (t.proyectoVinculadoId) {
+      const claridad = await resolveClaridadParaSegmentoVinculado(
+        userId,
+        t.proyectoVinculadoId,
+        t.nombre
+      );
+      if (claridad) {
+        seg = { ...seg, rutasMentales: claridad };
+        const { peldanoId } = await ensurePeldanoFromSegmento(userId, {
+          proyectoId: t.proyectoVinculadoId,
+          segmento: seg,
+          planillaFecha: fecha,
+          rutasMentales: claridad,
+        });
+        seg = { ...seg, proyectoPeldanoId: peldanoId };
+      }
+    }
+    segmentos.push(seg);
+  }
+
   const planilla: Planilla = {
     id: `planilla_${fecha}_${Date.now()}`,
     fecha,

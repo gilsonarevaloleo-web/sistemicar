@@ -225,6 +225,14 @@ import {
   sumMinutosCronometroPendientes,
   totalBudgetMinFromCronometro,
 } from "@/lib/situacionCupoDistrib";
+import {
+  computeEficienciaSituacionPct,
+  computeSituacionBolsaGanancia,
+  nextRetoNumero,
+  retoSituacionLabel,
+  sumMinutosRealesCronometro,
+} from "@/lib/situacionGanancia";
+import { SituacionBolsaGananciaPanel } from "@/components/SituacionBolsaGanancia";
 import { countCasaHechas, groupCasaByTexto, type CasaTextoCount } from "@/lib/situacionCasa";
 import {
   computeDesglosadorSessionDepthPS,
@@ -260,6 +268,7 @@ import {
   inferBandaBloque,
   psEspectroBloque,
   computeTermodinamicaCompareV2,
+  vehicleEnTermoJornada,
   FASE_ATENCIONAL_COLOR,
   FASE_ATENCIONAL_LABEL,
   getPlanillaDailySnapshotForDate,
@@ -275,9 +284,8 @@ import {
 } from "@/lib/proyectos";
 import type { RutasMentalesSet } from "@/lib/proyectos";
 import {
-  buildDefaultRutasMentales,
   ensurePeldanoFromSegmento,
-  refreshRutasTituloBase,
+  resolveClaridadParaProyecto,
   sealPeldanosFromSegmentos,
   countSegmentosListosParaSellar,
 } from "@/lib/segmentoPeldanoBridge";
@@ -317,6 +325,11 @@ import { scheduleSegmentNotifications, cancelAllNotifications, requestNotificati
 import { auth } from "@/lib/firebase";
 import { setActiveSegmento, registrarEvento, COMPONENTES } from "@/lib/evento-universal";
 import { ManualTriggerButton } from "@/components/master-manual-drawer";
+import { PlanificacionTutorial } from "@/components/planificacion/PlanificacionTutorial";
+import { PlanificacionPrimerDia } from "@/components/planificacion/PlanificacionPrimerDia";
+import { isTutorialDone } from "@/lib/planificacionOnboarding";
+import { progressionToProfile } from "@/lib/planificacionProfile";
+import { openDoctorIAChat } from "@/lib/doctorIaBridge";
 import AnilloConciencia from "@/components/AnilloConciencia";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import PlanificacionCockpit from "@/components/PlanificacionCockpit";
@@ -488,14 +501,14 @@ const getRecordSuggestions = (query: string, limit = 5): Array<{ titulo: string;
   } catch { return []; }
 };
 
-/** Opciones de energía al inicio / al cierre (Espejo). */
+/** Opciones de energía al inicio / al cierre (Espejo). Letras ASCII: evitan "?" en móviles sin fuente Unicode. */
 const ENERGIA_ESPEJO_OPTIONS = [
-  { id: "fluido" as const, label: "Fluido", icon: "~", desc: "Sin presión" },
-  { id: "concentrado" as const, label: "Concentrado", icon: "●", desc: "Foco activo" },
-  { id: "limite" as const, label: "Al Límite", icon: "▲", desc: "Alta presión" },
+  { id: "fluido" as const, label: "Fluido", badge: "F", desc: "Sin presión" },
+  { id: "concentrado" as const, label: "Concentrado", badge: "C", desc: "Foco activo" },
+  { id: "limite" as const, label: "Al límite", badge: "L", desc: "Alta presión" },
 ];
 
-/** Payload del modal único «¿Con qué energía terminas?» (todos los tipos de vehículo). */
+/** Payload del modal «Cierre consciente» — energía al terminar (todos los tipos de vehículo). */
 type CierreEnergiaModalPayload =
   | { kind: "flota"; vehicleId: string; status: "cumplido" | "archivado" }
   | { kind: "investigador"; vehicleId: string; cumplido: boolean; cantidadRealizada: number }
@@ -580,6 +593,13 @@ type SituacionDesgloseSummary = {
   psDetalles: number;
   psTotal: number;
   minutosBloque: number;
+  minutosGanados: number;
+  minutosEnCola: number;
+  minutosAdelanto: number;
+  minutosGanadosSesion: number;
+  minutosReales: number;
+  eficienciaPct: number | null;
+  retoNumero: number;
   casaHechas: number;
   casaPorTexto: CasaTextoCount[];
   mensaje: string;
@@ -599,6 +619,10 @@ function computeSituacionDesgloseSummary(vehicle: Vehicle): SituacionDesgloseSum
   const minutosBloque = sc?.bloqueInicioAt
     ? Math.max(1, Math.round((Date.now() - sc.bloqueInicioAt) / 60000))
     : 0;
+  const bolsa = computeSituacionBolsaGanancia(vehicle.subTareas || [], sc);
+  const minutosGanados = bolsa.minutosGanadosReto;
+  const minutosReales = sumMinutosRealesCronometro(vehicle.subTareas || []);
+  const eficienciaPct = computeEficienciaSituacionPct(minutosGanados, minutosReales);
   const psTotal = psFilas + psProfundidad + psDetalles;
   const allCasaItems = (vehicle.subTareas || []).flatMap(st => (st.detalles || []).filter(d => d.casa));
   const casaHechas = countCasaHechas(allCasaItems);
@@ -626,6 +650,13 @@ function computeSituacionDesgloseSummary(vehicle: Vehicle): SituacionDesgloseSum
     psDetalles,
     psTotal,
     minutosBloque,
+    minutosGanados,
+    minutosEnCola: bolsa.minutosEnCola,
+    minutosAdelanto: bolsa.minutosAdelanto,
+    minutosGanadosSesion: bolsa.minutosGanadosSesion,
+    minutosReales,
+    eficienciaPct,
+    retoNumero: bolsa.retoNumero,
     casaHechas,
     casaPorTexto,
     mensaje,
@@ -1008,6 +1039,19 @@ export default function Planeacion() {
   const [centinelaEsperaSec, setCentinelaEsperaSec] = useState(0);
   const [centinelaBlockReason, setCentinelaBlockReason] = useState<string | null>(null);
   const [showDesglosadorCTA, setShowDesglosadorCTA] = useState(false);
+  const [showPlanTutorial, setShowPlanTutorial] = useState(false);
+
+  const planificacionProfile = useMemo(
+    () => progressionToProfile(progression, user?.email),
+    [progression, user?.email]
+  );
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    if (!isTutorialDone(user.uid)) {
+      setShowPlanTutorial(true);
+    }
+  }, [user?.uid]);
 
   const [titulo, setTitulo] = useState("");
   const [criterioFin, setCriterioFin] = useState<CriterioFin>("tiempo");
@@ -1104,9 +1148,7 @@ export default function Planeacion() {
   const [nuevoSegIcono, setNuevoSegIcono] = useState(SEGMENT_ICONS[0]);
   const [nuevoSegCentinelaEnabled, setNuevoSegCentinelaEnabled] = useState(true);
   const [nuevoSegProyectoId, setNuevoSegProyectoId] = useState("");
-  const [nuevoSegRutas, setNuevoSegRutas] = useState<RutasMentalesSet>(() =>
-    buildDefaultRutasMentales("")
-  );
+  const [nuevoSegRutas, setNuevoSegRutas] = useState<RutasMentalesSet | null>(null);
   const [expandedSegId, setExpandedSegId] = useState<string | null>(null);
   const segmentosAutoExpandRef = useRef(false);
   // --- RUTINAS ---
@@ -1156,6 +1198,7 @@ export default function Planeacion() {
     if (!user) return false;
     try {
       await awardSovereigntyPoints(user.uid, amount, source);
+      setDailyPS(getDailyPointsLocalSync(user.uid).total);
       return true;
     } catch (e) {
       console.error("[safeAwardPS]", e);
@@ -1512,10 +1555,7 @@ export default function Planeacion() {
   const todayTermoLive = useMemo(() => {
     const dayStartMs = getJournalDayStartMs();
     const jornadaVehicles = filterVehiclesForEntropy(
-      vehicles.filter(v => {
-        const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
-        return ts >= dayStartMs;
-      }),
+      vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs)),
       Date.now()
     );
     const balance = calcularBalanceConquistaJornada({
@@ -1557,7 +1597,7 @@ export default function Planeacion() {
   }, [planilla, vehicles, segmentTick]);
 
   const atencionLive = useMemo(() => {
-    const dayStartMs = getJournalDayStartMs();
+    const dayStartMs = getLimaDayStartMs();
     return computeAtencionPanoramicaDia({
       segmentos: planilla?.segmentos || [],
       nowMs: Date.now(),
@@ -2308,13 +2348,21 @@ export default function Planeacion() {
     setNuevoSegColor(SEGMENT_COLORS[0]);
     setNuevoSegIcono(SEGMENT_ICONS[0]);
     setNuevoSegProyectoId("");
-    setNuevoSegRutas(buildDefaultRutasMentales(""));
+    setNuevoSegRutas(null);
   };
 
   useEffect(() => {
-    if (!nuevoSegProyectoId) return;
-    setNuevoSegRutas(prev => refreshRutasTituloBase(prev, nuevoSegNombre));
-  }, [nuevoSegNombre, nuevoSegProyectoId]);
+    if (!user || !nuevoSegProyectoId) {
+      setNuevoSegRutas(null);
+      return;
+    }
+    const proy = proyectosHub.find(p => p.id === nuevoSegProyectoId);
+    if (!proy) return;
+    void getPeldanosByProyecto(user.uid, nuevoSegProyectoId).then(peldanos => {
+      const claridad = resolveClaridadParaProyecto(proy, peldanos, nuevoSegNombre.trim() || undefined);
+      if (claridad) setNuevoSegRutas(claridad);
+    });
+  }, [nuevoSegNombre, nuevoSegProyectoId, user, proyectosHub]);
 
   const addSegmento = async () => {
     if (!user || !nuevoSegNombre.trim() || !nuevoSegHoraInicio || !nuevoSegHoraFin || segmentoProgramando) return;
@@ -2337,7 +2385,7 @@ export default function Planeacion() {
     const iconoCapturado = nuevoSegIcono;
     const centinelaCapturado = nuevoSegCentinelaEnabled;
     const proyectoCapturado = nuevoSegProyectoId;
-    const rutasCapturadas = proyectoCapturado ? nuevoSegRutas : undefined;
+    const rutasCapturadas = proyectoCapturado && nuevoSegRutas ? nuevoSegRutas : undefined;
 
     let seg: SegmentoV5 = {
       id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2515,8 +2563,9 @@ export default function Planeacion() {
     if (!user || !planilla) return;
     const seg = planilla.segmentos.find(s => s.id === segId);
     if (!seg) return;
-    const dayStart = getJournalDayStartMs();
     const nowMs = Date.now();
+    // HH:mm de segmentos anclado a medianoche Lima (igual que UI y checkPuertaAtencion)
+    const dayStart = getLimaDayStartMs(nowMs);
     if (!isWithinPuertaWindow(nowMs, seg.horaInicio, dayStart)) {
       toast.warning("Ventana de puerta cerrada", {
         description: `Abre la puerta de atención solo ±5 min de ${seg.horaInicio}.`,
@@ -2549,7 +2598,9 @@ export default function Planeacion() {
     if (!seg || seg.estado !== "activo") return;
 
     if (seg.horaFin) {
-      const dentroVentana = isWithinSegmentTimeMargin(Date.now(), seg.horaInicio, seg.horaFin, "fin", 5);
+      const nowMs = Date.now();
+      const dayStart = getLimaDayStartMs(nowMs);
+      const dentroVentana = isWithinSegmentTimeMargin(nowMs, seg.horaInicio, seg.horaFin, "fin", 5, dayStart);
       if (!dentroVentana) {
         toast.warning("La puerta está sellada", {
           description: `El cierre con intención (+2 PS) solo está disponible ±5 min de ${seg.horaFin}. Fuera de esa ventana el segmento pasará a entropía automáticamente.`,
@@ -3319,21 +3370,28 @@ export default function Planeacion() {
     }
   };
 
-  const reconcileDesglosadorDepthPS = useCallback((
+  const reconcileDesglosadorDepthPS = useCallback(async (
     vehicleId: string,
     options?: { silent?: boolean; sourceLabel?: string; resetGranted?: number }
-  ): number => {
-    if (!user) return 0;
+  ): Promise<{ grantedTotal: number; awardedNow: number }> => {
+    if (!user) return { grantedTotal: 0, awardedNow: 0 };
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
     if (!vehicle || vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo") {
-      return vehicle?.desglosadorBloqueDepthPsGranted ?? 0;
+      return {
+        grantedTotal: vehicle?.desglosadorBloqueDepthPsGranted ?? 0,
+        awardedNow: 0,
+      };
     }
 
     const elapsedSec = getDesglosadorSessionElapsedSec(vehicle);
     const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
     const depthGranted = options?.resetGranted ?? vehicle.desglosadorBloqueDepthPsGranted ?? 0;
     const delta = totalDepthPs - depthGranted;
-    if (delta <= 0) return depthGranted;
+    if (delta <= 0) return { grantedTotal: depthGranted, awardedNow: 0 };
+
+    const label = options?.sourceLabel ?? "Profundidad desglosador (sesión)";
+    const ok = await safeAwardPS(delta, label);
+    if (!ok) return { grantedTotal: depthGranted, awardedNow: 0 };
 
     const newGranted = totalDepthPs;
     const patchVehicles = (list: Vehicle[]) =>
@@ -3346,8 +3404,6 @@ export default function Planeacion() {
       console.warn("[reconcileDesglosadorDepthPS] localStorage save failed:", e);
     }
 
-    const label = options?.sourceLabel ?? "Profundidad desglosador (sesión)";
-    void safeAwardPS(delta, label);
     if (!options?.silent) {
       const hoursDone = Math.floor(elapsedSec / 3600);
       const hourAward = hoursDone > 0 ? depthAwardForHour(hoursDone) : delta;
@@ -3359,11 +3415,11 @@ export default function Planeacion() {
         duration: 3200,
       });
     }
-    return newGranted;
+    return { grantedTotal: newGranted, awardedNow: delta };
   }, [user, safeAwardPS]);
 
   const handleDesglosadorDepthTick = useCallback((vehicleId: string) => {
-    reconcileDesglosadorDepthPS(vehicleId, { silent: false });
+    void reconcileDesglosadorDepthPS(vehicleId, { silent: false });
   }, [reconcileDesglosadorDepthPS]);
 
   const handleDesglosadorUpdate = (vehicleId: string, updatedSubs: SubVehiculo[], opts?: { resetDepth?: boolean; silentDepth?: boolean }) => {
@@ -3386,11 +3442,11 @@ export default function Planeacion() {
     }
 
     if (opts?.resetDepth) {
-      reconcileDesglosadorDepthPS(vehicleId, { silent: true, resetGranted: 0 });
+      void reconcileDesglosadorDepthPS(vehicleId, { silent: true, resetGranted: 0 });
     } else if (opts?.silentDepth) {
-      reconcileDesglosadorDepthPS(vehicleId, { silent: true });
+      void reconcileDesglosadorDepthPS(vehicleId, { silent: true });
     } else {
-      reconcileDesglosadorDepthPS(vehicleId, { silent: false });
+      void reconcileDesglosadorDepthPS(vehicleId, { silent: false });
     }
   };
 
@@ -3469,7 +3525,8 @@ export default function Planeacion() {
     }
 
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
-    const depthPsGranted = reconcileDesglosadorDepthPS(vehicleId, { silent: true });
+    const { grantedTotal: depthPsGranted, awardedNow: depthPsAwardedNow } =
+      await reconcileDesglosadorDepthPS(vehicleId, { silent: true });
     const closePatch = {
       status: "cumplido" as const,
       cierreAt,
@@ -3486,15 +3543,19 @@ export default function Planeacion() {
     triggerConquistaPulse();
 
     try {
-      const subsPsBefore = sumDesglosadorSubsPsAlreadyGranted(subs);
+      const latestSubs = vehiclesRef.current.find(v => v.id === vehicleId)?.subVehiculos ?? subsConRuta;
+      const subsPsBefore = sumDesglosadorSubsPsAlreadyGranted(latestSubs);
       const { subs: subsSettled, subsPsAwarded, cycleClosePs } = await settleDesglosadorCyclePoints(
         vehicle.titulo,
-        subsConRuta,
+        latestSubs,
         safeAwardPS
       );
       const subsPsTotal = subsPsBefore + subsPsAwarded;
-      const displaySessionPs = subsPsTotal + cycleClosePs + depthPsGranted;
+      const sessionTotalPs = subsPsTotal + cycleClosePs + depthPsGranted;
+      const closeDeltaPs = subsPsAwarded + cycleClosePs + depthPsAwardedNow;
       const psRutaInSubs = psRuta;
+
+      setDailyPS(getDailyPointsLocalSync(user.uid).total);
 
       await updateVehicle(user.uid, vehicleId, {
         status: "cumplido",
@@ -3519,30 +3580,29 @@ export default function Planeacion() {
           user.uid,
           { ...vehicle, ...closePatch, duracionFinal, subVehiculos: subsSettled, ...(rutaCruzada ? { rutaCruzada } : {}) },
           subsSettled,
-          displaySessionPs
+          sessionTotalPs
         );
       }
       if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
       registrarEvento(COMPONENTES.PLANIFICACION);
-      const justClosedSubs = subsPsAwarded + cycleClosePs;
       toast.success(
-        justClosedSubs > 0
-          ? `+${justClosedSubs} PS — Ciclo cerrado`
-          : `Ciclo cerrado · ${displaySessionPs} PS en esta sesión`,
+        closeDeltaPs > 0
+          ? `+${closeDeltaPs} PS — Ciclo cerrado`
+          : "Ciclo cerrado",
         {
           description: [
-            subsPsAwarded > 0
-              ? `+${subsPsAwarded} PS por ${cumplidos} sub${cumplidos !== 1 ? "s" : ""} cumplido${cumplidos !== 1 ? "s" : ""} (2 base c/u + ruta).`
-              : subsPsTotal > 0
-                ? `${subsPsTotal} PS de subs ya en tu barra (${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""}).`
-                : cumplidos > 0
-                  ? `${cumplidos} sub cumplido${cumplidos !== 1 ? "s" : ""} — revisa que cada uno esté marcado cumplido.`
-                  : "",
+            closeDeltaPs > 0 ? "Sumados ahora a tu barra del día." : "",
+            subsPsBefore > 0 && subsPsAwarded === 0
+              ? `${subsPsBefore} PS de subs ya estaban en la barra (${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""}).`
+              : subsPsAwarded > 0
+                ? `+${subsPsAwarded} PS por ${cumplidos} sub${cumplidos !== 1 ? "s" : ""} cumplido${cumplidos !== 1 ? "s" : ""}.`
+                : "",
             cycleClosePs > 0 ? `+${cycleClosePs} PS cierre de ciclo.` : "",
-            depthPsGranted > 0 ? `+${depthPsGranted} PS profundidad de sesión (por horas activas).` : "",
-            psRutaInSubs > 0 ? `Ruta de enfoque incluida en los subs (+${psRutaInSubs} PS total ruta).` : "",
+            depthPsAwardedNow > 0 ? `+${depthPsAwardedNow} PS profundidad de sesión.` : "",
+            psRutaInSubs > 0 ? `Ruta de enfoque incluida (+${psRutaInSubs} PS en subs).` : "",
             fallados > 0 ? `${fallados} fallado${fallados !== 1 ? "s" : ""} sin PS.` : "",
+            `Total sesión: ${sessionTotalPs} PS.`,
             duracionFinal > 0 ? `${duracionFinal} min total.` : "",
           ].filter(Boolean).join(" "),
           style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
@@ -3806,6 +3866,11 @@ export default function Planeacion() {
       activo: false,
       bloqueInicioAt: sc!.bloqueInicioAt,
       depthBlockPsGranted: totalDepthPs,
+      retosCompletados: (sc!.retosCompletados ?? 0) + 1,
+      retoNumero: sc!.retoNumero ?? 1,
+      minutosGanadosReto: sc!.minutosGanadosReto ?? 0,
+      minutosGanadosSesion: sc!.minutosGanadosSesion ?? 0,
+      saldoAdelantoMin: sc!.saldoAdelantoMin ?? 0,
       ...(sc!.horaFinMs != null ? { horaFinMs: sc!.horaFinMs } : {}),
     };
 
@@ -3830,6 +3895,20 @@ export default function Planeacion() {
           duracionMin: summary.minutosBloque,
           psGanados: summary.psTotal,
           subTareas,
+          minutosGanados: summary.minutosGanados,
+          minutosGanadosSesion: summary.minutosGanadosSesion,
+          retoNumero: summary.retoNumero,
+        }).then(({ ideasCreadas }) => {
+          if (ideasCreadas > 0) {
+            toast.info(
+              `${ideasCreadas} rama${ideasCreadas !== 1 ? "s" : ""} guardada${ideasCreadas !== 1 ? "s" : ""} en Proyectos`,
+              {
+                description: "Ideas de profundidad pendiente — retómalas desde el Hub.",
+                style: { backgroundColor: PIZARRA, border: `1px solid ${CYAN}40`, color: CYAN },
+                duration: 5000,
+              }
+            );
+          }
         });
       }
       void playSituacionChimes(3);
@@ -3872,11 +3951,17 @@ export default function Planeacion() {
     const firstActivation = prevSc?.activo !== true;
     const bloqueInicioAt = firstActivation ? Date.now() : (prevSc?.bloqueInicioAt ?? Date.now());
     const sum = sumMinutosCronometroPendientes(subTareas);
+    const retoNumero = firstActivation ? nextRetoNumero(prevSc) : (prevSc?.retoNumero ?? 1);
     const situacionCronometro = {
       activo: true,
       bloqueInicioAt,
       horaFinMs: bloqueInicioAt + sum * 60000,
-      depthBlockPsGranted: prevSc?.depthBlockPsGranted ?? 0,
+      depthBlockPsGranted: firstActivation ? 0 : (prevSc?.depthBlockPsGranted ?? 0),
+      retoNumero,
+      retosCompletados: prevSc?.retosCompletados ?? 0,
+      minutosGanadosReto: firstActivation ? 0 : (prevSc?.minutosGanadosReto ?? 0),
+      minutosGanadosSesion: prevSc?.minutosGanadosSesion ?? 0,
+      saldoAdelantoMin: firstActivation ? 0 : (prevSc?.saldoAdelantoMin ?? 0),
     };
     const firstCron = subTareas.find(st => situacionFilaCronometroPendiente(st) && (st.minutosCupo ?? 0) > 0);
     let situacionCupoAnchor = vehicle.situacionCupoAnchor ?? undefined;
@@ -3908,8 +3993,12 @@ export default function Planeacion() {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor: situacionCupoAnchor ?? null });
       if (firstActivation) void requestNotificationPermission();
       void handleSyncSituacionCupoAnchor(vehicleId);
-      toast.success("Desglose con tiempo", {
-        description: `${lifted.length} subtarea(s) · Σ ${sum} min`,
+      const retoLabel = retoSituacionLabel(retoNumero);
+      toast.success(firstActivation && (prevSc?.retosCompletados ?? 0) > 0 ? retoLabel : "Desglose con tiempo", {
+        description:
+          firstActivation && (prevSc?.retosCompletados ?? 0) > 0
+            ? `${lifted.length} subtarea(s) · Σ ${sum} min · nuevo bloque`
+            : `${lifted.length} subtarea(s) · Σ ${sum} min`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 3200,
       });
@@ -4006,6 +4095,10 @@ export default function Planeacion() {
       ...sc,
       depthBlockPsGranted: totalDepthPs,
       saldoAdelantoMin: (sc.saldoAdelantoMin ?? 0) + saldoAdelantoMin,
+      minutosGanadosReto: (sc.minutosGanadosReto ?? 0) + minutosGanados,
+      minutosGanadosSesion: (sc.minutosGanadosSesion ?? 0) + minutosGanados,
+      retoNumero: sc.retoNumero ?? 1,
+      retosCompletados: sc.retosCompletados ?? 0,
       horaFinMs: pendingSum > 0 ? now + pendingSum * 60000 : now,
     };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
@@ -4015,8 +4108,8 @@ export default function Planeacion() {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void playSituacionChimes(chimesOnComplete);
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
-      await awardSovereigntyPoints(user.uid, 4, `Sub-tarea (cronómetro): ${targetSub.texto}`);
-      if (deltaDepth > 0) await awardSovereigntyPoints(user.uid, deltaDepth, `Profundidad bloque situación: ${vehicle.titulo}`);
+      await safeAwardPS(4, `Sub-tarea (cronómetro): ${targetSub.texto}`);
+      if (deltaDepth > 0) await safeAwardPS(deltaDepth, `Profundidad bloque situación: ${vehicle.titulo}`);
       if (bloqueListo) {
         toast.info("Bloque listo — toca «Recibir cierre del bloque» para ver el desglose de PS", {
           style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
@@ -4674,6 +4767,27 @@ export default function Planeacion() {
           </motion.div>
         )}
 
+        {user?.uid && planLayout === "full" && (
+          <PlanificacionPrimerDia
+            uid={user.uid}
+            profile={planificacionProfile}
+            dayStartMs={journalDayKey}
+            segmentos={planilla?.segmentos ?? []}
+            vehicles={vehicles}
+            onOpenTutorial={() => setShowPlanTutorial(true)}
+            onAskDoctor={openDoctorIAChat}
+          />
+        )}
+
+        {showPlanTutorial && user?.uid && (
+          <PlanificacionTutorial
+            uid={user.uid}
+            profile={planificacionProfile}
+            onComplete={() => setShowPlanTutorial(false)}
+            onAskDoctor={openDoctorIAChat}
+          />
+        )}
+
         <PlanificacionCockpit
             compact={compactLayout}
             onToggleCompact={() => setPlanLayout(v => (v === "compact" ? "full" : "compact"))}
@@ -4817,7 +4931,9 @@ export default function Planeacion() {
               <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: "#38BDF8" }}>
                 Termodinámica Atencional
               </p>
-              <p className="text-[7px] text-slate-500 mt-0.5">Frente a ayer · tu referencia, no el reloj</p>
+              <p className="text-[7px] text-slate-500 mt-0.5 leading-snug">
+                Frente a ayer · 1 sub cumplido = 1 bloque · dominio fluido solo cuenta subs con ruta activa
+              </p>
             </div>
             {compactLayout && (
               <button
@@ -4875,14 +4991,14 @@ export default function Planeacion() {
                           : GOLD;
                 const rowIcon =
                   row.key === "dominio_fluido"
-                    ? "~"
+                    ? "F"
                     : row.key === "ganancia"
                       ? "+"
                       : row.key === "friccion"
-                        ? RUTA_BANDA_META.concentrado.icon
-                        : row.key === "bloques"
-                          ? "#"
-                          : "*";
+                        ? "!"
+                      : row.key === "bloques"
+                        ? "#"
+                        : "*";
                 const improved = row.betterWhenHigher ? row.delta > 0 : row.delta < 0;
                 const worsened = row.betterWhenHigher ? row.delta < 0 : row.delta > 0;
                 const deltaColor = improved
@@ -5947,8 +6063,15 @@ export default function Planeacion() {
                         proyectos={proyectosHub}
                         compact
                       />
-                      {nuevoSegProyectoId && (
-                        <RutasMentalesEditor rutas={nuevoSegRutas} onChange={setNuevoSegRutas} />
+                      {nuevoSegProyectoId && nuevoSegRutas && (
+                        <RutasMentalesEditor
+                          rutas={nuevoSegRutas}
+                          onChange={setNuevoSegRutas}
+                          etiqueta={proyectosHub.find(p => p.id === nuevoSegProyectoId)?.etiqueta}
+                        />
+                      )}
+                      {nuevoSegProyectoId && !nuevoSegRutas && (
+                        <p className="text-[8px] text-slate-500">Cargando claridad desde el proyecto…</p>
                       )}
                       <div>
                         <label className="text-[9px] text-gray-500 uppercase tracking-wider mb-1.5 block">
@@ -6029,7 +6152,7 @@ export default function Planeacion() {
                         );
                         const activarVentanaAbierta = puertaVentanaAbierta;
                         const cierreVentanaAbierta = seg.horaFin
-                          ? isWithinSegmentTimeMargin(nowMsSeg, seg.horaInicio, seg.horaFin, "fin", 5)
+                          ? isWithinSegmentTimeMargin(nowMsSeg, seg.horaInicio, seg.horaFin, "fin", 5, dayStartSeg)
                           : true;
                         const discSeg = disciplinaBySegmentId.get(seg.id);
                         const discBadge = discSeg ? disciplinaBadgeLabel(discSeg) : null;
@@ -7030,7 +7153,7 @@ export default function Planeacion() {
                       </div>
 
                       <div className="p-3 rounded-xl border" style={{ backgroundColor: "rgba(139,92,246,0.05)", borderColor: "rgba(139,92,246,0.2)" }}>
-                        <p className="text-[9px] text-slate-400 uppercase tracking-widest mb-2.5">¿Con qué energía entras?</p>
+                        <p className="text-[9px] text-slate-400 uppercase tracking-widest mb-2.5">Con qué energía entras</p>
                         <div className="grid grid-cols-3 gap-2">
                           {ENERGIA_ESPEJO_OPTIONS.map(opt => (
                             <button
@@ -7045,7 +7168,7 @@ export default function Planeacion() {
                               }}
                               data-testid={`button-intensidad-${opt.id}`}
                             >
-                              <span className="text-sm leading-none">{opt.icon}</span>
+                              <span className="text-base font-black leading-none tabular-nums">{opt.badge}</span>
                               <span className="text-[8px] font-black uppercase tracking-wider mt-1">{opt.label}</span>
                               <span className="text-[7px] opacity-60 mt-0.5">{opt.desc}</span>
                             </button>
@@ -7166,7 +7289,9 @@ export default function Planeacion() {
             >
               <div className="text-center space-y-1">
                 <p id="cierre-energia-titulo" className="text-sm font-bold text-white">Cierre consciente</p>
-                <p className="text-[9px] text-slate-500">¿Con qué energía terminas? (tiempo, situación, verdad, descanso, investigador, desglosador). Opcional · alimenta el Espejo.</p>
+                <p className="text-[9px] text-slate-400 leading-relaxed">
+                  Con qué energía terminas (opcional). Elige F fluido, C concentrado o L al límite. Alimenta tu Espejo.
+                </p>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {ENERGIA_ESPEJO_OPTIONS.map(opt => (
@@ -7181,8 +7306,9 @@ export default function Planeacion() {
                       color: cierreEnergiaSeleccion === opt.id ? "#a78bfa" : "#64748b",
                     }}
                   >
-                    <span className="text-sm leading-none">{opt.icon}</span>
+                    <span className="text-base font-black leading-none tabular-nums">{opt.badge}</span>
                     <span className="text-[8px] font-black uppercase tracking-wider mt-0.5">{opt.label}</span>
+                    <span className="text-[7px] opacity-70">{opt.desc}</span>
                   </button>
                 ))}
               </div>
@@ -7262,7 +7388,7 @@ export default function Planeacion() {
                     </div>
                   </div>
                   <p id="situacion-desglose-celebracion-titulo" className="text-sm font-black uppercase tracking-wider" style={{ color: GOLD }}>
-                    Bloque de desglose cerrado
+                    Certificado · {retoSituacionLabel(summary.retoNumero)}
                   </p>
                   <p className="text-[10px] text-slate-400 leading-relaxed px-2">{summary.mensaje}</p>
                   <p className="text-[9px] font-bold text-slate-500 truncate px-4">{titulo}</p>
@@ -7270,11 +7396,11 @@ export default function Planeacion() {
 
                 <div className="relative grid grid-cols-3 gap-2 text-center">
                   <div className="p-2 rounded-xl" style={{ backgroundColor: "rgba(0,200,81,0.08)", border: "1px solid rgba(0,200,81,0.25)" }}>
-                    <p className="text-[7px] uppercase text-slate-500">Cumplidos</p>
+                    <p className="text-[7px] uppercase text-slate-500">Situaciones</p>
                     <p className="text-lg font-black" style={{ color: VERDE }}>{summary.cumplidos}</p>
                   </div>
                   <div className="p-2 rounded-xl" style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
-                    <p className="text-[7px] uppercase text-slate-500">Fallados</p>
+                    <p className="text-[7px] uppercase text-slate-500">Falladas</p>
                     <p className="text-lg font-black" style={{ color: "#f87171" }}>{summary.fallados}</p>
                   </div>
                   <div className="p-2 rounded-xl" style={{ backgroundColor: "rgba(148,163,184,0.08)", border: "1px solid rgba(148,163,184,0.2)" }}>
@@ -7282,6 +7408,40 @@ export default function Planeacion() {
                     <p className="text-lg font-black text-slate-300">{summary.minutosBloque}</p>
                   </div>
                 </div>
+
+                {(summary.minutosGanados > 0 || summary.minutosAdelanto > 0) && (
+                  <div
+                    className="relative rounded-xl p-3 space-y-2"
+                    style={{ backgroundColor: "rgba(0,255,195,0.06)", border: `1px solid ${CYAN}35` }}
+                  >
+                    <p className="text-[8px] font-black uppercase tracking-wider text-center" style={{ color: CYAN }}>
+                      Tiempo recuperado por eficiencia
+                    </p>
+                    <div className="flex justify-center items-baseline gap-2">
+                      <span className="text-2xl font-black font-mono tabular-nums" style={{ color: VERDE }}>
+                        +{summary.minutosGanados}
+                      </span>
+                      <span className="text-[9px] text-slate-500 uppercase">min ganados</span>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-3 text-[8px] text-slate-500">
+                      {summary.minutosEnCola > 0 && (
+                        <span>En cola: {summary.minutosEnCola} min</span>
+                      )}
+                      {summary.minutosAdelanto > 0 && (
+                        <span>Adelanto: {summary.minutosAdelanto} min</span>
+                      )}
+                      {summary.eficienciaPct != null && (
+                        <span style={{ color: CYAN }}>Eficiencia {summary.eficienciaPct}%</span>
+                      )}
+                    </div>
+                    {summary.minutosGanadosSesion > summary.minutosGanados && (
+                      <p className="text-[7px] text-center text-slate-600">
+                        Sesión acumulada: +{summary.minutosGanadosSesion} min en {summary.retoNumero} reto
+                        {summary.retoNumero !== 1 ? "s" : ""}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {summary.totalFilas > 0 && (
                   <div className="relative">
@@ -9359,15 +9519,27 @@ function VehicleCard({
                     </button>
                   )}
                   {vehicle.situacionCronometro?.activo === true && (
-                    <p className="text-[7px] font-mono mb-1.5" style={{ color: "rgba(148,163,184,0.55)" }}>
-                      Σ cupos: {sumMinutosCronometroPendientes(vehicle.subTareas || [])} min
-                      {(vehicle.situacionCronometro?.saldoAdelantoMin ?? 0) > 0 && (
-                        <span className="ml-2" style={{ color: "#00C851" }}>· +{vehicle.situacionCronometro!.saldoAdelantoMin} min adelantados</span>
-                      )}
-                      {vehicle.situacionCronometro?.horaFinMs != null && (
-                        <span className="ml-2 opacity-70">· ref fin {new Date(vehicle.situacionCronometro.horaFinMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                      )}
-                    </p>
+                    <>
+                      <SituacionBolsaGananciaPanel
+                        bolsa={computeSituacionBolsaGanancia(
+                          vehicle.subTareas || [],
+                          vehicle.situacionCronometro
+                        )}
+                        compact
+                      />
+                      <p className="text-[7px] font-mono mb-1.5" style={{ color: "rgba(148,163,184,0.55)" }}>
+                        Σ cupos: {sumMinutosCronometroPendientes(vehicle.subTareas || [])} min
+                        {vehicle.situacionCronometro?.horaFinMs != null && (
+                          <span className="ml-2 opacity-70">
+                            · ref fin{" "}
+                            {new Date(vehicle.situacionCronometro.horaFinMs).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        )}
+                      </p>
+                    </>
                   )}
                   {vehicle.situacionCronometro?.activo === true && onSituacionCronometroSetHoraFin && (
                     <div className="flex items-center gap-2 mb-2 flex-wrap" onClick={e => e.stopPropagation()}>
@@ -10582,9 +10754,14 @@ function CierreJornadaModal({
   return createPortal(
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[240] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.95)" }} data-testid="cierre-jornada-modal">
       <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl border p-4 space-y-3" style={{ backgroundColor: "#0a0a0a", borderColor: `${GOLD}30` }}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-black uppercase tracking-wider" style={{ color: GOLD, fontFamily: "'Playfair Display', Georgia, serif" }}>Cierre de Jornada</h2>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/5"><X size={18} className="text-slate-500" /></button>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-black uppercase tracking-wider" style={{ color: GOLD, fontFamily: "'Playfair Display', Georgia, serif" }}>Cierre de Jornada</h2>
+            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+              Revisa tu balance, cierra vehículos pendientes y sella para archivar el día.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-full hover:bg-white/5 shrink-0" aria-label="Cerrar"><X size={18} className="text-slate-500" /></button>
         </div>
 
         <BalanceConquistaPanel balance={balance} />
