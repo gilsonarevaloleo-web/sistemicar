@@ -34,12 +34,32 @@ describe("mergeSovereigntyPointsLogs", () => {
     assert.equal(merged.reduce((s, l) => s + l.amount, 0), 15);
   });
 
-  it("log reci�n creado suma al total del d�a tras merge", () => {
+  it("log recién creado suma al total del día tras merge", () => {
     const ms = Date.UTC(2026, 4, 18, 12, 0, 0);
     const merged = mergeSovereigntyPointsLogs([
       log("sp_new_segment_close", 2, ms),
     ]);
     assert.equal(merged.length, 1);
     assert.equal(merged.reduce((s, l) => s + l.amount, 0), 2);
+  });
+
+  it("conserva varios subs desglosador con mismo monto en la misma ventana", () => {
+    const ms = Date.UTC(2026, 4, 18, 12, 0, 0);
+    const merged = mergeSovereigntyPointsLogs([
+      {
+        id: "a",
+        amount: 2,
+        source: "Desglosador · Proyecto → Paso uno [sub_a]",
+        timestamp: new Date(ms),
+      },
+      {
+        id: "b",
+        amount: 2,
+        source: "Desglosador · Proyecto → Paso dos [sub_b]",
+        timestamp: new Date(ms + 2000),
+      },
+    ]);
+    assert.equal(merged.length, 2);
+    assert.equal(merged.reduce((s, l) => s + l.amount, 0), 4);
   });
 });

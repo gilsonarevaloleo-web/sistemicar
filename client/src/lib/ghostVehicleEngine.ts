@@ -22,8 +22,11 @@ export function isGhostActiveVehicle(
 
   const apertura = v.aperturaAt || (v.createdAt instanceof Date ? v.createdAt.getTime() : 0);
   if (apertura === 0) return true;
-  if (apertura < dayStartMs) return true;
   if (nowMs - apertura > GHOST_MAX_SESSION_MS) return true;
+  // Sesión activa que cruzó el rollover 05:00: sigue siendo real (no bloquear el anillo).
+  if (apertura < dayStartMs) {
+    return false;
+  }
 
   if (v.vehiculoPadreDesglosadorId) {
     const parent = vehiclesById?.get(v.vehiculoPadreDesglosadorId);

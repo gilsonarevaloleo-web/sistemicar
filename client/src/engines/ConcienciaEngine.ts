@@ -1,4 +1,10 @@
-import { getClockDayStartMs, getJournalDayStartMs, segmentWindowMs } from "@/lib/segmentTime";
+import {
+  getJournalDayStartMs,
+  getLimaDayStartMs,
+  getLimaMinutesFromMidnight,
+  getLimaSecondsFromMidnight,
+  segmentWindowMs,
+} from "@/lib/segmentTime";
 
 export type NivelFatiga = 'Optimo' | 'Distraccion' | 'Confusion' | 'Aburrimiento' | 'Cansancio';
 
@@ -207,17 +213,23 @@ export function getHalfDayLap(totalMinutes: number): 0 | 1 {
 }
 
 export function nowToHalfDayLap(nowMs: number = Date.now()): 0 | 1 {
-  const d = new Date(nowMs);
-  const min = d.getHours() * 60 + d.getMinutes();
-  return getHalfDayLap(min);
+  return limaNowToHalfDayLap(nowMs);
 }
 
 /** Puntero en tiempo local 12h + vuelta (lap) para indicar PM. */
 export function nowToClockDeg(nowMs: number = Date.now()): number {
-  const d = new Date(nowMs);
-  const min = d.getHours() * 60 + d.getMinutes();
-  const sec = d.getSeconds();
+  return limaNowToClockDeg(nowMs);
+}
+
+/** Puntero del anillo anclado a hora Lima (misma base que segmentos HH:mm). */
+export function limaNowToClockDeg(nowMs: number = Date.now()): number {
+  const min = getLimaMinutesFromMidnight(nowMs);
+  const sec = getLimaSecondsFromMidnight(nowMs) % 60;
   return clockMinutesToDeg(min) + sec * (0.5 / 60);
+}
+
+export function limaNowToHalfDayLap(nowMs: number = Date.now()): 0 | 1 {
+  return getHalfDayLap(getLimaMinutesFromMidnight(nowMs));
 }
 
 /** Convierte instante local (ms desde medianoche) a grados del reloj 12h. */
@@ -324,7 +336,7 @@ export function filterVehiculosCalendarioHoy(
   vehiculos: VehiculoAnilloLite[],
   now: number = Date.now()
 ): VehiculoAnilloLite[] {
-  const dayStartMs = getClockDayStartMs(now);
+  const dayStartMs = getJournalDayStartMs(now);
   const dayEndMs = dayStartMs + 86400000;
   return vehiculos.filter(v => {
     const session = vehicleSessionRange(v, now);
@@ -346,10 +358,10 @@ export function computeTimelineClockArcs(params: {
   now?: number;
 }): TimelineClockArc[] {
   const now = params.now ?? Date.now();
-  const dayStartMs = getClockDayStartMs(now);
-  const dayEndMs = dayStartMs + 86400000;
-  const nowMs = Math.min(now, dayEndMs);
-  const nowMin = getNowMinutesLocal(nowMs, dayStartMs);
+  const limaDayStartMs = getLimaDayStartMs(now);
+  const journalEndMs = getJournalDayStartMs(now) + 86400000;
+  const nowMs = Math.min(now, journalEndMs);
+  const nowMin = getNowMinutesLocal(nowMs, limaDayStartMs);
   const segmentos = params.segmentos ?? [];
   const hasSegments = segmentos.length > 0;
   const umbralMin = getUmbralConcienciaMin(segmentos);
@@ -362,7 +374,7 @@ export function computeTimelineClockArcs(params: {
 
   if (nowMin < umbralMin) return arcs;
 
-  const livedStartMs = dayStartMs + umbralMin * 60000;
+  const livedStartMs = limaDayStartMs + umbralMin * 60000;
   const livedEndMs = nowMs;
   if (livedEndMs <= livedStartMs) return arcs;
 
@@ -394,7 +406,7 @@ export function computeTimelineClockArcs(params: {
   const centinelaMerged = mergeMsIntervals(centinelaSessions);
 
   for (const interval of conquistaMerged) {
-    arcs.push(...intervalToClockArcs(interval, dayStartMs, "conquista"));
+    arcs.push(...intervalToClockArcs(interval, limaDayStartMs, "conquista"));
   }
 
   if (hasSegments) {
@@ -402,7 +414,7 @@ export function computeTimelineClockArcs(params: {
       const { start, end } = segmentWindowMs(
         seg.horaInicio || "00:00",
         seg.horaFin || "00:00",
-        dayStartMs
+        limaDayStartMs
       );
       const evalStart = Math.max(start, livedStartMs);
       const evalEnd = Math.min(end, nowMs);
@@ -415,14 +427,14 @@ export function computeTimelineClockArcs(params: {
         .filter((s): s is MsInterval => s != null);
       const gaps = subtractMsIntervals([window], mergeMsIntervals(coverInWindow));
       for (const gap of gaps) {
-        arcs.push(...intervalToClockArcs(gap, dayStartMs, "entropia"));
+        arcs.push(...intervalToClockArcs(gap, limaDayStartMs, "entropia"));
       }
     }
   }
 
   const centinelaNet = subtractMsIntervals(centinelaMerged, gapCoverMerged);
   for (const interval of centinelaNet) {
-    arcs.push(...intervalToClockArcs(interval, dayStartMs, "entropia"));
+    arcs.push(...intervalToClockArcs(interval, limaDayStartMs, "entropia"));
   }
 
   return arcs;
@@ -443,13 +455,14 @@ export function computeAnilloEstado(params: {
   now?: number;
 }): AnilloEstadoVivo {
   const now = params.now ?? Date.now();
-  const dayStartMs = getClockDayStartMs(now);
-  const nowMs = Math.min(now, dayStartMs + 86400000);
-  const nowMin = getNowMinutesLocal(nowMs, dayStartMs);
+  const limaDayStartMs = getLimaDayStartMs(now);
+  const journalEndMs = getJournalDayStartMs(now) + 86400000;
+  const nowMs = Math.min(now, journalEndMs);
+  const nowMin = getNowMinutesLocal(nowMs, limaDayStartMs);
   const segmentos = params.segmentos;
   const hasSegments = segmentos.length > 0;
   const umbralMin = getUmbralConcienciaMin(segmentos);
-  const deg = nowToClockDeg(nowMs);
+  const deg = limaNowToClockDeg(nowMs);
 
   if (nowMin < umbralMin) {
     return { deg, mode: "libre", umbralMin, sinSegmentos: !hasSegments };
@@ -458,12 +471,18 @@ export function computeAnilloEstado(params: {
   const todayVehicles = filterVehiculosCalendarioHoy(params.vehiculos, now);
 
   if (todayVehicles.some(v => isConquistaVehicle(v) && isActiveAtNow(v, nowMs))) {
-    return { deg, mode: "conquista", umbralMin, sinSegmentos: !hasSegments };
+    return {
+      deg,
+      mode: "conquista",
+      umbralMin,
+      sinSegmentos: !hasSegments,
+      centerGuide: "Sesión consciente activa",
+    };
   }
 
   if (
     hasSegments &&
-    isNowInPlannedGap(segmentos, todayVehicles, nowMs, dayStartMs)
+    isNowInPlannedGap(segmentos, todayVehicles, nowMs, limaDayStartMs)
   ) {
     return { deg, mode: "entropia", umbralMin, sinSegmentos: false };
   }
@@ -477,9 +496,10 @@ export function computeTimelineDayStats(params: {
   now?: number;
 }): TimelineDayStats {
   const now = params.now ?? Date.now();
-  const dayStartMs = getClockDayStartMs(now);
-  const nowMs = Math.min(now, dayStartMs + 86400000);
-  const nowMin = getNowMinutesLocal(nowMs, dayStartMs);
+  const limaDayStartMs = getLimaDayStartMs(now);
+  const journalEndMs = getJournalDayStartMs(now) + 86400000;
+  const nowMs = Math.min(now, journalEndMs);
+  const nowMin = getNowMinutesLocal(nowMs, limaDayStartMs);
   const segmentos = params.segmentos ?? [];
   const umbralMin = getUmbralConcienciaMin(segmentos);
 
@@ -487,7 +507,7 @@ export function computeTimelineDayStats(params: {
     return { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 };
   }
 
-  const livedStartMs = dayStartMs + umbralMin * 60000;
+  const livedStartMs = limaDayStartMs + umbralMin * 60000;
   const livedEndMs = nowMs;
   if (livedEndMs <= livedStartMs) {
     return { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 };
@@ -526,7 +546,7 @@ export function computeTimelineDayStats(params: {
       const { start, end } = segmentWindowMs(
         seg.horaInicio || "00:00",
         seg.horaFin || "00:00",
-        dayStartMs
+        limaDayStartMs
       );
       const evalStart = Math.max(start, livedStartMs);
       const evalEnd = Math.min(end, nowMs);
@@ -636,7 +656,7 @@ export function calcularMetricasAnilloConciencia(params: {
 
   const minutosPlaneados = sumMinutosPlaneados(params.segmentos);
   const umbralMin = getUmbralConcienciaMin(params.segmentos);
-  const nowMin = getNowMinutesLocal(now, getClockDayStartMs(now));
+  const nowMin = getNowMinutesLocal(now, getLimaDayStartMs(now));
   const ventanaVivaMin = Math.max(1, nowMin - umbralMin);
   const jornadaMin = minutosPlaneados > 0 ? minutosPlaneados : ventanaVivaMin;
   const planificacionPct = Math.min(100, (minutosPlaneados / MINUTOS_DIA) * 100);
@@ -689,7 +709,7 @@ export interface BalanceConquistaJornada {
 }
 
 function segmentDurationMin(horaInicio: string, horaFin: string): number {
-  const { durationMin } = segmentWindowMs(horaInicio, horaFin, getClockDayStartMs());
+  const { durationMin } = segmentWindowMs(horaInicio, horaFin, getLimaDayStartMs());
   return durationMin;
 }
 
@@ -701,7 +721,7 @@ export function calcularBalanceConquistaJornada(params: {
   dayStartMs?: number;
 }): BalanceConquistaJornada {
   const now = params.now ?? Date.now();
-  const segmentDayStartMs = params.dayStartMs ?? getClockDayStartMs(now);
+  const segmentDayStartMs = getLimaDayStartMs(now);
 
   const jornadaVehiculos = filterVehiculosJornadaActual(params.vehiculos, now);
   const metricas = calcularMetricasAnilloConciencia({

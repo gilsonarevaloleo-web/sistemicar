@@ -13,20 +13,32 @@ export function spLogEffectiveMs(entry: SpLogEntry): number {
   return match ? Number(match[1]) : 0;
 }
 
-/** Evita doble conteo local+Firebase (mismo monto en ventana de 10s, ids distintos). */
+const DEDUP_WINDOW_MS = 30_000;
+
+/**
+ * Evita doble conteo local+Firebase del mismo award (mismo monto, misma fuente exacta,
+ * timestamps cercanos). Awards distintos — p. ej. varios subs del desglosador — se conservan.
+ */
 export function mergeSovereigntyPointsLogs(logs: SpLogEntry[]): SpLogEntry[] {
   const seenIds = new Set<string>();
-  const seenKeys = new Set<string>();
   const merged: SpLogEntry[] = [];
+
   for (const entry of logs) {
     if (seenIds.has(entry.id)) continue;
+
     const ms = spLogEffectiveMs(entry);
-    const sourceKey = (entry.source || "Sistema").slice(0, 48);
-    const key = `${entry.amount}|${sourceKey}|${Math.floor(ms / 10000)}`;
-    if (seenKeys.has(key)) continue;
+    const exactSource = entry.source || "Sistema";
+
+    const isDuplicate = merged.some(kept => {
+      if (kept.amount !== entry.amount) return false;
+      if ((kept.source || "Sistema") !== exactSource) return false;
+      return Math.abs(spLogEffectiveMs(kept) - ms) <= DEDUP_WINDOW_MS;
+    });
+    if (isDuplicate) continue;
+
     seenIds.add(entry.id);
-    seenKeys.add(key);
     merged.push(entry);
   }
+
   return merged;
 }

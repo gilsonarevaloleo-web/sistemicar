@@ -628,6 +628,14 @@ export interface Vehicle {
     depthBlockPsGranted?: number;
     /** Minutos adelantados vs plan cuando no hay cola que reciba ganancia. */
     saldoAdelantoMin?: number;
+    /** Reto actual (1-based) dentro del vehículo situacional. */
+    retoNumero?: number;
+    /** Retos cerrados con «Recibir cierre del bloque» en esta sesión. */
+    retosCompletados?: number;
+    /** Minutos ganados por eficiencia en el reto activo o recién cerrado. */
+    minutosGanadosReto?: number;
+    /** Minutos ganados acumulados en todos los retos del vehículo. */
+    minutosGanadosSesion?: number;
   } | null;
   /** PS de profundidad por duración real del desglosador de tiempo (sesión); curva progresiva 5→6→8→12… sin tope. */
   desglosadorBloqueDepthPsGranted?: number;
@@ -2854,7 +2862,12 @@ export function subscribeToDailyPoints(
   const fetchAllDailyPoints = async () => {
     try {
       const result = await getDailyPoints(userId);
-      onData(result);
+      const local = getDailyPointsLocalSync(userId);
+      // Nunca bajar la barra: local puede tener awards aún no reflejados en Firebase/merge.
+      onData({
+        total: Math.max(result.total, local.total),
+        logs: local.total > result.total ? local.logs : result.logs,
+      });
     } catch (error) {
       onError(error as Error);
     }
