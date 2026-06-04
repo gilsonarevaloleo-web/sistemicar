@@ -40,6 +40,20 @@ export function getClockDayStartMs(fromMs: number = Date.now()): number {
   return getLocalDayStartMs(fromMs);
 }
 
+const LIMA_OFFSET_MS = -5 * 60 * 60 * 1000;
+
+/** Minutos desde medianoche Lima (UTC-5). */
+export function getLimaMinutesFromMidnight(fromMs: number = Date.now()): number {
+  const lima = new Date(fromMs + LIMA_OFFSET_MS);
+  return lima.getUTCHours() * 60 + lima.getUTCMinutes();
+}
+
+/** Segundos fraccionales desde medianoche Lima. */
+export function getLimaSecondsFromMidnight(fromMs: number = Date.now()): number {
+  const lima = new Date(fromMs + LIMA_OFFSET_MS);
+  return lima.getUTCHours() * 3600 + lima.getUTCMinutes() * 60 + lima.getUTCSeconds();
+}
+
 /** Inicio del día-jornada (después de dormir). Por defecto 05:00 Lima. */
 export const JOURNAL_DAY_START = "05:00";
 
