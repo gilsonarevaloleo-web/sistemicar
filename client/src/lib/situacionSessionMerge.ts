@@ -199,7 +199,10 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
   return applySituacionDesgloseMerge(merged, firebaseV, localV);
 }
 
-/** Interrupción huérfana: activa en Firebase/local pero el desglosador padre ya no está en pausa. */
+/**
+ * Interrupción situacional lanzada desde un desglosador que ya no espera ese cierre.
+ * Incluye: padre cerrado/archivado, padre sin pausa activa, o padre ausente del snapshot.
+ */
 export function isOrphanDesglosadorInterrupt(
   vehicle: Vehicle,
   vehiclesById: Map<string, Vehicle>
@@ -208,6 +211,7 @@ export function isOrphanDesglosadorInterrupt(
   const parentId = vehicle.vehiculoPadreDesglosadorId;
   if (!parentId) return false;
   const parent = vehiclesById.get(parentId);
-  if (!parent) return false;
-  return parent.status === "activo" && !parent.interrupcionActiva;
+  if (!parent) return true;
+  if (parent.status !== "activo") return true;
+  return !parent.interrupcionActiva;
 }

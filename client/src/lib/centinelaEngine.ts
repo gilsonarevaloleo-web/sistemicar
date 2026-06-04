@@ -43,11 +43,24 @@ export function releaseCentinela(): void {
 
 /** Libera suppress si quedó atascado tras un lanzamiento interrumpido. */
 export function maybeReleaseStaleSuppression(maxAgeMs = 60_000): void {
-  if (!suppressed) return;
   try {
     const t = parseInt(sessionStorage.getItem(SUPPRESS_AT_KEY) || "0", 10);
-    if (t > 0 && Date.now() - t > maxAgeMs) releaseCentinela();
-  } catch { }
+    if (t <= 0) {
+      suppressed = false;
+      return;
+    }
+    if (Date.now() - t > maxAgeMs) releaseCentinela();
+    else suppressed = true;
+  } catch {
+    releaseCentinela();
+  }
+}
+
+/** Al abrir Planificación: nunca dejar el centinela bloqueado por un lanzamiento anterior. */
+export function resetCentinelaLaunchGate(): void {
+  releaseCentinela();
+  resetCentinelaTimerState();
+  emitCentinelaUi({ esperaSec: 0, blockReason: null });
 }
 
 export function isCentinelaSuppressed(): boolean {

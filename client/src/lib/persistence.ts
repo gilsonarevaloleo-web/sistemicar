@@ -9,7 +9,8 @@ import {
   orderBy, 
   where, 
   limit,
-  serverTimestamp, 
+  serverTimestamp,
+  Timestamp,
   onSnapshot,
   getDocs,
   getDoc,
@@ -680,7 +681,106 @@ export function getLocalVehicles(): Vehicle[] {
   }
 }
 
-export function saveLocalVehicles(vehicles: Vehicle[]): void {
+/** Elimina campos `undefined` — Firestore rechaza documentos con valores undefined. */
+export function omitUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as Partial<T>;
+}
+
+function isFirestoreSentinel(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (value instanceof Date) return false;
+  return "_methodName" in (value as Record<string, unknown>);
+}
+
+/** Limpia `undefined` en objetos/arrays anidados antes de escribir en Firestore. */
+export function sanitizeForFirestore(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object") return value;
+  if (isFirestoreSentinel(value)) return value;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) {
+    return value.map(sanitizeForFirestore).filter(v => v !== undefined);
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    const cleaned = sanitizeForFirestore(v);
+    if (cleaned !== undefined) out[k] = cleaned;
+  }
+  return out;
+}
+
+async function persistVehicleToFirebase(
+  userId: string,
+  provisionalId: string,
+  vehicle: Omit<Vehicle, "id" | "createdAt" | "userId" | "status">,
+  clientRequestId: string,
+  aperturaAt: number
+): Promise<void> {
+  if (!isFirebaseConfigured() || !db) return;
+  try {
+    const path = getPrivatePath(userId, "vehicles");
+    const payload = sanitizeForFirestore({
+      ...vehicle,
+      aperturaAt,
+      userId,
+      status: "activo",
+      clientRequestId,
+    }) as Record<string, unknown>;
+    if (payload.tiempoInicio instanceof Date) {
+      payload.tiempoInicio = Timestamp.fromDate(payload.tiempoInicio);
+    }
+    payload.createdAt = serverTimestamp();
+    const docRef = await addDoc(collection(db, path), payload);
+    const latestLocal = getLocalVehicles();
+    const updatedLocal = latestLocal.map(v =>
+      v.id === provisionalId ? { ...v, id: docRef.id } : v
+    );
+    saveLocalVehicles(updatedLocal);
+    backupToLocal("vehicles", updatedLocal);
+    window.dispatchEvent(new CustomEvent("vehicles-updated"));
+    console.log(`[addVehicle] Firebase OK → ${docRef.id}`);
+  } catch (error) {
+    console.error("[addVehicle] Firebase background error:", error);
+    activateSovereignModeGlobal("Guardando vehículo localmente");
+  }
+}
+
+/** Incluye activos locales que Firebase aún no refleja (lanzamiento reciente, sync móvil). */
+export function mergeMissingLocalActives(sorted: Vehicle[], nowMs = Date.now()): Vehicle[] {
+  const existingLocal = getLocalVehicles();
+  const firebaseIds = new Set(sorted.map(v => v.id));
+  const firebaseClientRequestIds = new Set(
+    sorted.map(v => v.clientRequestId).filter(Boolean)
+  );
+  const snapshotById = new Map(sorted.map(v => [v.id, v]));
+  const missing = existingLocal.filter(v => {
+    if (v.status !== "activo" || v.autoVerdad) return false;
+    if (firebaseIds.has(v.id)) return false;
+    if (v.clientRequestId && firebaseClientRequestIds.has(v.clientRequestId)) return false;
+    if (wasVehicleRecentlyClosed(v.id)) return false;
+    if (isOrphanDesglosadorInterrupt(v, snapshotById)) return false;
+    return shouldPreserveLocalActivo(v, nowMs);
+  });
+  if (missing.length === 0) return sorted;
+  console.warn(
+    `[Vehicles] mergeMissingLocalActives: +${missing.length} activo(s) locales`,
+    missing.map(v => `${v.id}:${v.titulo}`)
+  );
+  const merged = [...missing, ...sorted];
+  merged.sort((a, b) => {
+    const aTime = a.createdAt?.getTime?.() || a.aperturaAt || 0;
+    const bTime = b.createdAt?.getTime?.() || b.aperturaAt || 0;
+    return bTime - aTime;
+  });
+  return merged;
+}
+
+export function saveLocalVehicles(vehicles: Vehicle[]): boolean {
   // Defense-in-depth: never reduce active vehicle count without an explicit close signal.
   // Multiple concurrent subscribers (Doctor IA, historial, radar, etc.) all call this
   // function. If ANY subscriber receives a Firebase snapshot missing an active vehicle
@@ -707,7 +807,23 @@ export function saveLocalVehicles(vehicles: Vehicle[]): void {
     console.warn(`[saveLocalVehicles] Preservando ${preserved.length} activo(s) no presentes en datos nuevos:`, preserved.map(v => `${v.id}:${v.titulo}`));
     vehicles = [...preserved, ...vehicles];
   }
-  localStorage.setItem(VEHICLES_KEY, JSON.stringify(vehicles));
+  try {
+    localStorage.setItem(VEHICLES_KEY, JSON.stringify(vehicles));
+    return true;
+  } catch (e) {
+    console.error("[saveLocalVehicles] No se pudo persistir vehículos:", e);
+    try {
+      const activos = vehicles.filter(v => v.status === "activo");
+      const recientes = vehicles
+        .filter(v => v.status !== "activo")
+        .slice(0, 40);
+      localStorage.setItem(VEHICLES_KEY, JSON.stringify([...activos, ...recientes]));
+      return true;
+    } catch (e2) {
+      console.error("[saveLocalVehicles] Reintento recortado falló:", e2);
+      return false;
+    }
+  }
 }
 
 // Per-vehicle-ID close tracking. Maps vehicleId → close timestamp.
@@ -983,39 +1099,7 @@ export function subscribeToVehicles(
         }
       }
 
-      // MERGE: include any locally-active vehicles that Firebase doesn't know about.
-      // Covers: (a) provisional-ID vehicles pending Firebase write,
-      //         (b) vehicles whose Firebase write failed silently.
-      // Note: fromCache snapshots with 0 docs exit early above (the subscriber already
-      // received localImmediate on mount), so merge runs for all non-empty snapshots.
-      // Per-ID tracking: only skip preservation for vehicles whose IDs were recently closed.
-      {
-        // Build lookup sets for deterministic identity matching
-        const firebaseIds = new Set(sortedWithSubs.map(v => v.id));
-        // Build set of clientRequestIds present in Firebase snapshot
-        const firebaseClientRequestIds = new Set(
-          sortedWithSubs.map(v => v.clientRequestId).filter(Boolean)
-        );
-        const localActivos = existingLocal.filter(v => v.status === "activo" && !v.autoVerdad);
-        const snapshotById = new Map(sortedWithSubs.map(v => [v.id, v]));
-        const nowMs = Date.now();
-        const orphanedActivos = localActivos.filter(v => {
-          if (firebaseIds.has(v.id)) return false;
-          if (v.clientRequestId && firebaseClientRequestIds.has(v.clientRequestId)) return false;
-          if (wasVehicleRecentlyClosed(v.id)) return false;
-          if (isOrphanDesglosadorInterrupt(v, snapshotById)) return false;
-          return shouldPreserveLocalActivo(v, nowMs);
-        });
-        if (orphanedActivos.length > 0) {
-          console.warn(`[Vehicles] Preservando ${orphanedActivos.length} activo(s) local(es) no en Firebase:`, orphanedActivos.map(v => `${v.id}:${v.titulo}`));
-          sortedWithSubs.unshift(...orphanedActivos);
-          sortedWithSubs.sort((a, b) => {
-            const aTime = a.createdAt?.getTime?.() || a.aperturaAt || 0;
-            const bTime = b.createdAt?.getTime?.() || b.aperturaAt || 0;
-            return bTime - aTime;
-          });
-        }
-      }
+      sortedWithSubs = mergeMissingLocalActives(sortedWithSubs);
 
       // Drop orphan desglosador interrupts (parent no longer paused) so they do not block Centinela.
       {
@@ -1049,62 +1133,29 @@ export async function addVehicle(
   userId: string,
   vehicle: Omit<Vehicle, "id" | "createdAt" | "userId" | "status">
 ): Promise<string> {
-  // Generate a stable client-side request ID that is saved both locally and in Firebase.
-  // This allows the subscription merge to deterministically identify whether a local
-  // provisional vehicle was already written to Firebase (even before localStorage is
-  // updated with the real Firestore document ID).
   const clientRequestId = `crq_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const provisionalId = `vehicle_${Date.now()}`;
   const aperturaAt = vehicle.aperturaAt ?? Date.now();
-  const provisionalVehicle: Vehicle = {
-    ...vehicle,
-    aperturaAt,
-    id: provisionalId,
-    userId,
-    status: "activo",
-    createdAt: new Date(),
-    clientRequestId
-  };
-  // Save locally FIRST — vehicle is never lost regardless of Firebase outcome
-  const existingLocal = getLocalVehicles();
-  existingLocal.unshift(provisionalVehicle);
-  saveLocalVehicles(existingLocal);
-  backupToLocal("vehicles", existingLocal);
-  window.dispatchEvent(new CustomEvent("vehicles-updated"));
-
-  if (isFirebaseConfigured() && db) {
-    try {
-      const path = getPrivatePath(userId, "vehicles");
-      console.log(`[addVehicle] Guardando "${vehicle.titulo}" en Firebase con status: activo, crqId: ${clientRequestId}`);
-      const docRef = await addDoc(collection(db, path), {
-        ...vehicle,
-        aperturaAt,
-        userId,
-        status: "activo",
-        createdAt: serverTimestamp(),
-        clientRequestId
-      });
-      console.log(`[addVehicle] OK → id: ${docRef.id}, titulo: "${vehicle.titulo}"`);
-      // Replace the provisional ID with the real Firebase ID in localStorage.
-      // Keep clientRequestId so any in-flight subscription snapshot can still
-      // reconcile the record before this update propagates.
-      const latestLocal = getLocalVehicles();
-      const updatedLocal = latestLocal.map(v =>
-        v.id === provisionalId ? { ...v, id: docRef.id } : v
-      );
-      saveLocalVehicles(updatedLocal);
-      backupToLocal("vehicles", updatedLocal);
-      window.dispatchEvent(new CustomEvent("vehicles-updated"));
-      return docRef.id;
-    } catch (error) {
-      console.error("[addVehicle] ERROR Firebase:", error);
-      activateSovereignModeGlobal("Guardando vehículo localmente");
-      // Vehicle already saved locally with provisional ID — no data loss
-      return provisionalId;
-    }
-  } else {
-    return provisionalId;
+  try {
+    const provisionalVehicle: Vehicle = {
+      ...vehicle,
+      aperturaAt,
+      id: provisionalId,
+      userId,
+      status: "activo",
+      createdAt: new Date(),
+      clientRequestId,
+    };
+    const existingLocal = getLocalVehicles();
+    existingLocal.unshift(provisionalVehicle);
+    saveLocalVehicles(existingLocal);
+    backupToLocal("vehicles", existingLocal);
+    window.dispatchEvent(new CustomEvent("vehicles-updated"));
+  } catch (error) {
+    console.error("[addVehicle] Guardado local falló (se continúa en memoria):", error);
   }
+  void persistVehicleToFirebase(userId, provisionalId, vehicle, clientRequestId, aperturaAt);
+  return provisionalId;
 }
 
 export async function updateVehicleStatus(
@@ -1141,11 +1192,11 @@ export async function updateVehicleStatus(
     try {
       const path = getPrivatePath(userId, "vehicles");
       const { updateDoc } = await import("firebase/firestore");
-      await updateDoc(doc(db, path, vehicleId), { 
+      await updateDoc(doc(db, path, vehicleId), omitUndefined({
         status,
         ...closeFields,
-        ...(status === "cumplido" ? { completedAt: serverTimestamp() } : {})
-      });
+        ...(status === "cumplido" ? { completedAt: serverTimestamp() } : {}),
+      }));
       console.log(`[updateVehicleStatus] OK → ${vehicleId} ahora es ${status}`);
       // Also update localStorage immediately — don't wait for the Firebase snapshot.
       // Without this, there's a window where localStorage still shows "activo" but
@@ -1192,7 +1243,7 @@ export async function updateVehicle(
     try {
       const path = getPrivatePath(userId, "vehicles");
       const { updateDoc } = await import("firebase/firestore");
-      await updateDoc(doc(db, path, vehicleId), updates);
+      await updateDoc(doc(db, path, vehicleId), omitUndefined(updates as Record<string, unknown>));
       if (updates.status === "cumplido" || updates.status === "archivado") {
         notifyVehicleClosed(vehicleId);
       }
@@ -2609,7 +2660,11 @@ function persistSpLogWithPrune(userId: string, logs: SovereigntyPointsLog[]): vo
 
   // Quota exceeded: prune old logs and retry once.
   // Keep most recent entries to preserve daily bar accuracy.
-  saveLocalSPLog(userId, logs.slice(0, 800));
+  try {
+    saveLocalSPLog(userId, logs.slice(0, 800));
+  } catch (e2) {
+    console.error("[persistSpLogWithPrune] Reintento recortado falló:", e2);
+  }
 }
 
 function isLogTimestampInDayRange(

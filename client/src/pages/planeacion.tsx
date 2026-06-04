@@ -158,6 +158,8 @@ import {
   releaseCentinela,
   resetCentinelaTimerState,
   suppressCentinela,
+  maybeReleaseStaleSuppression,
+  resetCentinelaLaunchGate,
   type CentinelaUiState,
 } from "@/lib/centinelaEngine";
 import {
@@ -1457,16 +1459,22 @@ export default function Planeacion() {
       const mergedIds = new Set(merged.map(v => v.id));
       const mergedById = new Map(merged.map(v => [v.id, v]));
       const nowMs = Date.now();
-      const rescued = vehiclesRef.current.filter(
-        v =>
-          v.status === "activo" &&
-          !v.autoVerdad &&
-          !mergedIds.has(v.id) &&
-          !closingInProgressRef.current.has(v.id) &&
-          !wasVehicleRecentlyClosed(v.id) &&
-          !isOrphanDesglosadorInterrupt(v, mergedById) &&
-          shouldPreserveLocalActivo(v, nowMs)
-      );
+      const rescueFrom = (list: Vehicle[]) =>
+        list.filter(
+          v =>
+            v.status === "activo" &&
+            !v.autoVerdad &&
+            !mergedIds.has(v.id) &&
+            !(v.clientRequestId && merged.some(m => m.clientRequestId === v.clientRequestId)) &&
+            !closingInProgressRef.current.has(v.id) &&
+            !wasVehicleRecentlyClosed(v.id) &&
+            !isOrphanDesglosadorInterrupt(v, mergedById) &&
+            shouldPreserveLocalActivo(v, nowMs)
+        );
+      const rescued = [
+        ...rescueFrom(vehiclesRef.current),
+        ...rescueFrom(getLocalVehicles()),
+      ].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i);
       if (rescued.length > 0) {
         console.warn(`[Vehicles] Rescatando ${rescued.length} activo(s) ausentes del snapshot:`, rescued.map(v => `${v.id}:${v.titulo}`));
         merged = [...rescued, ...merged];
@@ -1853,6 +1861,50 @@ export default function Planeacion() {
   const pausaInterrupcionLockRef = useRef<string | null>(null);
   vehiclesRef.current = vehicles;
 
+  useEffect(() => {
+    resetCentinelaLaunchGate();
+    maybeReleaseStaleSuppression(15_000);
+    setCierreEnergiaPending(null);
+    setCierreEnergiaSeleccion(null);
+    setCierreRutaSeleccion(new Set());
+    setShowCierreJornada(false);
+    setSituacionDesgloseCelebration(null);
+    setSaving(false);
+    setIsCreating(false);
+    setVehicleMode("selector");
+    setTipoFlotaSeleccionado(null);
+    closingInProgressRef.current.clear();
+    try {
+      const layout = localStorage.getItem("sistemicar-plan-layout");
+      if (layout !== "full") setPlanTab("operar");
+    } catch { /* ignore */ }
+    try {
+      const nowMs = Date.now();
+      const localRaw = getLocalVehicles();
+      const byId = new Map(localRaw.map(v => [v.id, v]));
+      const localActivos = localRaw.filter(
+        v =>
+          v.status === "activo" &&
+          !v.autoVerdad &&
+          !wasVehicleRecentlyClosed(v.id) &&
+          !isOrphanDesglosadorInterrupt(v, byId) &&
+          shouldPreserveLocalActivo(v, nowMs)
+      );
+      if (localActivos.length > 0) {
+        setVehicles(prev => {
+          const ids = new Set(prev.map(v => v.id));
+          const crqs = new Set(prev.map(v => v.clientRequestId).filter(Boolean));
+          const add = localActivos.filter(
+            la => !ids.has(la.id) && !(la.clientRequestId && crqs.has(la.clientRequestId))
+          );
+          return add.length > 0 ? [...add, ...prev] : prev;
+        });
+      }
+    } catch (e) {
+      console.warn("[Planeacion] sync local activos:", e);
+    }
+  }, []);
+
   const orphanInterruptSweepRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!user) return;
@@ -2073,6 +2125,11 @@ export default function Planeacion() {
     setDuracionDescansoM("");
     setTipoDescanso(null);
     proyectoLaunchRef.current = null;
+    setCierreEnergiaPending(null);
+    setCierreEnergiaSeleccion(null);
+    setCierreRutaSeleccion(new Set());
+    setCierreRutaSinUso(false);
+    setCierreRutaPatron(null);
   };
 
   const isNearDescanso = (): boolean => {
@@ -2098,8 +2155,19 @@ export default function Planeacion() {
   };
 
   const handleFlotaSave = async () => {
-    if (!user || !titulo.trim() || !tipoFlotaSeleccionado) return;
+    if (!user) {
+      toast.error("Inicia sesión para lanzar vehículos");
+      return;
+    }
+    if (!titulo.trim()) {
+      toast.error("Escribe un título para la misión");
+      return;
+    }
+    if (!tipoFlotaSeleccionado) return;
     setSaving(true);
+    resetCentinelaLaunchGate();
+    setCierreEnergiaPending(null);
+    setCierreEnergiaSeleccion(null);
     console.log(`[handleFlotaSave] Iniciando creación: "${titulo}" tipo: ${tipoFlotaSeleccionado}`);
     try {
       const flotaConfig = FLOTA_CONFIG[tipoFlotaSeleccionado];
@@ -2122,7 +2190,7 @@ export default function Planeacion() {
       } else if (tipoFlotaSeleccionado === "situacion") {
         criterio = "circunstancia";
         tipoTermino = "situacion";
-        detalle = terminoDetalle;
+        detalle = terminoDetalle.trim() || "Al cerrar este bloque";
       } else if (tipoFlotaSeleccionado === "descanso") {
         criterio = "circunstancia";
         tipoTermino = "omitido";
@@ -2208,8 +2276,10 @@ export default function Planeacion() {
               }))
           : undefined;
 
-      console.log(`[handleFlotaSave] Creando vehículo en Firebase...`);
-      const newVehicleId = await addVehicle(user.uid, {
+      console.log(`[handleFlotaSave] Guardando vehículo local primero...`);
+      let newVehicleId: string;
+      try {
+        newVehicleId = await addVehicle(user.uid, {
         titulo: titulo.trim(),
         criterioFin: criterio,
         criterioDetalle: detalle,
@@ -2243,7 +2313,16 @@ export default function Planeacion() {
         tipoDescanso: tipoFlotaSeleccionado === "descanso" ? (tipoDescanso || "microcarga") : undefined,
         microPasos: tipoFlotaSeleccionado === "descanso" && tipoDescanso !== "punto_cero" ? { hidratacion: false, respiracion: false, pantallaZero: false } : undefined,
         etapasPuntoCero: tipoFlotaSeleccionado === "descanso" && tipoDescanso === "punto_cero" ? { etapa1: false, etapa2: false, etapa3: false, etapa4: false } : undefined,
-      });
+        });
+      } catch (addErr) {
+        console.error("[handleFlotaSave] addVehicle:", addErr);
+        toast.error("Error al guardar vehículo", {
+          description: "No se pudo registrar en este dispositivo. Libera espacio del navegador e intenta de nuevo.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+          duration: 5000,
+        });
+        return;
+      }
       console.log(`[handleFlotaSave] addVehicle retornó id: ${newVehicleId}`);
 
       if (launchCtx) {
@@ -2278,6 +2357,7 @@ export default function Planeacion() {
 
       console.log(`[handleFlotaSave] Vehículo creado exitosamente: "${titulo}"`);
 
+      try {
       const optimisticVehicle: Vehicle = {
         id: newVehicleId,
         titulo: titulo.trim(),
@@ -2317,14 +2397,20 @@ export default function Planeacion() {
         etapasPuntoCero: tipoFlotaSeleccionado === "descanso" && tipoDescanso === "punto_cero" ? { etapa1: false, etapa2: false, etapa3: false, etapa4: false } : undefined,
       };
       optimisticVehiclesRef.current = [...optimisticVehiclesRef.current.filter(v => v.id !== newVehicleId), optimisticVehicle];
+      vehiclesRef.current = [optimisticVehicle, ...vehiclesRef.current.filter(v => v.id !== newVehicleId)];
       setVehicles(prev => {
         const withoutDupe = prev.filter(v => v.id !== newVehicleId);
         console.log(`[handleFlotaSave] OPTIMISTIC UPDATE: Agregando "${titulo}" al estado. Antes: ${withoutDupe.length}, Después: ${withoutDupe.length + 1}`);
         return [optimisticVehicle, ...withoutDupe];
       });
+      if (!saveLocalVehicles(vehiclesRef.current)) {
+        console.warn("[handleFlotaSave] Vehículo en memoria; localStorage lleno o bloqueado");
+      }
       if (tipoFlotaSeleccionado === "situacion") {
         setExpandedId(newVehicleId);
       }
+      setIsCreating(false);
+      scrollFlotaActivosIntoView();
 
       toast.success(`"${titulo}" lanzado · ${flotaConfig.label}`, {
         description: flotaConfig.psCierre,
@@ -2332,8 +2418,21 @@ export default function Planeacion() {
       });
       registrarEvento(COMPONENTES.PLANIFICACION);
       resetForm();
-    } catch {
-      toast.error("Error al guardar vehículo");
+      } catch (uiErr) {
+        console.warn("[handleFlotaSave] UI post-lanzamiento:", uiErr);
+        toast.success(`"${titulo}" lanzado en este dispositivo`, {
+          description: "Si no lo ves en activos, recarga la pestaña Operar.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
+        });
+        setIsCreating(false);
+      }
+    } catch (err) {
+      console.error("[handleFlotaSave] Error:", err);
+      toast.error("Error al guardar vehículo", {
+        description: "Revisa la conexión o libera espacio en el navegador e intenta de nuevo.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5000,
+      });
     } finally {
       releaseCentinela();
       setSaving(false);
@@ -2648,26 +2747,70 @@ export default function Planeacion() {
   const handleQuickSaveAndNew = async (tipoTermino: TipoTerminoRapido, detalle?: string) => {
     if (!user || !titulo.trim()) return;
     setSaving(true);
+    resetCentinelaLaunchGate();
+    setCierreEnergiaPending(null);
+    setCierreEnergiaSeleccion(null);
+    const terminoInfo = TERMINO_OPTIONS.find(t => t.id === tipoTermino);
+    const detalleNorm = detalle?.trim() || (tipoTermino === "situacion" ? "Al cerrar este bloque" : "");
+    let newVehicleId: string;
     try {
-      const terminoInfo = TERMINO_OPTIONS.find(t => t.id === tipoTermino);
-      await addVehicle(user.uid, {
+      newVehicleId = await addVehicle(user.uid, {
         titulo: titulo.trim(),
         criterioFin: tipoTermino === "hora" ? "tiempo" : "circunstancia",
-        criterioDetalle: detalle || "",
+        criterioDetalle: detalleNorm,
         tiempoInicio: new Date(),
         ejes: STUB_EJES,
         tipoTerminoRapido: tipoTermino,
-        aperturaAt: Date.now()
+        tipoFlota: tipoTermino === "situacion" ? "situacion" : tipoTermino === "hora" ? "tiempo" : undefined,
+        aperturaAt: Date.now(),
       });
-      toast.success(`"${titulo}" agregado (+${terminoInfo?.puntosCumple || 0} PS al completar)`, {
-        style: { backgroundColor: PIZARRA, border: `1px solid ${terminoInfo?.color || AZURE}`, color: terminoInfo?.color || AZURE }
+    } catch (err) {
+      console.error("[handleQuickSaveAndNew] addVehicle:", err);
+      toast.error("Error al guardar vehículo", {
+        description: "No se pudo registrar en este dispositivo. Libera espacio del navegador e intenta de nuevo.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
+      setSaving(false);
+      return;
+    }
+    try {
+      const optimisticVehicle: Vehicle = {
+        id: newVehicleId,
+        titulo: titulo.trim(),
+        criterioFin: tipoTermino === "hora" ? "tiempo" : "circunstancia",
+        criterioDetalle: detalleNorm,
+        tiempoInicio: new Date(),
+        createdAt: new Date(),
+        userId: user.uid,
+        status: "activo",
+        ejes: STUB_EJES,
+        tipoTerminoRapido: tipoTermino,
+        tipoFlota: tipoTermino === "situacion" ? "situacion" : tipoTermino === "hora" ? "tiempo" : undefined,
+        aperturaAt: Date.now(),
+      };
+      optimisticVehiclesRef.current = [
+        ...optimisticVehiclesRef.current.filter(v => v.id !== newVehicleId),
+        optimisticVehicle,
+      ];
+      vehiclesRef.current = [optimisticVehicle, ...vehiclesRef.current.filter(v => v.id !== newVehicleId)];
+      setVehicles(prev => [optimisticVehicle, ...prev.filter(v => v.id !== newVehicleId)]);
+      saveLocalVehicles(vehiclesRef.current);
+      setIsCreating(false);
+      setVehicleMode("selector");
+      scrollFlotaActivosIntoView();
+      toast.success(`"${titulo}" lanzado (+${terminoInfo?.puntosCumple || 0} PS al completar)`, {
+        style: { backgroundColor: PIZARRA, border: `1px solid ${terminoInfo?.color || AZURE}`, color: terminoInfo?.color || AZURE },
       });
       registrarEvento(COMPONENTES.PLANIFICACION);
       setTitulo("");
       setTerminoDetalle("");
       setSelectedTerminoType(null);
-    } catch {
-      toast.error("Error al guardar vehículo");
+    } catch (err) {
+      console.warn("[handleQuickSaveAndNew] UI post-lanzamiento:", err);
+      toast.success(`"${titulo}" lanzado en este dispositivo`, {
+        description: "La lista se actualizará en un momento.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
+      });
     }
     setSaving(false);
   };
@@ -3115,7 +3258,9 @@ export default function Planeacion() {
     };
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
-    saveLocalVehicles(vehiclesRef.current);
+    if (!saveLocalVehicles(vehiclesRef.current)) {
+      console.warn("[investigadorClose] Cierre en memoria OK; localStorage no disponible");
+    }
     triggerConquistaPulse();
 
     const cierreAt = closePatch.cierreAt;
@@ -3163,13 +3308,10 @@ export default function Planeacion() {
         saveVehicleHistory(vehicle.titulo, 0, duracionFinal, "investigador", user.uid, { status: "incumplido" });
       }
 
-      await awardSovereigntyPoints(user.uid, 10,
+      void awardSovereigntyPoints(user.uid, 10,
         (cumplido ? "Medición válida: " : "Medición con inconveniente: ") + vehicle.titulo
-      );
+      ).catch(e => console.warn("[investigadorClose] PS falló:", e));
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
-      if (vehicle.vehiculoPadreDesglosadorId) {
-        await resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
-      }
       registrarEvento(COMPONENTES.PLANIFICACION);
       if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
       toast.success(cumplido ? "+10 PS Medición Válida" : "+10 PS Registro Honesto", {
@@ -3183,9 +3325,20 @@ export default function Planeacion() {
         },
         duration: 4000
       });
+      if (vehicle.vehiculoPadreDesglosadorId) {
+        try {
+          await resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
+        } catch (e) {
+          console.warn("[investigadorClose] resume desglosador:", e);
+        }
+      }
     } catch (err) {
       console.error("[investigadorClose] Error detallado:", err);
-      toast.error("Error al cerrar el vehículo. Intenta de nuevo.");
+      toast.error("Error al sincronizar el cierre. El vehículo ya quedó cerrado en este dispositivo.", {
+        description: "Si los PS no aparecen, reintenta cuando tengas conexión.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5000,
+      });
     } finally {
       closingInProgressRef.current.delete(vehicleId);
     }
@@ -3235,7 +3388,9 @@ export default function Planeacion() {
 
     setVehicles(prev => prev.map(v => v.id === parentId ? { ...v, ...patch } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === parentId ? { ...v, ...patch } : v);
-    saveLocalVehicles(vehiclesRef.current);
+    if (!saveLocalVehicles(vehiclesRef.current)) {
+      console.warn("[desglosador] resume: localStorage no disponible");
+    }
     await updateVehicle(user.uid, parentId, patch).catch(e => console.warn("[desglosador] resume:", e));
     releaseCentinela();
     toast.info("Desglosador reanudado", {
@@ -3491,6 +3646,45 @@ export default function Planeacion() {
 
     notifyVehicleClosed(vehicleId);
 
+    // Si quedó una interrupción situacional abierta, archivarla al cerrar el ciclo del padre.
+    const childInterrupts = vehiclesRef.current.filter(
+      v =>
+        v.status === "activo" &&
+        !v.autoVerdad &&
+        v.vehiculoPadreDesglosadorId === vehicleId &&
+        !wasVehicleRecentlyClosed(v.id)
+    );
+    if (childInterrupts.length > 0) {
+      const nowChild = Date.now();
+      for (const child of childInterrupts) {
+        notifyVehicleClosed(child.id);
+        orphanInterruptSweepRef.current.add(child.id);
+      }
+      const archiveChild = (v: Vehicle): Vehicle =>
+        childInterrupts.some(c => c.id === v.id)
+          ? {
+              ...v,
+              status: "archivado",
+              cierreAt: nowChild,
+              duracionFinal: Math.max(1, Math.round((nowChild - (v.aperturaAt || nowChild)) / 60000)),
+              cierreManual: false,
+            }
+          : v;
+      setVehicles(prev => prev.map(archiveChild));
+      vehiclesRef.current = vehiclesRef.current.map(archiveChild);
+      for (const child of childInterrupts) {
+        void updateVehicle(user.uid, child.id, {
+          status: "archivado",
+          cierreAt: nowChild,
+          duracionFinal: Math.max(1, Math.round((nowChild - (child.aperturaAt || nowChild)) / 60000)),
+          cierreManual: false,
+        }).catch(e => console.warn("[desglosadorClose] interrupción:", child.id, e));
+        void updateVehicleStatus(user.uid, child.id, "archivado").catch(e =>
+          console.warn("[desglosadorClose] interrupción status:", child.id, e)
+        );
+      }
+    }
+
     for (const sv of subs) {
       if (sv.excluirDeHistorial) continue;
       if (sv.status === "cumplido" && sv.cantidadLograda && sv.cantidadLograda > 0 && sv.duracionFinal && sv.duracionFinal > 0) {
@@ -3534,6 +3728,8 @@ export default function Planeacion() {
       cierreManual: true,
       subVehiculos: subsConRuta,
       desglosadorBloqueDepthPsGranted: depthPsGranted,
+      interrupcionActiva: false,
+      desglosadorPausa: undefined,
       ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
       ...(rutaCruzada ? { rutaCruzada } : {}),
     };
@@ -3586,12 +3782,18 @@ export default function Planeacion() {
       if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
       registrarEvento(COMPONENTES.PLANIFICACION);
+      setCierreEnergiaPending(null);
+      setCierreEnergiaSeleccion(null);
+      releaseCentinela();
       toast.success(
         closeDeltaPs > 0
           ? `+${closeDeltaPs} PS — Ciclo cerrado`
           : "Ciclo cerrado",
         {
           description: [
+            childInterrupts.length > 0
+              ? "Interrupción situacional cerrada automáticamente con el desglosador."
+              : "",
             closeDeltaPs > 0 ? "Sumados ahora a tu barra del día." : "",
             subsPsBefore > 0 && subsPsAwarded === 0
               ? `${subsPsBefore} PS de subs ya estaban en la barra (${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""}).`
@@ -6397,7 +6599,7 @@ export default function Planeacion() {
                 {(Object.entries(FLOTA_CONFIG) as [TipoFlota, typeof FLOTA_CONFIG["tiempo"]][]).map(([tipo, cfg]) => {
                   const Icon = cfg.icon;
                   return (
-                    <button key={tipo} onClick={() => { setIsCreating(true); setVehicleMode("flota"); setTipoFlotaSeleccionado(tipo); }} className="p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all hover:scale-[1.02]" style={{ borderColor: `${cfg.color}30`, backgroundColor: `${cfg.color}08` }} data-testid={`button-flota-${tipo}`}>
+                    <button key={tipo} onClick={() => { resetCentinelaLaunchGate(); setCierreEnergiaPending(null); setCierreEnergiaSeleccion(null); setShowCierreJornada(false); setSituacionDesgloseCelebration(null); setSaving(false); setPlanTab("operar"); setIsCreating(true); setVehicleMode("flota"); setTipoFlotaSeleccionado(tipo); if (tipo === "situacion" && !terminoDetalle.trim()) setTerminoDetalle("Al cerrar este bloque"); }} className="p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all hover:scale-[1.02]" style={{ borderColor: `${cfg.color}30`, backgroundColor: `${cfg.color}08` }} data-testid={`button-flota-${tipo}`}>
                       <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: `${cfg.color}20` }}>
                         <Icon size={20} style={{ color: cfg.color }} />
                       </div>
@@ -7179,8 +7381,15 @@ export default function Planeacion() {
                         )}
                       </div>
 
-                      <button onClick={handleFlotaSave} disabled={saving || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "proyectivo" && !horaFinProyectiva) || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "produccion" && (!cantidadProduccion || !tiempoProduccion)) || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "investigador" && !cantidadInvestigador) || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "desglosador" && !desglosadorSubs.some(s => s.titulo.trim())) || (tipoFlotaSeleccionado === "situacion" && !terminoDetalle.trim()) || (tipoFlotaSeleccionado === "descanso" && !tipoDescanso)} className="w-full py-3.5 rounded-xl text-sm font-black uppercase tracking-wider transition-all disabled:opacity-50" style={{ backgroundColor: cfg.color, color: tipoFlotaSeleccionado === "verdad" ? "#fff" : "#000", boxShadow: `0 0 20px ${cfg.color}40` }} data-testid="button-launch-flota">
-                        Lanzar Vehículo
+                      <button
+                        type="button"
+                        onClick={() => void handleFlotaSave()}
+                        disabled={saving || !titulo.trim() || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "proyectivo" && !horaFinProyectiva) || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "produccion" && (!cantidadProduccion || !tiempoProduccion)) || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "investigador" && !cantidadInvestigador) || (tipoFlotaSeleccionado === "tiempo" && relojTiempo === "desglosador" && !desglosadorSubs.some(s => s.titulo.trim())) || (tipoFlotaSeleccionado === "descanso" && !tipoDescanso)}
+                        className="w-full py-3.5 rounded-xl text-sm font-black uppercase tracking-wider transition-all disabled:opacity-50"
+                        style={{ backgroundColor: cfg.color, color: tipoFlotaSeleccionado === "verdad" ? "#fff" : "#000", boxShadow: `0 0 20px ${cfg.color}40` }}
+                        data-testid="button-launch-flota"
+                      >
+                        {saving ? "Lanzando…" : "Lanzar Vehículo"}
                       </button>
                     </motion.div>
                   )}
@@ -7243,6 +7452,18 @@ export default function Planeacion() {
             </div>
             <button onClick={resetForm} className="w-full py-2 text-xs text-slate-500 hover:text-slate-400">Cancelar</button>
           </motion.div>
+        ) : isCreating ? (
+          <div className="p-4 rounded-xl border text-center space-y-3" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
+            <p className="text-xs text-slate-400">Formulario de lanzamiento incompleto.</p>
+            <button
+              type="button"
+              onClick={() => { setIsCreating(false); setVehicleMode("selector"); setTipoFlotaSeleccionado(null); }}
+              className="w-full py-2.5 rounded-lg text-xs font-bold"
+              style={{ backgroundColor: `${PLATA}20`, color: PLATA }}
+            >
+              Volver a La Flota
+            </button>
+          </div>
         ) : null)}
 
         {cierreEnergiaPending && (() => {
@@ -7269,12 +7490,20 @@ export default function Planeacion() {
             resetCierreModal();
           };
           return (
-          <motion.div className="fixed inset-0 z-[220] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.82)" }} role="dialog" aria-modal="true" aria-labelledby="cierre-energia-titulo">
+          <motion.div
+            className="fixed inset-0 z-[220] flex items-center justify-center p-4"
+            style={{ backgroundColor: "rgba(0,0,0,0.82)" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cierre-energia-titulo"
+            onClick={resetCierreModal}
+          >
             <motion.div
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               tabIndex={-1}
               autoFocus
+              onClick={e => e.stopPropagation()}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();

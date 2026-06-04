@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { SubTarea, Vehicle } from "./persistence.ts";
 import type { SubVehiculo } from "./persistence.ts";
 import {
+  isOrphanDesglosadorInterrupt,
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
   shouldPreferLocalSubVehiculos,
@@ -14,6 +15,62 @@ function st(
 ): SubTarea {
   return { id, texto: id, completada: false, creadaAt: 1, ...extra };
 }
+
+describe("isOrphanDesglosadorInterrupt", () => {
+  const parent = (status: Vehicle["status"], interrupcionActiva = false): Vehicle =>
+    ({
+      id: "p1",
+      titulo: "Desglose",
+      status,
+      tipoFlota: "tiempo",
+      tipoReloj: "desglosador",
+      interrupcionActiva,
+      criterioFin: "tiempo",
+      criterioDetalle: "",
+      ejes: {},
+      tiempoInicio: new Date(),
+      createdAt: new Date(),
+    }) as Vehicle;
+
+  const interrupt = (): Vehicle =>
+    ({
+      id: "i1",
+      titulo: "Llamada",
+      status: "activo",
+      tipoFlota: "situacion",
+      vehiculoPadreDesglosadorId: "p1",
+      criterioFin: "circunstancia",
+      criterioDetalle: "Interrupción",
+      ejes: {},
+      tiempoInicio: new Date(),
+      createdAt: new Date(),
+      aperturaAt: Date.now(),
+    }) as Vehicle;
+
+  it("huérfana cuando el desglosador padre ya está cumplido", () => {
+    const byId = new Map([
+      ["p1", parent("cumplido")],
+      ["i1", interrupt()],
+    ]);
+    assert.equal(isOrphanDesglosadorInterrupt(interrupt(), byId), true);
+  });
+
+  it("huérfana cuando el padre activo ya no está en pausa de interrupción", () => {
+    const byId = new Map([
+      ["p1", parent("activo", false)],
+      ["i1", interrupt()],
+    ]);
+    assert.equal(isOrphanDesglosadorInterrupt(interrupt(), byId), true);
+  });
+
+  it("no huérfana mientras el padre espera la interrupción", () => {
+    const byId = new Map([
+      ["p1", parent("activo", true)],
+      ["i1", interrupt()],
+    ]);
+    assert.equal(isOrphanDesglosadorInterrupt(interrupt(), byId), false);
+  });
+});
 
 describe("mergeSubTareasById", () => {
   it("keeps local detalles when firebase row lacks them", () => {
