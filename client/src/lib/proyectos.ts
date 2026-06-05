@@ -218,6 +218,49 @@ async function loadPeldanosFromFirestore(userId: string): Promise<ProyectoPeldan
   }
 }
 
+async function loadPeldanosFromFirestoreByProyecto(
+  userId: string,
+  proyectoId: string
+): Promise<ProyectoPeldano[]> {
+  const { db, getPrivatePath, isFirebaseConfigured } = await import("./firebase");
+  if (!isFirebaseConfigured() || !db) return [];
+  try {
+    const { collection, getDocs, query, where } = await import("firebase/firestore");
+    const path = getPrivatePath(userId, "proyecto_peldanos");
+    const snap = await getDocs(query(collection(db, path), where("proyectoId", "==", proyectoId)));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() } as ProyectoPeldano));
+  } catch {
+    return [];
+  }
+}
+
+async function loadProyectoFromFirestoreById(userId: string, id: string): Promise<Proyecto | null> {
+  const { db, getPrivatePath, isFirebaseConfigured } = await import("./firebase");
+  if (!isFirebaseConfigured() || !db) return null;
+  try {
+    const { collection, doc, getDoc } = await import("firebase/firestore");
+    const path = getPrivatePath(userId, "proyectos");
+    const snap = await getDoc(doc(collection(db, path), id));
+    if (!snap.exists()) return null;
+    const data = snap.data() as Proyecto & Record<string, unknown>;
+    const legacyCount = data["pelda\u00f1osConquistados"];
+    return {
+      ...data,
+      id: snap.id,
+      peldanosConquistados:
+        (data as Proyecto).peldanosConquistados ??
+        (typeof legacyCount === "number" ? legacyCount : 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Listado instantáneo desde localStorage (sin red). */
+export function getProyectosLocal(userId: string): Proyecto[] {
+  return [...getLocalProyectos(userId)].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
 export async function getProyectos(userId: string): Promise<Proyecto[]> {
   const byId = new Map<string, Proyecto>();
   for (const p of getLocalProyectos(userId)) byId.set(p.id, p);
@@ -228,8 +271,9 @@ export async function getProyectos(userId: string): Promise<Proyecto[]> {
 }
 
 export async function getProyectoById(userId: string, id: string): Promise<Proyecto | null> {
-  const all = await getProyectos(userId);
-  return all.find(p => p.id === id) ?? null;
+  const local = getLocalProyectos(userId).find(p => p.id === id);
+  if (local) return local;
+  return loadProyectoFromFirestoreById(userId, id);
 }
 
 export async function addProyecto(
@@ -339,7 +383,7 @@ export async function getPeldanosByProyecto(userId: string, proyectoId: string):
   for (const p of getPeldanosByProyectoLocal(userId, proyectoId)) {
     byId.set(p.id, p);
   }
-  for (const p of (await loadPeldanosFromFirestore(userId)).filter(x => x.proyectoId === proyectoId)) {
+  for (const p of await loadPeldanosFromFirestoreByProyecto(userId, proyectoId)) {
     if (!byId.has(p.id)) byId.set(p.id, p);
   }
   return Array.from(byId.values()).sort((a, b) => a.orden - b.orden);

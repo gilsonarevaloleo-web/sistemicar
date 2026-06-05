@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,8 +18,10 @@ import { cn } from "@/lib/utils";
 import { useAuthContext } from "@/App";
 import {
   getProyectos,
+  getProyectosLocal,
   getProyectoById,
   getPeldanosByProyecto,
+  getPeldanosByProyectoLocal,
   addProyecto,
   updateProyecto,
   addPeldanoIdea,
@@ -101,56 +103,77 @@ export default function ProyectosPage() {
   const [guardandoClaridad, setGuardandoClaridad] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [creatingProyecto, setCreatingProyecto] = useState(false);
+  const detailIdRef = useRef(detailId);
+  detailIdRef.current = detailId;
 
-  const reloadList = useCallback(async () => {
+  const applyDetailState = useCallback((p: Proyecto | null, pel: ProyectoPeldano[]) => {
+    setProyecto(p);
+    setPeldanos(pel);
+    setNotaEdit(p?.nota ?? "");
+    setOleadaTituloEdit(p?.oleadaTitulo ?? "");
+    if (p) {
+      const claridad = resolveClaridadParaProyecto(p, pel) ?? buildDefaultClaridadDireccion({
+        tituloProyecto: p.titulo,
+        etiqueta: p.etiqueta,
+        focoTitulo: p.oleadaTitulo ?? p.titulo,
+      });
+      setClaridadEdit(claridad);
+    } else {
+      setClaridadEdit(null);
+    }
+  }, []);
+
+  const syncListFromRemote = useCallback(async () => {
     if (!user) return;
     setProyectos(await getProyectos(user.uid));
   }, [user]);
 
   const reloadDetail = useCallback(async () => {
     if (!user || !detailId) return;
+    const localP = getProyectosLocal(user.uid).find(p => p.id === detailId) ?? null;
+    const localPel = getPeldanosByProyectoLocal(user.uid, detailId);
+    if (localP) {
+      applyDetailState(localP, localPel);
+      setDetailLoading(false);
+      void Promise.all([
+        getProyectoById(user.uid, detailId),
+        getPeldanosByProyecto(user.uid, detailId),
+      ]).then(([p, pel]) => applyDetailState(p, pel));
+      return;
+    }
     setDetailLoading(true);
     try {
       const [p, pel] = await Promise.all([
         getProyectoById(user.uid, detailId),
         getPeldanosByProyecto(user.uid, detailId),
       ]);
-      setProyecto(p);
-      setPeldanos(pel);
-      setNotaEdit(p?.nota ?? "");
-      setOleadaTituloEdit(p?.oleadaTitulo ?? "");
-      if (p) {
-        const claridad = resolveClaridadParaProyecto(p, pel) ?? buildDefaultClaridadDireccion({
-          tituloProyecto: p.titulo,
-          etiqueta: p.etiqueta,
-          focoTitulo: p.oleadaTitulo ?? p.titulo,
-        });
-        setClaridadEdit(claridad);
-      } else {
-        setClaridadEdit(null);
-      }
+      applyDetailState(p, pel);
     } finally {
       setDetailLoading(false);
     }
-  }, [user, detailId]);
+  }, [user, detailId, applyDetailState]);
 
   useEffect(() => {
     if (!user) return;
+    setProyectos(getProyectosLocal(user.uid));
     setLoading(true);
-    void reloadList().finally(() => setLoading(false));
+    void syncListFromRemote().finally(() => setLoading(false));
     const unsub = subscribeToProyectos(user.uid, () => {
-      void reloadList();
-      if (detailId) void reloadDetail();
+      setProyectos(getProyectosLocal(user.uid));
+      void syncListFromRemote();
+      if (detailIdRef.current) void reloadDetail();
     });
     return unsub;
-  }, [user, reloadList, reloadDetail, detailId]);
+  }, [user, syncListFromRemote, reloadDetail]);
 
   useEffect(() => {
-    if (detailId) void reloadDetail();
-    else {
+    if (!detailId) {
       setProyecto(null);
       setPeldanos([]);
+      setDetailLoading(false);
+      return;
     }
+    void reloadDetail();
   }, [detailId, reloadDetail]);
 
   const stats = useMemo(() => computeProyectoStats(peldanos), [peldanos]);
