@@ -978,23 +978,27 @@ function getLocalSnapshots(userId: string): PlanillaDailySnapshot[] {
   }
 }
 
-function saveLocalSnapshots(userId: string, snapshots: PlanillaDailySnapshot[]): void {
-  localStorage.setItem(`${SNAPSHOT_LOCAL_KEY}_${userId}`, JSON.stringify(snapshots.slice(-60)));
+function saveLocalSnapshots(userId: string, snapshots: PlanillaDailySnapshot[]): boolean {
+  try {
+    localStorage.setItem(`${SNAPSHOT_LOCAL_KEY}_${userId}`, JSON.stringify(snapshots.slice(-60)));
+    return true;
+  } catch (error) {
+    console.error("[saveLocalSnapshots] Error localStorage:", error);
+    return false;
+  }
 }
 
 export async function savePlanillaDailySnapshot(
   userId: string,
   snapshot: PlanillaDailySnapshot
-): Promise<void> {
+): Promise<{ localSaved: boolean }> {
   const locals = getLocalSnapshots(userId).filter(s => s.fecha !== snapshot.fecha);
   locals.push(snapshot);
   locals.sort((a, b) => a.fecha.localeCompare(b.fecha));
-  saveLocalSnapshots(userId, locals);
+  const localSaved = saveLocalSnapshots(userId, locals);
 
-  const { db, getPrivatePath, isFirebaseConfigured } = await import("./firebase");
-  if (!isFirebaseConfigured() || !db) return;
-
-  void (async () => {
+  void import("./firebase").then(async ({ db, getPrivatePath, isFirebaseConfigured }) => {
+    if (!isFirebaseConfigured() || !db) return;
     try {
       const { addDoc, collection, getDocs, query, where, deleteDoc } = await import("firebase/firestore");
       const path = getPrivatePath(userId, "dailySnapshots");
@@ -1007,7 +1011,9 @@ export async function savePlanillaDailySnapshot(
     } catch (error) {
       console.error("[savePlanillaDailySnapshot] Error Firebase:", error);
     }
-  })();
+  });
+
+  return { localSaved };
 }
 
 export async function getPlanillaDailySnapshots(

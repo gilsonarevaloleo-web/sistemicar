@@ -327,9 +327,16 @@ export async function deleteProyecto(userId: string, id: string): Promise<void> 
   for (const pel of pelToRemove) void syncFirestorePeldano(userId, pel, true);
 }
 
+/** Peldaños en local (sin esperar Firebase). */
+export function getPeldanosByProyectoLocal(userId: string, proyectoId: string): ProyectoPeldano[] {
+  return getLocalPeldanos(userId)
+    .filter(x => x.proyectoId === proyectoId)
+    .sort((a, b) => a.orden - b.orden);
+}
+
 export async function getPeldanosByProyecto(userId: string, proyectoId: string): Promise<ProyectoPeldano[]> {
   const byId = new Map<string, ProyectoPeldano>();
-  for (const p of getLocalPeldanos(userId).filter(x => x.proyectoId === proyectoId)) {
+  for (const p of getPeldanosByProyectoLocal(userId, proyectoId)) {
     byId.set(p.id, p);
   }
   for (const p of (await loadPeldanosFromFirestore(userId)).filter(x => x.proyectoId === proyectoId)) {

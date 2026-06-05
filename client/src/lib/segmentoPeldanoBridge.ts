@@ -1,6 +1,6 @@
 import type { SegmentoV5, Vehicle } from "./persistence";
 import {
-  getPeldanosByProyecto,
+  getPeldanosByProyectoLocal,
   updatePeldano,
   upsertPeldanoDesdeSegmento,
   refreshProyectoStatsPublic,
@@ -130,7 +130,7 @@ export async function sealPeldanosFromSegmentos(
     if (!seg.proyectoVinculadoId || !seg.proyectoPeldanoId) continue;
     if (seg.estado !== "cerrado_manual") continue;
 
-    const peldano = (await getPeldanosByProyecto(userId, seg.proyectoVinculadoId)).find(
+    const peldano = getPeldanosByProyectoLocal(userId, seg.proyectoVinculadoId).find(
       p => p.id === seg.proyectoPeldanoId
     );
     if (peldano?.estado === "conquistado") continue;
@@ -146,7 +146,7 @@ export async function sealPeldanosFromSegmentos(
       resumen,
     });
 
-    await refreshProyectoStatsPublic(userId, seg.proyectoVinculadoId);
+    void refreshProyectoStatsPublic(userId, seg.proyectoVinculadoId);
     peldanoIds.push(seg.proyectoPeldanoId);
     sealed++;
   }

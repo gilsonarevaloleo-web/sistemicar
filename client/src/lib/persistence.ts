@@ -1333,20 +1333,29 @@ function getLocalCierres(): CierreJornadaLog[] {
   } catch { return []; }
 }
 
-function saveLocalCierres(cierres: CierreJornadaLog[]) {
-  localStorage.setItem(CIERRE_JORNADA_KEY, JSON.stringify(cierres));
+function saveLocalCierres(cierres: CierreJornadaLog[]): boolean {
+  try {
+    localStorage.setItem(CIERRE_JORNADA_KEY, JSON.stringify(cierres));
+    return true;
+  } catch (error) {
+    console.error("[saveLocalCierres] Error localStorage:", error);
+    return false;
+  }
 }
 
-function upsertLocalCierre(cierre: CierreJornadaLog): void {
+function upsertLocalCierre(cierre: CierreJornadaLog): boolean {
   const cierres = getLocalCierres().filter(c => c.fecha !== cierre.fecha);
   cierres.unshift(cierre);
-  saveLocalCierres(cierres);
+  return saveLocalCierres(cierres);
 }
 
-export async function saveCierreJornada(userId: string, cierre: CierreJornadaLog): Promise<void> {
-  upsertLocalCierre(cierre);
+export async function saveCierreJornada(
+  userId: string,
+  cierre: CierreJornadaLog
+): Promise<{ localSaved: boolean }> {
+  const localSaved = upsertLocalCierre(cierre);
 
-  if (!isFirebaseConfigured() || !db) return;
+  if (!isFirebaseConfigured() || !db) return { localSaved };
 
   void (async () => {
     try {
@@ -1356,6 +1365,8 @@ export async function saveCierreJornada(userId: string, cierre: CierreJornadaLog
       console.error("[saveCierreJornada] Error Firebase:", error);
     }
   })();
+
+  return { localSaved };
 }
 
 export async function getLastCierreJornada(userId: string): Promise<CierreJornadaLog | null> {

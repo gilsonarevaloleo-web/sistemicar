@@ -262,7 +262,7 @@ import {
   type SituacionReservaItem,
 } from "@/lib/situacionReserva";
 import { computeDailyPsBarModel } from "@/lib/dailyPsBar";
-import { withTimeout } from "@/lib/asyncTimeout";
+import { safeWithFallback } from "@/lib/asyncTimeout";
 import { recordFocusBandEvent, getFocusBandEventsRecent, getFocusBandEventsForRange } from "@/lib/focusBandLedger";
 import type { FocusBandEvent } from "@/lib/focusBandLedger";
 import {
@@ -8057,89 +8057,103 @@ export default function Planeacion() {
                 toast.error("Inicia sesión para sellar la jornada");
                 return;
               }
-              try {
-                const localFresh = getDailyPointsLocalSync(user.uid);
-                const fresh = await withTimeout(
-                  getDailyPoints(user.uid),
-                  5000,
-                  localFresh
-                );
-                const fecha = getLimaDateString();
-                const dayStartMs = getLimaDayStartMs();
-                const journalStartMs = getJournalDayStartMs();
-                const jornadaVehicles = vehicles.filter(v => {
-                  const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
-                  return ts >= journalStartMs;
-                });
-                const balance = calcularBalanceConquistaJornada({
-                  segmentos: planilla?.segmentos || [],
-                  vehiculos: filterVehiclesForEntropy(vehicles),
-                  now: Date.now(),
-                  dayStartMs,
-                });
-                const introPs = await withTimeout(
-                  getIntrospectionPsForDay(user.uid, fecha),
-                  4000,
-                  0
-                );
-                const events = await withTimeout(
-                  getFocusBandEventsRecent(user.uid, 1),
-                  4000,
-                  []
-                );
-                const todayEvents = events.filter(e => e.fecha === fecha);
-                const snapshot = buildDailySnapshot({
-                  fecha,
-                  segmentos: planilla?.segmentos || [],
-                  vehicles: jornadaVehicles,
-                  dayStartMs,
-                  logs: fresh.logs,
-                  introspeccionPs: introPs,
-                  events: todayEvents,
-                  conquistaMin: balance.conquistaMin,
-                  entropiaMin: balance.entropiaMin,
-                  vacioMin: balance.vacioMin,
-                });
-                await savePlanillaDailySnapshot(user.uid, snapshot);
-                const sealPel = await sealPeldanosFromSegmentos(user.uid, {
-                  fecha,
-                  segmentos: planilla?.segmentos ?? [],
-                  vehicles: jornadaVehicles,
-                  dayStartMs,
-                  events: todayEvents,
-                });
-                const sealed: CierreJornadaLog = {
-                  ...cierre,
-                  totalPS: fresh.total,
-                  fecha,
-                  psPanoramico: snapshot.psDesglose.panoramico,
-                  psEspectro: snapshot.psDesglose.espectro,
-                  psVehiculos: snapshot.psDesglose.vehiculos,
-                  psIntrospeccion: snapshot.psDesglose.introspeccion,
-                  profundidadMaxima: snapshot.profundidadMaxima,
-                  bloquesCompletados: snapshot.bloquesCompletados,
-                  descansosCuerpo: snapshot.espectroBloques.descansosCuerpo,
-                };
-                await saveCierreJornada(user.uid, sealed);
-                setTodayCierreJornada(sealed);
-                if (sealPel.sealed > 0) {
-                  toast.success(`${sealPel.sealed} peldaño(s) en Proyectos`, {
-                    description: "Segmentos cerrados sellados en tu escalera.",
-                    style: { backgroundColor: PIZARRA, border: `1px solid ${CYAN}`, color: CYAN },
-                  });
-                }
-                toast.success("Jornada Sellada", {
-                  description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${snapshot.decisionesDelDia ?? snapshot.subsDesglosadorCumplidos ?? 0} decisiones · ${snapshot.bloquesCompletados} bloque${snapshot.bloquesCompletados !== 1 ? "s" : ""} · ${sealed.totalPS} PS refuerzo`,
-                  style: { backgroundColor: PIZARRA, border: `2px solid ${GOLD}`, color: GOLD }
-                });
-                setShowCierreJornada(false);
-              } catch (e) {
-                console.error("[CierreJornada] error al sellar:", e);
+
+              const fecha = getLimaDateString();
+              const dayStartMs = getLimaDayStartMs();
+              const journalStartMs = getJournalDayStartMs();
+              const jornadaVehicles = vehicles.filter(v => {
+                const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
+                return ts >= journalStartMs;
+              });
+              const balance = calcularBalanceConquistaJornada({
+                segmentos: planilla?.segmentos || [],
+                vehiculos: filterVehiclesForEntropy(vehicles),
+                now: Date.now(),
+                dayStartMs,
+              });
+
+              const fresh = getDailyPointsLocalSync(user.uid);
+              const introPs = await safeWithFallback(getIntrospectionPsForDay(user.uid, fecha), 0, 3000);
+              const events = await safeWithFallback(getFocusBandEventsRecent(user.uid, 1), [], 3000);
+              const todayEvents = events.filter(e => e.fecha === fecha);
+
+              const snapshot = buildDailySnapshot({
+                fecha,
+                segmentos: planilla?.segmentos || [],
+                vehicles: jornadaVehicles,
+                dayStartMs,
+                logs: fresh.logs,
+                introspeccionPs: introPs,
+                events: todayEvents,
+                conquistaMin: balance.conquistaMin,
+                entropiaMin: balance.entropiaMin,
+                vacioMin: balance.vacioMin,
+              });
+
+              const { localSaved: snapshotSaved } = await savePlanillaDailySnapshot(user.uid, snapshot);
+
+              const sealed: CierreJornadaLog = {
+                ...cierre,
+                totalPS: fresh.total,
+                fecha,
+                psPanoramico: snapshot.psDesglose.panoramico,
+                psEspectro: snapshot.psDesglose.espectro,
+                psVehiculos: snapshot.psDesglose.vehiculos,
+                psIntrospeccion: snapshot.psDesglose.introspeccion,
+                profundidadMaxima: snapshot.profundidadMaxima,
+                bloquesCompletados: snapshot.bloquesCompletados,
+                descansosCuerpo: snapshot.espectroBloques.descansosCuerpo,
+              };
+
+              const { localSaved: cierreSaved } = await saveCierreJornada(user.uid, sealed);
+
+              if (!snapshotSaved && !cierreSaved) {
                 toast.error("No se pudo sellar la jornada", {
-                  description: "Revisa tu conexión e intenta de nuevo.",
-                  style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD }
+                  description: "Libera espacio en el navegador o cierra pestañas y vuelve a intentar.",
+                  style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+                });
+                return;
+              }
+
+              setTodayCierreJornada(sealed);
+              setShowCierreJornada(false);
+
+              toast.success("Jornada Sellada", {
+                description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${snapshot.decisionesDelDia ?? snapshot.subsDesglosadorCumplidos ?? 0} decisiones · ${snapshot.bloquesCompletados} bloque${snapshot.bloquesCompletados !== 1 ? "s" : ""} · ${sealed.totalPS} PS refuerzo${!snapshotSaved || !cierreSaved ? " · guardado parcial en dispositivo" : ""}`,
+                style: { backgroundColor: PIZARRA, border: `2px solid ${GOLD}`, color: GOLD },
+              });
+
+              if (!snapshotSaved || !cierreSaved) {
+                toast.info("Sincronización en la nube pendiente", {
+                  description: "El sello quedó en tu dispositivo. La nube se actualizará cuando haya conexión estable.",
+                  style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
+                  duration: 4000,
                 });
               }
+
+              void (async () => {
+                try {
+                  const sealPel = await safeWithFallback(
+                    sealPeldanosFromSegmentos(user.uid, {
+                      fecha,
+                      segmentos: planilla?.segmentos ?? [],
+                      vehicles: jornadaVehicles,
+                      dayStartMs,
+                      events: todayEvents,
+                    }),
+                    { sealed: 0, peldanoIds: [] },
+                    8000
+                  );
+                  if (sealPel.sealed > 0) {
+                    toast.success(`${sealPel.sealed} peldaño(s) en Proyectos`, {
+                      description: "Segmentos cerrados sellados en tu escalera.",
+                      style: { backgroundColor: PIZARRA, border: `1px solid ${CYAN}`, color: CYAN },
+                    });
+                  }
+                } catch (e) {
+                  console.error("[CierreJornada] peldaños en segundo plano:", e);
+                }
+              })();
             }}
             userId={user?.uid || ""}
           />
