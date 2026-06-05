@@ -3679,6 +3679,10 @@ export default function Planeacion() {
     if (!user) return;
     const prevVehicle = vehiclesRef.current.find(v => v.id === vehicleId);
     if (!prevVehicle) return;
+    if (prevVehicle.status !== "activo") {
+      console.warn("[Desglosador] Ignorando actualización: vehículo ya cerrado", vehicleId);
+      return;
+    }
 
     const prevProgress = desglosadorProgressScore(prevVehicle.subVehiculos);
     const nextProgress = desglosadorProgressScore(updatedSubs);
@@ -3710,7 +3714,7 @@ export default function Planeacion() {
       setTimeout(() => {
         desglosadorSyncTimersRef.current.delete(vehicleId);
         const latest = vehiclesRef.current.find(v => v.id === vehicleId);
-        if (!latest?.subVehiculos?.length) return;
+        if (!latest?.subVehiculos?.length || latest.status !== "activo") return;
         void updateVehicle(user.uid, vehicleId, {
           subVehiculos: latest.subVehiculos,
           desglosadorBloqueDepthPsGranted: latest.desglosadorBloqueDepthPsGranted,
@@ -3750,6 +3754,11 @@ export default function Planeacion() {
     if (!user) return;
     if (closingInProgressRef.current.has(vehicleId)) return;
     closingInProgressRef.current.add(vehicleId);
+    const pendingSubSync = desglosadorSyncTimersRef.current.get(vehicleId);
+    if (pendingSubSync) {
+      clearTimeout(pendingSubSync);
+      desglosadorSyncTimersRef.current.delete(vehicleId);
+    }
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) { closingInProgressRef.current.delete(vehicleId); return; }
     const cierreAt = Date.now();
@@ -3841,15 +3850,13 @@ export default function Planeacion() {
     }
 
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
-    const { grantedTotal: depthPsGranted, awardedNow: depthPsAwardedNow } =
-      await reconcileDesglosadorDepthPS(vehicleId, { silent: true });
     const closePatch = {
       status: "cumplido" as const,
       cierreAt,
       duracionFinal,
       cierreManual: true,
       subVehiculos: subsConRuta,
-      desglosadorBloqueDepthPsGranted: depthPsGranted,
+      desglosadorBloqueDepthPsGranted: vehicle.desglosadorBloqueDepthPsGranted ?? 0,
       interrupcionActiva: false,
       desglosadorPausa: undefined,
       ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
@@ -3859,6 +3866,24 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
     saveLocalVehicles(vehiclesRef.current);
     triggerConquistaPulse();
+    try {
+      await updateVehicle(user.uid, vehicleId, closePatch);
+      await updateVehicleStatus(user.uid, vehicleId, "cumplido");
+    } catch (persistErr) {
+      console.warn("[desglosadorGlobalClose] Persistencia anticipada:", persistErr);
+    }
+
+    const { grantedTotal: depthPsGranted, awardedNow: depthPsAwardedNow } =
+      await reconcileDesglosadorDepthPS(vehicleId, { silent: true });
+    if (depthPsGranted !== closePatch.desglosadorBloqueDepthPsGranted) {
+      const depthOnly = { desglosadorBloqueDepthPsGranted: depthPsGranted };
+      setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...depthOnly } : v)));
+      vehiclesRef.current = vehiclesRef.current.map(v =>
+        v.id === vehicleId ? { ...v, ...depthOnly } : v
+      );
+      saveLocalVehicles(vehiclesRef.current);
+    }
+    const closePatchFinal = { ...closePatch, desglosadorBloqueDepthPsGranted: depthPsGranted };
 
     try {
       const latestSubs = vehiclesRef.current.find(v => v.id === vehicleId)?.subVehiculos ?? subsConRuta;
@@ -3876,27 +3901,22 @@ export default function Planeacion() {
       setDailyPS(getDailyPointsLocalSync(user.uid).total);
 
       await updateVehicle(user.uid, vehicleId, {
-        status: "cumplido",
-        cierreAt,
-        duracionFinal,
-        cierreManual: true,
+        ...closePatchFinal,
         subVehiculos: subsSettled,
-        desglosadorBloqueDepthPsGranted: depthPsGranted,
-        ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
-        ...(rutaCruzada ? { rutaCruzada } : {}),
       });
+      await updateVehicleStatus(user.uid, vehicleId, "cumplido");
       setVehicles(prev =>
-        prev.map(v => (v.id === vehicleId ? { ...v, ...closePatch, subVehiculos: subsSettled } : v))
+        prev.map(v => (v.id === vehicleId ? { ...v, ...closePatchFinal, subVehiculos: subsSettled } : v))
       );
       vehiclesRef.current = vehiclesRef.current.map(v =>
-        v.id === vehicleId ? { ...v, ...closePatch, subVehiculos: subsSettled } : v
+        v.id === vehicleId ? { ...v, ...closePatchFinal, subVehiculos: subsSettled } : v
       );
       saveLocalVehicles(vehiclesRef.current);
 
       if (vehicle.proyectoId && vehicle.proyectoPeldanoId) {
         void markPeldanoConquistadoTiempo(
           user.uid,
-          { ...vehicle, ...closePatch, duracionFinal, subVehiculos: subsSettled, ...(rutaCruzada ? { rutaCruzada } : {}) },
+          { ...vehicle, ...closePatchFinal, duracionFinal, subVehiculos: subsSettled, ...(rutaCruzada ? { rutaCruzada } : {}) },
           subsSettled,
           sessionTotalPs
         );
@@ -8521,7 +8541,8 @@ function VehicleCard({
     const subs = subVehiculosRef.current ?? [];
     const hasActive = subs.some(s => s.status === "activo");
     const pendingIdx = subs.findIndex(s => s.status === "pendiente");
-    if (!hasActive && pendingIdx !== -1) {
+    const allSubsClosed = subs.length > 0 && subs.every(s => s.status === "cumplido" || s.status === "fallado");
+    if (!hasActive && pendingIdx !== -1 && !allSubsClosed) {
       const now = Date.now();
       const repaired = subs.map((s, i) =>
         i === pendingIdx ? { ...s, status: "activo" as const, aperturaAt: now } : s
