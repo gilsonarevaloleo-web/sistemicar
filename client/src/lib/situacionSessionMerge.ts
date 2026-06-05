@@ -140,6 +140,46 @@ function countSubsCerrados(subs: SubVehiculo[] | undefined): number {
   return (subs ?? []).filter(s => s.status === "cumplido" || s.status === "fallado").length;
 }
 
+function subVehiculoProgressScore(sub: SubVehiculo): number {
+  if (sub.status === "pendiente") return 0;
+  if (sub.status === "activo") return 10 + (sub.aperturaAt ?? 0) / 1e15;
+  return 20 + (sub.cierreAt ?? 0) / 1e15;
+}
+
+/** Fusiona sub-vehículos por id (el desglosador es la maleta; cada sub avanza a su ritmo). */
+export function mergeSubVehiculosById(
+  firebaseSubs: SubVehiculo[] | undefined,
+  localSubs: SubVehiculo[] | undefined
+): SubVehiculo[] {
+  const fb = firebaseSubs ?? [];
+  const local = localSubs ?? [];
+  if (local.length === 0) return fb;
+  if (fb.length === 0) return local;
+
+  const byId = new Map<string, SubVehiculo>();
+  const order: string[] = [];
+
+  for (const s of fb) {
+    byId.set(s.id, s);
+    order.push(s.id);
+  }
+  for (const s of local) {
+    if (!byId.has(s.id)) {
+      byId.set(s.id, s);
+      order.push(s.id);
+      continue;
+    }
+    const existing = byId.get(s.id)!;
+    const pickLocal = subVehiculoProgressScore(s) >= subVehiculoProgressScore(existing);
+    byId.set(s.id, pickLocal ? { ...existing, ...s } : existing);
+  }
+  return order.map(id => byId.get(id)!);
+}
+
+function activeSubId(subs: SubVehiculo[] | undefined): string | undefined {
+  return subs?.find(s => s.status === "activo")?.id;
+}
+
 /** Conserva subs locales cuando Firebase pierde el array al cerrar el desglosador. */
 export function shouldPreferLocalSubVehiculos(firebaseV: Vehicle, localV: Vehicle): boolean {
   if (firebaseV.tipoReloj !== "desglosador" || localV.tipoReloj !== "desglosador") return false;
@@ -149,6 +189,7 @@ export function shouldPreferLocalSubVehiculos(firebaseV: Vehicle, localV: Vehicl
   if (fbSubs.length === 0) return true;
   if (localSubs.length > fbSubs.length) return true;
   if (countSubsCerrados(localSubs) > countSubsCerrados(fbSubs)) return true;
+  if (activeSubId(localSubs) !== activeSubId(fbSubs)) return true;
   return false;
 }
 
@@ -157,7 +198,10 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
 
   const withLocalSubs = (base: Vehicle): Vehicle =>
     shouldPreferLocalSubVehiculos(base, localV)
-      ? { ...base, subVehiculos: localV.subVehiculos }
+      ? {
+          ...base,
+          subVehiculos: mergeSubVehiculosById(base.subVehiculos, localV.subVehiculos),
+        }
       : base;
 
   if (localV.status !== "activo" && firebaseV.status === "activo") {
@@ -182,7 +226,10 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
   let merged: Vehicle = { ...firebaseV };
 
   if (firebaseV.tipoReloj === "desglosador" && localV.subVehiculos && localV.subVehiculos.length > 0) {
-    merged = { ...merged, subVehiculos: localV.subVehiculos };
+    merged = {
+      ...merged,
+      subVehiculos: mergeSubVehiculosById(firebaseV.subVehiculos, localV.subVehiculos),
+    };
   }
   if (localV.desglosadorBloqueDepthPsGranted != null) {
     merged = { ...merged, desglosadorBloqueDepthPsGranted: localV.desglosadorBloqueDepthPsGranted };

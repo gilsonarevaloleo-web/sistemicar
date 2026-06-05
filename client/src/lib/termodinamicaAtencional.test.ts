@@ -5,10 +5,12 @@ import {
   classifyPsSource,
   computeEspectroBloques,
   countBloquesCompletados,
+  countDesglosadoresCerradosHoy,
   computeResistenciaDia,
   subCumplidoEnJornada,
   vehicleEnTermoJornada,
-  countBloquesDesglosadorSubsHoy,
+  countSubsDesglosadorCumplidosHoy,
+  desglosadorCerradoEnJornada,
   computeTermodinamicaCompare,
   computeTermodinamicaCompareV2,
   inferBandaBloque,
@@ -56,7 +58,7 @@ describe("termodinamicaAtencional", () => {
     assert.equal(inferBandaBloque(sub), "limite");
   });
 
-  it("computeEspectroBloques cuenta un bloque por sub (profundidad máxima)", () => {
+  it("computeEspectroBloques cuenta profundidad por sub; bloque = desglosador cerrado", () => {
     const dayStart = Date.now() - 3600_000;
     const now = Date.now();
     const vehicles: Vehicle[] = [
@@ -75,7 +77,9 @@ describe("termodinamicaAtencional", () => {
     assert.equal(espectro.fluido, 1);
     assert.equal(espectro.concentrado, 0);
     assert.equal(espectro.limite, 1);
-    assert.equal(countBloquesCompletados(vehicles, dayStart), 2);
+    assert.equal(countSubsDesglosadorCumplidosHoy(vehicles, dayStart), 2);
+    assert.equal(countDesglosadoresCerradosHoy(vehicles, dayStart), 1);
+    assert.equal(countBloquesCompletados(vehicles, dayStart), 1);
   });
 
   it("computeEspectroBloques usa cruzado cuando no hay rutaDeclarada", () => {
@@ -94,7 +98,7 @@ describe("termodinamicaAtencional", () => {
     assert.equal(espectro.limite, 1);
   });
 
-  it("dos desglosadores con varios subs suman bloques por sub", () => {
+  it("dos desglosadores cerrados con varios subs: 2 bloques y 12 subs", () => {
     const dayStart = Date.now() - 3600_000;
     const now = Date.now();
     const mkSubs = (n: number, prefix: string): SubVehiculo[] =>
@@ -109,8 +113,9 @@ describe("termodinamicaAtencional", () => {
       makeDesglosadorVehicle(mkSubs(7, "a"), { id: "d1", titulo: "Costura A" }),
       makeDesglosadorVehicle(mkSubs(5, "b"), { id: "d2", titulo: "Costura B" }),
     ];
-    assert.equal(countBloquesDesglosadorSubsHoy(vehicles, dayStart), 12);
-    assert.equal(countBloquesCompletados(vehicles, dayStart), 12);
+    assert.equal(countSubsDesglosadorCumplidosHoy(vehicles, dayStart), 12);
+    assert.equal(countDesglosadoresCerradosHoy(vehicles, dayStart), 2);
+    assert.equal(countBloquesCompletados(vehicles, dayStart), 2);
     const espectro = computeEspectroBloques(vehicles, dayStart);
     assert.equal(espectro.fluido, 12);
   });
@@ -128,7 +133,9 @@ describe("termodinamicaAtencional", () => {
         { status: "activo", aperturaAt: ayer }
       ),
     ];
-    assert.equal(countBloquesCompletados(vehicles, dayStart), 1);
+    assert.equal(countSubsDesglosadorCumplidosHoy(vehicles, dayStart), 1);
+    assert.equal(countBloquesCompletados(vehicles, dayStart), 0);
+    assert.equal(desglosadorCerradoEnJornada(vehicles[0], dayStart), false);
     assert.equal(subCumplidoEnJornada(vehicles[0].subVehiculos![0], vehicles[0], dayStart), false);
     assert.equal(subCumplidoEnJornada(vehicles[0].subVehiculos![1], vehicles[0], dayStart), true);
   });
@@ -137,6 +144,34 @@ describe("termodinamicaAtencional", () => {
     assert.equal(classifyPsSource("Cierre consciente: Mañana"), "panoramico");
     assert.equal(classifyPsSource("Ciclo Desglosador completado: Costura"), "vehiculos");
     assert.equal(classifyPsSource("Profundidad ruta enfoque"), "espectro");
+  });
+
+  it("buildDailySnapshot separa bloques (desglosadores cerrados) de subs", () => {
+    const dayStart = Date.now() - 3600_000;
+    const now = Date.now();
+    const mkSubs = (n: number, prefix: string): SubVehiculo[] =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `${prefix}-s${i}`,
+        titulo: `${prefix} ${i}`,
+        status: "cumplido" as const,
+        cierreAt: now,
+        rutaDeclarada: ["fluido"],
+      }));
+    const snap = buildDailySnapshot({
+      fecha: "2026-06-04",
+      segmentos: [],
+      vehicles: [
+        makeDesglosadorVehicle(mkSubs(7, "a"), { id: "d1" }),
+        makeDesglosadorVehicle(mkSubs(5, "b"), { id: "d2" }),
+      ],
+      dayStartMs: dayStart,
+      logs: [],
+    });
+    assert.equal(snap.bloquesCompletados, 2);
+    assert.equal(snap.desglosadoresCerrados, 2);
+    assert.equal(snap.subsDesglosadorCumplidos, 12);
+    assert.equal(snap.decisionesDelDia, 12);
+    assert.equal(snap.bloquesOtros, 0);
   });
 
   it("buildDailySnapshot incluye schemaVersion 2 y resistencia", () => {

@@ -50,6 +50,7 @@ La voz **no sustituye** la declaración del usuario al cierre; solo marca el cur
 | Bloques al límite / concentrados ↑ | Más fricción = “mejor día” | **Bloques en dominio fluido** ↑ y **fricción** ↓ |
 | Espectro: sumar todas las bandas cruzadas | Confunde recorrido con logro | **Dominio fluido** vs **fricción** (mutuamente excluyentes por sub) |
 | Resistencia (profundidad de sesión PS) | Horas de desglosador | **Índice de resistencia** (0–100): dominio + ganancia − fricción |
+| 1 sub = 1 bloque | Confunde contenedor con decisión interna | **Regla A:** 1 bloque = desglosador **cerrado**; subs = métrica aparte |
 
 ---
 

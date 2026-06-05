@@ -6,6 +6,7 @@ import {
   isOrphanDesglosadorInterrupt,
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
+  mergeSubVehiculosById,
   shouldPreferLocalSubVehiculos,
 } from "./situacionSessionMerge.ts";
 
@@ -155,6 +156,40 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     const merged = mergeActiveVehicleSessionState(fb, local);
     assert.equal(merged.interrupcionActiva, false);
     assert.equal(merged.desglosadorPausa, undefined);
+  });
+
+  it("mergeSubVehiculosById keeps local active sub when firebase still has first pending", () => {
+    const fb: SubVehiculo[] = [
+      { id: "s0", titulo: "A", status: "cumplido", cierreAt: 1000 },
+      { id: "s1", titulo: "B", status: "pendiente" },
+    ];
+    const local: SubVehiculo[] = [
+      { id: "s0", titulo: "A", status: "cumplido", cierreAt: 1000 },
+      { id: "s1", titulo: "B", status: "activo", aperturaAt: 2000 },
+    ];
+    const merged = mergeSubVehiculosById(fb, local);
+    assert.equal(merged[1].status, "activo");
+    assert.equal(merged[1].aperturaAt, 2000);
+  });
+
+  it("shouldPreferLocalSubVehiculos when active sub differs from firebase", () => {
+    const fb = {
+      id: "d1",
+      tipoReloj: "desglosador",
+      status: "activo",
+      subVehiculos: [
+        { id: "s0", titulo: "A", status: "cumplido" },
+        { id: "s1", titulo: "B", status: "pendiente" },
+      ],
+    } as Vehicle;
+    const local = {
+      ...fb,
+      subVehiculos: [
+        { id: "s0", titulo: "A", status: "cumplido" },
+        { id: "s1", titulo: "B", status: "activo", aperturaAt: 99 },
+      ],
+    } as Vehicle;
+    assert.equal(shouldPreferLocalSubVehiculos(fb, local), true);
   });
 
   it("shouldPreferLocalSubVehiculos when firebase lost subs array", () => {

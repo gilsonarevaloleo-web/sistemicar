@@ -5068,8 +5068,39 @@ function getLocalPlanilla(fecha: string): Planilla | null {
   }
 }
 
-function saveLocalPlanilla(planilla: Planilla): void {
-  localStorage.setItem(`${PLANILLA_LOCAL_KEY}_${planilla.fecha}`, JSON.stringify(planilla));
+function saveLocalPlanilla(planilla: Planilla): boolean {
+  try {
+    localStorage.setItem(`${PLANILLA_LOCAL_KEY}_${planilla.fecha}`, JSON.stringify(planilla));
+    return true;
+  } catch (error) {
+    console.error("[saveLocalPlanilla] No se pudo persistir planilla:", error);
+    return false;
+  }
+}
+
+function syncPlanillaToFirebase(userId: string, planilla: Planilla): void {
+  if (!isFirebaseConfigured() || !db) return;
+  void (async () => {
+    try {
+      const path = getPrivatePath(userId, "planillas");
+      const q = query(collection(db, path), where("fecha", "==", planilla.fecha));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        await addDoc(collection(db, path), {
+          ...planilla,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(doc(db, path, snapshot.docs[0].id), {
+          segmentos: planilla.segmentos,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error("Error saving planilla to Firebase:", error);
+    }
+  })();
 }
 
 function getTodayDateString(): string {
@@ -5115,31 +5146,12 @@ export async function getPlanillaHoy(userId: string): Promise<Planilla> {
   return newPlanilla;
 }
 
-export async function savePlanilla(userId: string, planilla: Planilla): Promise<void> {
+/** Guarda primero en el dispositivo; la nube se sincroniza en segundo plano. */
+export async function savePlanilla(userId: string, planilla: Planilla): Promise<boolean> {
   planilla.updatedAt = new Date().toISOString();
-  saveLocalPlanilla(planilla);
-
-  if (isFirebaseConfigured() && db) {
-    try {
-      const path = getPrivatePath(userId, "planillas");
-      const q = query(collection(db, path), where("fecha", "==", planilla.fecha));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) {
-        await addDoc(collection(db, path), {
-          ...planilla,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      } else {
-        await updateDoc(doc(db, path, snapshot.docs[0].id), {
-          segmentos: planilla.segmentos,
-          updatedAt: serverTimestamp()
-        });
-      }
-    } catch (error) {
-      console.error("Error saving planilla to Firebase:", error);
-    }
-  }
+  const localOk = saveLocalPlanilla(planilla);
+  syncPlanillaToFirebase(userId, planilla);
+  return localOk;
 }
 
 export async function addSegmentoToPlanilla(userId: string, segmento: SegmentoV5): Promise<Planilla> {
@@ -5201,16 +5213,31 @@ export async function updateSegmentoInPlanilla(
   segmentoId: string,
   updates: Partial<SegmentoV5>,
   basePlanilla?: Planilla
-): Promise<Planilla> {
-  const planilla = basePlanilla ?? (await getPlanillaHoy(userId));
+): Promise<{ planilla: Planilla; localSaved: boolean }> {
+  let planilla: Planilla;
+  if (basePlanilla) {
+    const local = getLocalPlanilla(basePlanilla.fecha);
+    planilla = {
+      ...basePlanilla,
+      segmentos: local
+        ? mergePlanillaSegmentosWithLocal(basePlanilla.segmentos, local.segmentos)
+        : [...basePlanilla.segmentos],
+    };
+  } else {
+    planilla = await getPlanillaHoy(userId);
+  }
+
   const idx = planilla.segmentos.findIndex(s => s.id === segmentoId);
   if (idx === -1) {
     console.warn("[updateSegmentoInPlanilla] Segmento no encontrado:", segmentoId);
-    return planilla;
+    return { planilla, localSaved: false };
   }
-  planilla.segmentos[idx] = { ...planilla.segmentos[idx], ...updates };
-  await savePlanilla(userId, planilla);
-  return planilla;
+
+  const segmentos = [...planilla.segmentos];
+  segmentos[idx] = { ...segmentos[idx], ...updates };
+  planilla = { ...planilla, segmentos };
+  const localSaved = await savePlanilla(userId, planilla);
+  return { planilla, localSaved };
 }
 
 export async function addEventoToSegmento(userId: string, segmentoId: string, evento: EventoLog): Promise<void> {

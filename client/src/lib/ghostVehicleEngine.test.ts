@@ -6,6 +6,7 @@ import {
   GHOST_MAX_SESSION_MS,
   hasRealActiveConsciousVehicle,
   isGhostActiveVehicle,
+  isJournalStaleActiveVehicle,
   shouldPreserveLocalActivo,
 } from "./ghostVehicleEngine.ts";
 
@@ -26,9 +27,24 @@ function v(partial: Partial<Vehicle> & Pick<Vehicle, "id">): Vehicle {
 }
 
 describe("ghostVehicleEngine", () => {
-  it("activo que cruzó el rollover 05:00 no es fantasma", () => {
+  it("activo que empezó ~04:00 y sigue a las 08:00 no es fantasma", () => {
     const cross = v({ id: "g1", aperturaAt: DAY_START - 3600_000 });
     assert.equal(isGhostActiveVehicle(cross, NOW, DAY_START), false);
+    assert.equal(isJournalStaleActiveVehicle(DAY_START - 3600_000, NOW, DAY_START), false);
+  });
+
+  it("sesión nocturna 21:00 olvidada abierta es fantasma a las 09:00", () => {
+    const nineAm = DAY_START + 4 * 3600_000;
+    const nightOpen = DAY_START - 8 * 3600_000;
+    const stale = v({ id: "night", aperturaAt: nightOpen });
+    assert.equal(isJournalStaleActiveVehicle(nightOpen, nineAm, DAY_START), true);
+    assert.equal(isGhostActiveVehicle(stale, nineAm, DAY_START), true);
+  });
+
+  it("vehículo nuevo desde 05:00 no es fantasma a las 09:00", () => {
+    const nineAm = DAY_START + 4 * 3600_000;
+    const morning = v({ id: "morning", aperturaAt: DAY_START });
+    assert.equal(isGhostActiveVehicle(morning, nineAm, DAY_START), false);
   });
 
   it("sesión obsoleta (>12h) sí es fantasma", () => {

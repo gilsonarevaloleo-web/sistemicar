@@ -34,7 +34,7 @@ REGLAS ABSOLUTAS:
 GLOSARIO RÁPIDO:
 - Segmento = tramo del día (mañana/tarde…) con hora inicio/fin; se cierra consciente (manual o entropía).
 - Vehículo / misión = bloque en La Flota; Express (rápido) o Profundo (4 ejes).
-- Desglosador = vehículo padre que se parte en subs (bloques); 1 sub cumplido = 1 bloque medido.
+- Desglosador = vehículo contenedor (bloque); subs = decisiones internas. Termodinámica: 1 bloque = desglosador cerrado; subs aparte.
 - Desglosador tiempo (Operativo) = unidades, ritmo, ruta fluido→concentrado→límite con voz.
 - Desglosador situación (Soberanía) = bloques 3+3, cupos, cronómetro por subtarea.
 - PS = Puntos de Soberanía por cerrar con disciplina.

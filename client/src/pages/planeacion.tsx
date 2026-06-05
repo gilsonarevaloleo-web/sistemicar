@@ -254,6 +254,7 @@ import {
   deleteSituacionReserva,
   getReservaActivas,
   RUTA_TACTICA_META,
+  sortReservasTacticas,
   subscribeToSituacionReserva,
   updateSituacionReservaEstado,
   updateSituacionReservaRuta,
@@ -275,8 +276,10 @@ import {
   FASE_ATENCIONAL_LABEL,
   getPlanillaDailySnapshotForDate,
   getPlanillaDailySnapshots,
+  computeCombustibleDia,
 } from "@/lib/termodinamicaAtencional";
 import type { PlanillaDailySnapshot } from "@/lib/termodinamicaAtencional";
+import { formatCombustibleResumen, formatCombustibleDetalle } from "@/lib/combustibleConciencia";
 import {
   getProyectoById,
   getPeldanosByProyecto,
@@ -1227,18 +1230,22 @@ export default function Planeacion() {
           payload.sub,
           safeAwardPS
         );
-        if (awarded > 0 && vehicle.subVehiculos) {
-          const subVehiculos = vehicle.subVehiculos.map(s =>
-            s.id === sub.id ? sub : s
-          );
-          const patch = (list: Vehicle[]) =>
-            list.map(v => (v.id === payload.vehicleId ? { ...v, subVehiculos } : v));
-          setVehicles(patch);
-          vehiclesRef.current = patch(vehiclesRef.current);
+        if (awarded > 0) {
+          const patchOne = (list: Vehicle[]) =>
+            list.map(v => {
+              if (v.id !== payload.vehicleId) return v;
+              const subs = (v.subVehiculos ?? []).map(s => (s.id === sub.id ? sub : s));
+              return { ...v, subVehiculos: subs };
+            });
+          setVehicles(patchOne);
+          vehiclesRef.current = patchOne(vehiclesRef.current);
           saveLocalVehicles(vehiclesRef.current);
-          void updateVehicle(user.uid, payload.vehicleId, { subVehiculos }).catch(e =>
-            console.warn("[recordBloqueCierre] psOtorgados sync:", e)
-          );
+          const subVehiculos = vehiclesRef.current.find(v => v.id === payload.vehicleId)?.subVehiculos;
+          if (subVehiculos) {
+            void updateVehicle(user.uid, payload.vehicleId, { subVehiculos }).catch(e =>
+              console.warn("[recordBloqueCierre] psOtorgados sync:", e)
+            );
+          }
           toast.success(`+${awarded} PS · ${cleanSubTitulo(sub.titulo)}`, {
             description: `Sub cumplido (+${DESGLOSADOR_SUB_CUMPLIDO_PS} base${awarded > DESGLOSADOR_SUB_CUMPLIDO_PS ? " + ruta" : ""}) · sumado a tu barra del día`,
             style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
@@ -1515,6 +1522,7 @@ export default function Planeacion() {
       setJournalDayKey(getJournalDayStartMs());
       setYesterdayPS(null);
       loadYesterday();
+      void reconcileGhostActiveVehicles(user.uid);
     };
     window.addEventListener("journal-day-changed", onDayChange);
     return () => window.removeEventListener("journal-day-changed", onDayChange);
@@ -1590,6 +1598,12 @@ export default function Planeacion() {
     () => computeTermodinamicaCompareV2(yesterdayTermoSnapshot, todayTermoLive),
     [yesterdayTermoSnapshot, todayTermoLive]
   );
+
+  const combustibleLive = useMemo(() => {
+    const dayStartMs = getJournalDayStartMs();
+    const jornadaVehicles = vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs));
+    return computeCombustibleDia(jornadaVehicles, dayStartMs);
+  }, [vehicles, segmentTick, anilloTick]);
 
   const disciplinaLive = useMemo(() => {
     const dayStartMs = getLimaDayStartMs();
@@ -1862,6 +1876,7 @@ export default function Planeacion() {
   ]);
 
   const vehiclesRef = useRef(vehicles);
+  const desglosadorSyncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const closingInProgressRef = useRef<Set<string>>(new Set());
   const pausaInterrupcionLockRef = useRef<string | null>(null);
   vehiclesRef.current = vehicles;
@@ -2702,29 +2717,14 @@ export default function Planeacion() {
       puertaTiming,
       psGanados: (seg.psGanados || 0) + 2,
     };
+    const optimisticPlanilla: Planilla = {
+      ...planilla,
+      segmentos: planilla.segmentos.map(s => (s.id === segId ? { ...s, ...patch } : s)),
+    };
     setActivandoSegId(segId);
-    setPlanilla(prev =>
-      prev
-        ? {
-            ...prev,
-            segmentos: prev.segmentos.map(s => (s.id === segId ? { ...s, ...patch } : s)),
-          }
-        : prev
-    );
+    setPlanilla(optimisticPlanilla);
     setSegmentTick(t => t + 1);
-    try {
-      const updated = await updateSegmentoInPlanilla(user.uid, segId, patch, planilla);
-      setPlanilla(updated);
-      const ok = await safeAwardPS(2, "Puerta de atención: " + seg.nombre);
-      const timingLabel = puertaTiming === "antes_voz" ? "antes de la voz" : "tras la voz";
-      toast.success("+2 PS Puerta de atención abierta", {
-        description: `${seg.nombre} · ${timingLabel}`,
-        style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
-      });
-      if (ok) toastDailyPSTotal();
-      registrarEvento(COMPONENTES.PLANIFICACION);
-    } catch (err) {
-      console.error("[activarSegmento]", err);
+    const rollbackSegmento = () =>
       setPlanilla(prev =>
         prev
           ? {
@@ -2743,8 +2743,37 @@ export default function Planeacion() {
             }
           : prev
       );
+    try {
+      const { planilla: saved, localSaved } = await updateSegmentoInPlanilla(
+        user.uid,
+        segId,
+        patch,
+        optimisticPlanilla
+      );
+      if (!localSaved) {
+        rollbackSegmento();
+        toast.error("No se pudo guardar en el dispositivo", {
+          description: "Libera espacio en el navegador o cierra pestañas y vuelve a intentar.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+          duration: 6000,
+        });
+        return;
+      }
+      setPlanilla(saved);
+      setActiveSegmento(user.uid, segId);
+      const ok = await safeAwardPS(2, "Puerta de atención: " + seg.nombre);
+      const timingLabel = puertaTiming === "antes_voz" ? "antes de la voz" : "tras la voz";
+      toast.success("+2 PS Puerta de atención abierta", {
+        description: `${seg.nombre} · ${timingLabel}`,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
+      });
+      if (ok) toastDailyPSTotal();
+      void registrarEvento(COMPONENTES.PLANIFICACION);
+    } catch (err) {
+      console.error("[activarSegmento]", err);
+      rollbackSegmento();
       toast.error("No se pudo abrir la puerta", {
-        description: "Revisa la conexión e intenta de nuevo en unos segundos.",
+        description: "Algo falló al procesar la apertura. Cierra la pestaña, vuelve a abrir e intenta otra vez.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
         duration: 5000,
       });
@@ -2776,7 +2805,7 @@ export default function Planeacion() {
     setClosedSegmentDuration(duration);
     setClosedSegmentName(seg.nombre);
 
-    const updated = await updateSegmentoInPlanilla(user.uid, segId, {
+    const { planilla: updated } = await updateSegmentoInPlanilla(user.uid, segId, {
       estado: "cerrado_manual",
       cerradoAt: Date.now(),
       psGanados: (seg.psGanados || 0) + 2
@@ -3639,12 +3668,28 @@ export default function Planeacion() {
     void reconcileDesglosadorDepthPS(vehicleId, { silent: false });
   }, [reconcileDesglosadorDepthPS]);
 
+  const desglosadorProgressScore = (subs: SubVehiculo[] | undefined): number =>
+    (subs ?? []).reduce((acc, s) => {
+      if (s.status === "cumplido" || s.status === "fallado") return acc + 100;
+      if (s.status === "activo") return acc + 10;
+      return acc;
+    }, 0);
+
   const handleDesglosadorUpdate = (vehicleId: string, updatedSubs: SubVehiculo[], opts?: { resetDepth?: boolean; silentDepth?: boolean }) => {
     if (!user) return;
     const prevVehicle = vehiclesRef.current.find(v => v.id === vehicleId);
-    let depthGranted = opts?.resetDepth ? 0 : (prevVehicle?.desglosadorBloqueDepthPsGranted ?? 0);
+    if (!prevVehicle) return;
 
-    const newVehicles = vehicles.map(v => {
+    const prevProgress = desglosadorProgressScore(prevVehicle.subVehiculos);
+    const nextProgress = desglosadorProgressScore(updatedSubs);
+    if (nextProgress < prevProgress) {
+      console.warn("[Desglosador] Ignorando actualización obsoleta de subs", vehicleId);
+      return;
+    }
+
+    let depthGranted = opts?.resetDepth ? 0 : (prevVehicle.desglosadorBloqueDepthPsGranted ?? 0);
+
+    const newVehicles = vehiclesRef.current.map(v => {
       if (v.id !== vehicleId) return v;
       const patch: Partial<Vehicle> = { subVehiculos: updatedSubs, desglosadorBloqueDepthPsGranted: depthGranted };
       if (opts?.resetDepth) patch.aperturaAt = Date.now();
@@ -3657,6 +3702,21 @@ export default function Planeacion() {
     } catch (e) {
       console.warn("[Desglosador] localStorage save failed (quota?), UI still updated:", e);
     }
+
+    const prevTimer = desglosadorSyncTimersRef.current.get(vehicleId);
+    if (prevTimer) clearTimeout(prevTimer);
+    desglosadorSyncTimersRef.current.set(
+      vehicleId,
+      setTimeout(() => {
+        desglosadorSyncTimersRef.current.delete(vehicleId);
+        const latest = vehiclesRef.current.find(v => v.id === vehicleId);
+        if (!latest?.subVehiculos?.length) return;
+        void updateVehicle(user.uid, vehicleId, {
+          subVehiculos: latest.subVehiculos,
+          desglosadorBloqueDepthPsGranted: latest.desglosadorBloqueDepthPsGranted,
+        }).catch(e => console.warn("[Desglosador] sync Firebase subs:", e));
+      }, 450)
+    );
 
     if (opts?.resetDepth) {
       void reconcileDesglosadorDepthPS(vehicleId, { silent: true, resetGranted: 0 });
@@ -3994,7 +4054,16 @@ export default function Planeacion() {
     const list = vehicle.subTareas || [];
     const idx = list.findIndex(st => st.id === subTareaId);
     const chimesOnComplete = isChecking && vehicle.tipoFlota === "situacion" && idx >= 0 ? Math.max(1, list.length - idx) : 0;
-    const subTareas = list.map(st => st.id === subTareaId ? { ...st, completada: !st.completada } : st);
+    const nowMs = Date.now();
+    const subTareas = list.map(st =>
+      st.id === subTareaId
+        ? {
+            ...st,
+            completada: !st.completada,
+            cerradaAt: isChecking ? nowMs : undefined,
+          }
+        : st
+    );
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
     persistVehiclesRef();
@@ -4465,17 +4534,23 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
     persistVehiclesRef();
     try {
-      await Promise.all([
-        updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro }),
-        addSituacionReserva(user.uid, {
-          texto: extraido.texto,
-          ruta: "situacion_desglosador",
-          origenVehiculoTitulo: vehicle.titulo,
-          origenVehiculoId: vehicle.id,
-          minutosCupo: extraido.minutosCupo,
-          detalles: extraido.detalles,
-        }),
-      ]);
+      const { localSaved } = await addSituacionReserva(user.uid, {
+        texto: extraido.texto,
+        ruta: "situacion_desglosador",
+        origenVehiculoTitulo: vehicle.titulo,
+        origenVehiculoId: vehicle.id,
+        minutosCupo: extraido.minutosCupo,
+        detalles: extraido.detalles,
+      });
+      if (!localSaved) {
+        toast.error("No se pudo guardar la reserva en el dispositivo", {
+          description: "Libera espacio en el navegador o cierra pestañas y vuelve a intentar.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+          duration: 5000,
+        });
+        return;
+      }
+      void updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
       toast.info("En reservas tácticas", {
         description: `"${extraido.texto}" — ruta S · retómala cuando tengas tiempo`,
@@ -4491,6 +4566,11 @@ export default function Planeacion() {
       }
     } catch (e) {
       console.error("[handleSituacionCronometroReservar]", e);
+      toast.error("No se pudo reservar la tarea", {
+        description: "Cierra la pestaña, vuelve a abrir e inténtalo otra vez.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5000,
+      });
     }
   };
 
@@ -4513,16 +4593,25 @@ export default function Planeacion() {
     const trimmed = texto.trim();
     if (!trimmed) return;
     try {
-      await addSituacionReserva(user.uid, { texto: trimmed, ruta });
+      const { localSaved } = await addSituacionReserva(user.uid, { texto: trimmed, ruta });
+      if (!localSaved) {
+        toast.error("No se pudo guardar en el dispositivo", {
+          description: "Libera espacio en el navegador o cierra pestañas y vuelve a intentar.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+          duration: 5000,
+        });
+        throw new Error("local-save-failed");
+      }
       toast.success("Reserva táctica guardada", {
         description: `[${RUTA_TACTICA_META[ruta].short}] ${trimmed.length > 48 ? `${trimmed.slice(0, 48)}…` : trimmed}`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 2800,
       });
     } catch (e) {
+      if ((e as Error)?.message === "local-save-failed") throw e;
       console.error("[handleReservaTacticaQuickAdd]", e);
       toast.error("No se pudo guardar la reserva", {
-        description: "Quedó intento local; revisa conexión y pulsa Guardar otra vez.",
+        description: "Algo falló al procesar la captura. Cierra la pestaña, vuelve a abrir e inténtalo otra vez.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
       throw e;
@@ -4531,21 +4620,38 @@ export default function Planeacion() {
 
   const handleReservaRutaChange = async (reservaId: string, ruta: ReservaTacticaRuta) => {
     if (!user) return;
-    try {
-      await updateSituacionReservaRuta(user.uid, reservaId, ruta);
-    } catch (e) {
-      console.error("[handleReservaRutaChange]", e);
+    const prevRuta = situacionReserva.find(i => i.id === reservaId)?.ruta;
+    setSituacionReserva(prev =>
+      prev.map(i => (i.id === reservaId ? { ...i, ruta } : i))
+    );
+    const localSaved = await updateSituacionReservaRuta(user.uid, reservaId, ruta);
+    if (!localSaved) {
+      setSituacionReserva(prev =>
+        prev.map(i =>
+          i.id === reservaId && prevRuta ? { ...i, ruta: prevRuta } : i
+        )
+      );
+      toast.error("No se pudo cambiar la ruta", {
+        description: "Libera espacio en el navegador e inténtalo de nuevo.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
     }
   };
 
   const handleReservaEliminar = async (reservaId: string) => {
     if (!user) return;
-    try {
-      await deleteSituacionReserva(user.uid, reservaId);
-      toast.info("Eliminada de la reserva", { duration: 1800 });
-    } catch (e) {
-      console.error("[handleReservaEliminar]", e);
+    const backup = situacionReserva.find(i => i.id === reservaId);
+    setSituacionReserva(prev => prev.filter(i => i.id !== reservaId));
+    const localSaved = await deleteSituacionReserva(user.uid, reservaId);
+    if (!localSaved && backup) {
+      setSituacionReserva(prev => sortReservasTacticas([backup, ...prev]));
+      toast.error("No se pudo eliminar la reserva", {
+        description: "Libera espacio en el navegador e inténtalo de nuevo.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
+      return;
     }
+    toast.info("Eliminada de la reserva", { duration: 1800 });
   };
 
   const handleReservaAListaLibre = async (reservaId: string) => {
@@ -4580,13 +4686,30 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicle.id ? { ...v, subTareas } : v));
     persistVehiclesRef();
     try {
-      await Promise.all([
-        updateVehicle(user.uid, vehicle.id, { subTareas }),
-        updateSituacionReservaEstado(user.uid, reservaId, "retomada_libre", {
-          retomadaAt: Date.now(),
-          retomadaEnVehiculoId: vehicle.id,
-        }),
-      ]);
+      void updateVehicle(user.uid, vehicle.id, { subTareas });
+      const localSaved = await updateSituacionReservaEstado(user.uid, reservaId, "retomada_libre", {
+        retomadaAt: Date.now(),
+        retomadaEnVehiculoId: vehicle.id,
+      });
+      if (!localSaved) {
+        toast.error("No se pudo actualizar la reserva", {
+          description: "Libera espacio en el navegador e inténtalo de nuevo.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        });
+        return;
+      }
+      setSituacionReserva(prev =>
+        prev.map(i =>
+          i.id === reservaId
+            ? {
+                ...i,
+                estado: "retomada_libre" as const,
+                retomadaAt: Date.now(),
+                retomadaEnVehiculoId: vehicle.id,
+              }
+            : i
+        )
+      );
       setExpandedId(vehicle.id);
       void handleSyncSituacionCupoAnchor(vehicle.id);
       toast.success("Retomada en lista libre", {
@@ -4596,6 +4719,10 @@ export default function Planeacion() {
       });
     } catch (e) {
       console.error("[handleReservaAListaLibre]", e);
+      toast.error("No se pudo retomar en lista libre", {
+        description: "Comprueba que el vehículo situacional siga activo e inténtalo de nuevo.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
     }
   };
 
@@ -4634,10 +4761,29 @@ export default function Planeacion() {
     try {
       // Una sola persistencia: evita snapshot Firebase intermedio (lista libre) que pisaba el desglose con tiempo.
       await handleMoveSubTareasToCronometro(vehicle.id, [newSub.id]);
-      await updateSituacionReservaEstado(user.uid, reservaId, "retomada_cron", {
+      const localSaved = await updateSituacionReservaEstado(user.uid, reservaId, "retomada_cron", {
         retomadaAt: Date.now(),
         retomadaEnVehiculoId: vehicle.id,
       });
+      if (!localSaved) {
+        toast.error("No se pudo actualizar la reserva", {
+          description: "Libera espacio en el navegador e inténtalo de nuevo.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        });
+        return;
+      }
+      setSituacionReserva(prev =>
+        prev.map(i =>
+          i.id === reservaId
+            ? {
+                ...i,
+                estado: "retomada_cron" as const,
+                retomadaAt: Date.now(),
+                retomadaEnVehiculoId: vehicle.id,
+              }
+            : i
+        )
+      );
       setExpandedId(vehicle.id);
       toast.success("Retomada en desglose con tiempo", {
         description: item.texto,
@@ -5061,8 +5207,21 @@ export default function Planeacion() {
               if (planLayout === "full") setPlanLayout("compact");
             }}
             psLine={(
-              <p className="text-[10px] font-black tabular-nums" style={{ color: CYAN }} data-testid="cockpit-ps-line">
-                {dailyPsBar.todayPs} PS · {dailyPsBar.pctOfReference}%
+              <div>
+                <p className="text-[10px] font-black tabular-nums" style={{ color: CYAN }} data-testid="cockpit-ps-line">
+                  {dailyPsBar.todayPs} PS · {dailyPsBar.pctOfReference}%
+                </p>
+                <p className="text-[7px] text-slate-600 leading-snug">Refuerzo · no es producción ni decisiones</p>
+              </div>
+            )}
+            combustibleLine={(
+              <p
+                className="text-[9px] font-bold tabular-nums leading-snug"
+                style={{ color: "#A855F7" }}
+                title={formatCombustibleDetalle(combustibleLive)}
+                data-testid="cockpit-combustible-line"
+              >
+                {formatCombustibleResumen(combustibleLive)}
               </p>
             )}
             anillo={(
@@ -5196,7 +5355,7 @@ export default function Planeacion() {
                 Termodinámica Atencional
               </p>
               <p className="text-[7px] text-slate-500 mt-0.5 leading-snug">
-                Frente a ayer · 1 sub cumplido = 1 bloque · dominio fluido solo cuenta subs con ruta activa
+                Frente a ayer · bloque = desglosador cerrado · decisiones = subs + situación · PS = refuerzo aparte
               </p>
             </div>
             {compactLayout && (
@@ -5670,8 +5829,11 @@ export default function Planeacion() {
             style={{ backgroundColor: "rgba(10,10,10,0.8)", borderColor: "rgba(212,175,55,0.15)" }}
             data-testid="anillo-card"
           >
-            <p className="text-[8px] font-black uppercase tracking-[0.25em] text-center mb-2" style={{ color: "rgba(255,255,255,0.25)" }}>
+            <p className="text-[8px] font-black uppercase tracking-[0.25em] text-center mb-1" style={{ color: "rgba(255,255,255,0.25)" }}>
               ANILLO DE CONCIENCIA
+            </p>
+            <p className="text-[7px] text-slate-600 text-center mb-2 leading-snug px-2">
+              Tiempo presente · el combustible son tus decisiones cerradas (abajo)
             </p>
             <AnilloConciencia
               planificacionPct={anilloModel.metricas.planificacionPct}
@@ -5701,6 +5863,22 @@ export default function Planeacion() {
                 <p className="text-[7px] text-slate-500 uppercase">Seg. cerrados</p>
                 <p className="text-xs font-black" style={{ color: "#00FFC3" }}>{anilloModel.segConquistados}/{anilloModel.segs.length}</p>
               </div>
+            </div>
+            <div
+              className="mt-2 w-full p-2 rounded-lg border text-center"
+              style={{ backgroundColor: "rgba(168,85,247,0.08)", borderColor: "rgba(168,85,247,0.28)" }}
+              data-testid="combustible-card"
+              title={formatCombustibleDetalle(combustibleLive)}
+            >
+              <p className="text-[7px] font-black uppercase tracking-widest" style={{ color: "#A855F7" }}>
+                Combustible de conciencia
+              </p>
+              <p className="text-sm font-black mt-0.5 tabular-nums" style={{ color: "#E9D5FF" }}>
+                {formatCombustibleResumen(combustibleLive)}
+              </p>
+              <p className="text-[7px] text-slate-500 mt-0.5 leading-snug">
+                {formatCombustibleDetalle(combustibleLive)}
+              </p>
             </div>
           </motion.div>
         )}
@@ -6594,9 +6772,18 @@ export default function Planeacion() {
                                       ),
                                     });
                                     try {
-                                      const updated = await updateSegmentoInPlanilla(user.uid, seg.id, {
-                                        centinelaEnabled: newVal,
-                                      });
+                                      const optimistic = {
+                                        ...planilla,
+                                        segmentos: planilla.segmentos.map(s =>
+                                          s.id === seg.id ? { ...s, centinelaEnabled: newVal } : s
+                                        ),
+                                      };
+                                      const { planilla: updated } = await updateSegmentoInPlanilla(
+                                        user.uid,
+                                        seg.id,
+                                        { centinelaEnabled: newVal },
+                                        optimistic
+                                      );
                                       setPlanilla(updated);
                                     } catch {
                                       setPlanilla(planilla);
@@ -7942,7 +8129,7 @@ export default function Planeacion() {
                   });
                 }
                 toast.success("Jornada Sellada", {
-                  description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${sealed.totalPS} PS · ${snapshot.bloquesCompletados} bloques`,
+                  description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${snapshot.decisionesDelDia ?? snapshot.subsDesglosadorCumplidos ?? 0} decisiones · ${snapshot.bloquesCompletados} bloque${snapshot.bloquesCompletados !== 1 ? "s" : ""} · ${sealed.totalPS} PS refuerzo`,
                   style: { backgroundColor: PIZARRA, border: `2px solid ${GOLD}`, color: GOLD }
                 });
                 setShowCierreJornada(false);
@@ -8162,6 +8349,8 @@ function VehicleCard({
   const situacion2MinWarnKeyRef = useRef<string | null>(null);
   const situacionFilaVoiceKeysRef = useRef<Set<string>>(new Set());
   const situacionCupoEscalationRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const subVehiculosRef = useRef(vehicle.subVehiculos);
+  subVehiculosRef.current = vehicle.subVehiculos;
   const subTareasRef = useRef(vehicle.subTareas);
   subTareasRef.current = vehicle.subTareas;
   const situacionAnchorRef = useRef(vehicle.situacionCupoAnchor);
@@ -8312,6 +8501,22 @@ function VehicleCard({
     const id = window.setInterval(() => setDesglosadorUiTick(t => t + 1), 1000);
     return () => clearInterval(id);
   }, [vehicle.id, vehicle.tipoReloj, vehicle.status, vehicle.aperturaAt]);
+
+  useEffect(() => {
+    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || !onDesglosadorUpdate) return;
+    const subs = subVehiculosRef.current ?? [];
+    const hasActive = subs.some(s => s.status === "activo");
+    const pendingIdx = subs.findIndex(s => s.status === "pendiente");
+    if (!hasActive && pendingIdx !== -1) {
+      const now = Date.now();
+      const repaired = subs.map((s, i) =>
+        i === pendingIdx ? { ...s, status: "activo" as const, aperturaAt: now } : s
+      );
+      activeSubIdForRutaRef.current = null;
+      prevSubRestanteRutaRef.current = null;
+      onDesglosadorUpdate(vehicle.id, repaired);
+    }
+  }, [vehicle.subVehiculos, vehicle.status, vehicle.tipoReloj, vehicle.id, onDesglosadorUpdate]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -8482,7 +8687,8 @@ function VehicleCard({
 
   useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || subVehicleRestante === null) return;
-    const activeSub = (vehicle.subVehiculos || []).find(s => s.status === "activo");
+    const subsNow = subVehiculosRef.current ?? [];
+    const activeSub = subsNow.find(s => s.status === "activo");
     if (!activeSub?.rutaEnfoque?.activa || !onDesglosadorUpdate) {
       prevSubRestanteRutaRef.current = null;
       return;
@@ -8497,7 +8703,7 @@ function VehicleCard({
         subVehicleRestante
       );
       if (changed) {
-        const updated = (vehicle.subVehiculos || []).map(s =>
+        const updated = subsNow.map(s =>
           s.id === activeSub.id ? { ...s, rutaEnfoque: repaired } : s
         );
         onDesglosadorUpdate(vehicle.id, updated);
@@ -8542,12 +8748,12 @@ function VehicleCard({
       nextRuta.cruzado.concentrado !== activeSub.rutaEnfoque.cruzado.concentrado ||
       nextRuta.cruzado.limite !== activeSub.rutaEnfoque.cruzado.limite;
     if (cruzadoChanged) {
-      const updated = (vehicle.subVehiculos || []).map(s =>
+      const updated = (subVehiculosRef.current ?? []).map(s =>
         s.id === activeSub.id ? { ...s, rutaEnfoque: nextRuta } : s
       );
       onDesglosadorUpdate(vehicle.id, updated);
     }
-  }, [subVehicleRestante, vehicle.tipoReloj, vehicle.status, vehicle.subVehiculos, vehicle.id, onDesglosadorUpdate, playChime]);
+  }, [subVehicleRestante, vehicle.tipoReloj, vehicle.status, vehicle.subVehiculos, vehicle.id, onDesglosadorUpdate, playChime, onRutaBandCross]);
 
   useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo") return;
@@ -8602,6 +8808,9 @@ function VehicleCard({
     const nextPending = allSubs.findIndex((s, i) => i > idx && s.status === "pendiente");
     if (nextPending !== -1) {
       allSubs[nextPending] = { ...allSubs[nextPending], status: "activo", aperturaAt: now };
+      activeSubIdForRutaRef.current = null;
+      prevSubRestanteRutaRef.current = null;
+      rutaUmbralAlertKeysRef.current.clear();
     }
     onDesglosadorUpdate(vehicle.id, allSubs);
     const allDone = allSubs.every(s => s.status === "cumplido" || s.status === "fallado");

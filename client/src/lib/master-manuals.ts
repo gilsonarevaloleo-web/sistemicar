@@ -273,7 +273,7 @@ export const MASTER_MANUALS: Record<ManualType, MasterManual> = {
       {
         title: "DESGLOSADOR (BLOQUES)",
         instruction:
-          "Requiere add-on: Soberanía del día (situación, bloques 3+3) u Operativo (tiempo, unidades). 1 sub cumplido = 1 bloque en termodinámica. Cierra cada sub antes del ciclo padre.",
+          "Requiere add-on: Soberanía del día (situación, bloques 3+3) u Operativo (tiempo, unidades). En termodinámica: 1 bloque = desglosador cerrado; los subs cuentan aparte. Cierra cada sub y luego el desglosador padre.",
         checklist: [
           { key: "plan_desg_1", text: "Abrí un desglosador acorde a mi plan (situación o tiempo)" },
           { key: "plan_desg_2", text: "Creé subs y los fui cerrando (cumplido/fallado)" },

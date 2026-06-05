@@ -157,21 +157,38 @@ describe("computeTimelineClockArcs", () => {
     assert.ok(arcs.some(a => a.kind === "conquista"));
   });
 
-  it("descanso activo cubre hueco sin entropía", () => {
+  it("descanso activo cubre hueco sin entropía y puntero morado", () => {
     const apertura = limaAt(2026, 4, 18, 8, 0);
     const now = limaAt(2026, 4, 18, 8, 30);
-    const arcs = computeTimelineClockArcs({
-      segmentos: [{ horaInicio: "08:00", horaFin: "12:00" }],
-      vehiculos: [{
-        autoVerdad: false,
-        tipoFlota: "descanso",
-        status: "activo",
-        aperturaAt: apertura,
-      }],
-      now,
-    });
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "descanso",
+      status: "activo",
+      aperturaAt: apertura,
+    }];
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const arcs = computeTimelineClockArcs({ segmentos, vehiculos, now });
     assert.equal(arcs.filter(a => a.kind === "entropia").length, 0);
-    assert.equal(arcs.filter(a => a.kind === "conquista").length, 0);
+    assert.ok(arcs.some(a => a.kind === "conquista"));
+    const st = computeAnilloEstado({ segmentos, vehiculos, now });
+    assert.equal(st.mode, "conquista");
+    assert.equal(st.centerGuide, "Recarga consciente activa");
+  });
+
+  it("a las 09:00 trabajo desde 05:00 cubre segmento sin entropía roja", () => {
+    const now = limaAt(2026, 4, 18, 9, 0);
+    const journalStart = getJournalDayStartMs(now);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "activo",
+      aperturaAt: journalStart,
+    }];
+    const arcs = computeTimelineClockArcs({ segmentos, vehiculos, now });
+    assert.equal(arcs.filter(a => a.kind === "entropia").length, 0);
+    const st = computeAnilloEstado({ segmentos, vehiculos, now });
+    assert.equal(st.mode, "conquista");
   });
 
   it("activo desde antes de 05:00 no infla entropía de horas previas al umbral", () => {

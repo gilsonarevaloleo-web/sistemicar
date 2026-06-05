@@ -10,6 +10,7 @@ type Props = {
   tab: PlanTab;
   onTabChange: (tab: PlanTab) => void;
   psLine: ReactNode;
+  combustibleLine?: ReactNode;
   anillo: ReactNode;
   segmentoChip?: ReactNode;
 };
@@ -21,6 +22,7 @@ export default function PlanificacionCockpit({
   tab,
   onTabChange,
   psLine,
+  combustibleLine,
   anillo,
   segmentoChip,
 }: Props) {
@@ -35,6 +37,7 @@ export default function PlanificacionCockpit({
           <div className="min-w-0">
             <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest truncate">{title}</p>
             <div className="mt-0.5">{psLine}</div>
+            {combustibleLine && <div className="mt-0.5">{combustibleLine}</div>}
           </div>
           <button
             type="button"

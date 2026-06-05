@@ -55,6 +55,7 @@ import {
   getPlanillaDailySnapshots,
   aggregateCartografiaSemanal,
   aggregateEspectroSemanal,
+  decisionesFromSnapshot,
   type PlanillaDailySnapshot,
 } from "@/lib/termodinamicaAtencional";
 import { RUTA_BANDA_META } from "@/lib/rutaEnfoque";
@@ -654,7 +655,13 @@ export default function Analytics() {
                         <p className="text-lg font-black" style={{ color: RUTA_BANDA_META[ultimoSnapshot.profundidadMaxima].color }}>
                           {RUTA_BANDA_META[ultimoSnapshot.profundidadMaxima].label}
                         </p>
-                        <p className="text-[9px] text-slate-600 mt-1">{ultimoSnapshot.bloquesCompletados} bloques cerrados</p>
+                        <p className="text-[9px] text-slate-600 mt-1">
+                          {ultimoSnapshot.bloquesCompletados} bloque{ultimoSnapshot.bloquesCompletados !== 1 ? "s" : ""}
+                          {(() => {
+                            const dec = decisionesFromSnapshot(ultimoSnapshot);
+                            return dec > 0 ? ` · ${dec} decisión${dec !== 1 ? "es" : ""}` : "";
+                          })()}
+                        </p>
                       </div>
                       <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                         <p className="text-[9px] font-bold uppercase text-slate-500 mb-1">Descansos cuerpo</p>

@@ -253,12 +253,20 @@ function getNowMinutesLocal(nowMs: number, dayStartMs: number): number {
   return Math.max(0, Math.min(MINUTOS_DIA, Math.floor((nowMs - dayStartMs) / 60000)));
 }
 
+/** Ejecución consciente voluntaria (tiempo, situación, descanso — no centinela). */
 function isConquistaVehicle(v: VehiculoAnilloLite): boolean {
-  return !v.autoVerdad && v.tipoFlota !== "descanso";
+  return !v.autoVerdad;
 }
 
 function isGapCoverVehicle(v: VehiculoAnilloLite): boolean {
-  return !v.autoVerdad;
+  return isConquistaVehicle(v);
+}
+
+/** Solo cuenta trabajo dentro del día-jornada actual (05:00 → 05:00). */
+function clipSessionToJournalDay(session: MsInterval, now: number): MsInterval | null {
+  const journalStart = getJournalDayStartMs(now);
+  const journalEnd = journalStart + 86400000;
+  return clipInterval(session, journalStart, Math.min(now, journalEnd));
 }
 
 function collectClippedSessions(
@@ -271,6 +279,8 @@ function collectClippedSessions(
   return vehicles
     .filter(filter)
     .map(v => vehicleSessionRange(v, now))
+    .filter((s): s is MsInterval => s != null)
+    .map(s => clipSessionToJournalDay(s, now))
     .filter((s): s is MsInterval => s != null)
     .map(s => clipInterval(s, clipStart, clipEnd))
     .filter((s): s is MsInterval => s != null);
@@ -298,7 +308,7 @@ function isNowInPlannedGap(
     const covered = vehicles.some(v => {
       if (!isGapCoverVehicle(v)) return false;
       const session = vehicleSessionRange(v, nowMs);
-      return session != null && session.start <= nowMs && session.end > nowMs;
+      return session != null && session.start <= nowMs && session.end >= nowMs;
     });
     if (!covered) return true;
   }
@@ -341,16 +351,17 @@ export function filterVehiculosCalendarioHoy(
   return vehiculos.filter(v => {
     const session = vehicleSessionRange(v, now);
     if (!session) return false;
-    return session.end > dayStartMs && session.start < dayEndMs;
+    const journalSession = clipSessionToJournalDay(session, now);
+    if (!journalSession) return false;
+    return journalSession.end > dayStartMs && journalSession.start < dayEndMs;
   });
 }
 
 /**
  * Reloj 24h — 4 estados visuales:
- * - Morado = conquista (vehículo voluntario activo, no descanso).
+ * - Morado = conquista (ejecución consciente: tiempo, situación o descanso).
  * - Rojo = entropía (huecos en segmento planificado sin cobertura consciente).
  * - Gris = libre (antes del umbral o fuera de planificación).
- * - Descanso activo cuenta como cobertura, no entropía.
  */
 export function computeTimelineClockArcs(params: {
   vehiculos: VehiculoAnilloLite[];
@@ -476,7 +487,11 @@ export function computeAnilloEstado(params: {
       mode: "conquista",
       umbralMin,
       sinSegmentos: !hasSegments,
-      centerGuide: "Sesión consciente activa",
+      centerGuide: todayVehicles.some(
+        v => isActiveAtNow(v, nowMs) && isConquistaVehicle(v) && v.tipoFlota === "descanso"
+      )
+        ? "Recarga consciente activa"
+        : "Sesión consciente activa",
     };
   }
 

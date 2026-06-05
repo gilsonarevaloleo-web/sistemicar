@@ -1,5 +1,5 @@
 import type { FocusBandEvent, FocusBandId } from "./focusBandLedger";
-import type { SegmentoV5, SovereigntyPointsLog, SubVehiculo, Vehicle } from "./persistence";
+import type { SegmentoV5, SovereigntyPointsLog, SubTarea, SubVehiculo, Vehicle } from "./persistence";
 import { computeSubCloseVerdict } from "./desglosadorClock";
 import {
   subDominioFluidoPorDeclaracion,
@@ -61,10 +61,19 @@ export interface PlanillaDailySnapshot {
   segmentosEntropia: number;
   segmentosTotales: number;
   bloquesCompletados: number;
-  /** Subs del desglosador cerrados cumplidos en esta jornada (05:00 Lima). */
+  /** Desglosadores (contenedor) cerrados en la jornada — regla A: 1 bloque = 1 desglosador cerrado. */
+  desglosadoresCerrados?: number;
+  /** Subs cumplidos dentro de desglosadores (decisión interna; no equivalen a bloques). */
+  subsDesglosadorCumplidos?: number;
+  /** @deprecated Usar desglosadoresCerrados. Snapshots viejos guardaban aquí el conteo de subs. */
   bloquesDesglosador?: number;
   /** Misiones no-desglosador cerradas hoy (cumplido/archivado). */
   bloquesOtros?: number;
+  /** Decisiones ejecutadas hoy (combustible de conciencia: subs + situación + misiones). */
+  decisionesDelDia?: number;
+  decisionesSubsTiempo?: number;
+  decisionesSubsSituacion?: number;
+  decisionesMisiones?: number;
   disciplina?: DisciplinaDia;
   /** 2 = termodinámica con resistencia / dominio fluido */
   schemaVersion?: 1 | 2;
@@ -115,7 +124,7 @@ export function inferBandaBloque(sub: SubVehiculo): FocusBandId {
   return "fluido";
 }
 
-/** Un sub cumplido = un bloque; la profundidad es la banda máxima alcanzada (no 3 conteos por tramos). */
+/** Un sub cumplido aporta profundidad al espectro (banda máxima alcanzada, no 3 conteos por tramos). */
 function addSubProfundidadToEspectro(counts: EspectroBloques, sub: SubVehiculo): void {
   counts[inferBandaBloque(sub)]++;
 }
@@ -142,8 +151,25 @@ export function subCumplidoEnJornada(
  * Incluye desglosador activo aunque se abrió en jornada anterior (mientras cierres subs hoy)
  * y vehículos con actividad hoy por apertura/cierre.
  */
+/** Desglosador cerrado (cumplido/archivado) en o después del inicio de jornada. */
+export function desglosadorCerradoEnJornada(vehicle: Vehicle, dayStartMs: number): boolean {
+  if (vehicle.tipoReloj !== "desglosador") return false;
+  if (vehicle.status !== "cumplido" && vehicle.status !== "archivado") return false;
+
+  const cierreVehiculo = vehicle.cierreAt ?? vehicle.aperturaAt ?? 0;
+  if (cierreVehiculo >= dayStartMs) return true;
+
+  const subs = vehicle.subVehiculos ?? [];
+  if (subs.length === 0) return false;
+  const todosCerrados = subs.every(s => s.status === "cumplido" || s.status === "fallado");
+  if (!todosCerrados) return false;
+  const ultimoCierre = Math.max(...subs.map(s => subCierreTimestamp(s, vehicle)));
+  return ultimoCierre >= dayStartMs;
+}
+
 export function vehicleEnTermoJornada(vehicle: Vehicle, dayStartMs: number): boolean {
   if (vehicle.tipoReloj === "desglosador") {
+    if (desglosadorCerradoEnJornada(vehicle, dayStartMs)) return true;
     const subs = vehicle.subVehiculos ?? [];
     if (subs.some(s => subCumplidoEnJornada(s, vehicle, dayStartMs))) return true;
     if (vehicle.status === "activo") return true;
@@ -297,8 +323,8 @@ export function computeEspectroBloques(
   return counts;
 }
 
-/** Subs cumplidos hoy en desglosadores (1 sub = 1 bloque). */
-export function countBloquesDesglosadorSubsHoy(vehicles: Vehicle[], dayStartMs: number): number {
+/** Subs cumplidos hoy dentro de desglosadores (métrica aparte del bloque contenedor). */
+export function countSubsDesglosadorCumplidosHoy(vehicles: Vehicle[], dayStartMs: number): number {
   let total = 0;
   for (const v of vehicles) {
     if (v.tipoReloj !== "desglosador" || !vehicleEnTermoJornada(v, dayStartMs)) continue;
@@ -309,29 +335,122 @@ export function countBloquesDesglosadorSubsHoy(vehicles: Vehicle[], dayStartMs: 
   return total;
 }
 
-/** Bloques únicos cumplidos hoy: un sub del desglosador = un bloque; otras misiones = 1 c/u. */
-export function countBloquesCompletados(vehicles: Vehicle[], dayStartMs: number): number {
+/** @deprecated Usar countSubsDesglosadorCumplidosHoy */
+export const countBloquesDesglosadorSubsHoy = countSubsDesglosadorCumplidosHoy;
+
+/** Desglosadores cerrados hoy (regla A: 1 bloque = 1 desglosador cerrado). */
+export function countDesglosadoresCerradosHoy(vehicles: Vehicle[], dayStartMs: number): number {
   let total = 0;
-
   for (const v of vehicles) {
+    if (v.tipoReloj !== "desglosador") continue;
+    if (desglosadorCerradoEnJornada(v, dayStartMs)) total++;
+  }
+  return total;
+}
+
+/** Misiones no-desglosador cerradas hoy (excluye descanso). */
+export function countBloquesOtrosHoy(vehicles: Vehicle[], dayStartMs: number): number {
+  let total = 0;
+  for (const v of vehicles) {
+    if (v.tipoReloj === "desglosador" || v.tipoFlota === "descanso") continue;
     if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
+    if (v.status === "cumplido" || v.status === "archivado") total++;
+  }
+  return total;
+}
 
-    if (v.tipoReloj === "desglosador") {
-      for (const sub of v.subVehiculos || []) {
-        if (!subCumplidoEnJornada(sub, v, dayStartMs)) continue;
-        total++;
-      }
-      continue;
-    }
+/** Bloques cerrados hoy: desglosadores cerrados + otras misiones cerradas. */
+export function countBloquesCompletados(vehicles: Vehicle[], dayStartMs: number): number {
+  return countDesglosadoresCerradosHoy(vehicles, dayStartMs) + countBloquesOtrosHoy(vehicles, dayStartMs);
+}
 
-    if (v.tipoFlota === "descanso") continue;
+/** Lee subs del snapshot nuevo o de snapshots legacy (bloquesDesglosador = subs). */
+export function subsDesglosadorCumplidosFromSnapshot(snap: PlanillaDailySnapshot): number {
+  if (snap.subsDesglosadorCumplidos != null) return snap.subsDesglosadorCumplidos;
+  if (snap.desglosadoresCerrados == null && snap.bloquesDesglosador != null) {
+    return snap.bloquesDesglosador;
+  }
+  return 0;
+}
 
-    if (v.status === "cumplido" || v.status === "archivado") {
-      total++;
-    }
+export interface CombustibleDia {
+  bloques: number;
+  desglosadoresCerrados: number;
+  bloquesOtros: number;
+  decisiones: number;
+  subsTiempo: number;
+  subsSituacion: number;
+  misionesDirectas: number;
+}
+
+/** Sub-tarea situacional cerrada como decisión en la jornada (1 tarea = 1, sin mangas). */
+export function subTareaDecisionEnJornada(
+  st: SubTarea,
+  vehicle: Vehicle,
+  dayStartMs: number
+): boolean {
+  if (st.enDesgloseCronometro) {
+    if (st.resultadoSituacion !== "cumplido") return false;
+    const ts = st.cerradaAt ?? 0;
+    return ts >= dayStartMs;
   }
 
+  if (!st.completada) return false;
+  const ts = st.cerradaAt ?? st.creadaAt ?? 0;
+  return ts >= dayStartMs;
+}
+
+export function countSubsSituacionCumplidosHoy(vehicles: Vehicle[], dayStartMs: number): number {
+  let total = 0;
+  for (const v of vehicles) {
+    if (v.tipoFlota !== "situacion") continue;
+    if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
+    for (const st of v.subTareas ?? []) {
+      if (subTareaDecisionEnJornada(st, v, dayStartMs)) total++;
+    }
+  }
   return total;
+}
+
+/** Misiones cerradas sin desglose interno (tiempo, producción, etc.). */
+export function countMisionesDirectasCerradasHoy(vehicles: Vehicle[], dayStartMs: number): number {
+  let total = 0;
+  for (const v of vehicles) {
+    if (v.tipoReloj === "desglosador" || v.tipoFlota === "descanso" || v.tipoFlota === "situacion") {
+      continue;
+    }
+    if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
+    if (v.status === "cumplido" || v.status === "archivado") total++;
+  }
+  return total;
+}
+
+/** Combustible de conciencia: decisiones ejecutadas hoy (universal, sin unidades personales). */
+export function computeCombustibleDia(vehicles: Vehicle[], dayStartMs: number): CombustibleDia {
+  const subsTiempo = countSubsDesglosadorCumplidosHoy(vehicles, dayStartMs);
+  const subsSituacion = countSubsSituacionCumplidosHoy(vehicles, dayStartMs);
+  const misionesDirectas = countMisionesDirectasCerradasHoy(vehicles, dayStartMs);
+  const desglosadoresCerrados = countDesglosadoresCerradosHoy(vehicles, dayStartMs);
+  const bloquesOtros = countBloquesOtrosHoy(vehicles, dayStartMs);
+
+  return {
+    bloques: countBloquesCompletados(vehicles, dayStartMs),
+    desglosadoresCerrados,
+    bloquesOtros,
+    subsTiempo,
+    subsSituacion,
+    misionesDirectas,
+    decisiones: subsTiempo + subsSituacion + misionesDirectas,
+  };
+}
+
+export function decisionesFromSnapshot(snap: PlanillaDailySnapshot): number {
+  if (snap.decisionesDelDia != null) return snap.decisionesDelDia;
+  if (snap.subsDesglosadorCumplidos != null) return snap.subsDesglosadorCumplidos;
+  if (snap.desglosadoresCerrados == null && snap.bloquesDesglosador != null) {
+    return snap.bloquesDesglosador;
+  }
+  return 0;
 }
 
 export function profundidadFromEspectro(espectro: EspectroBloques): FocusBandId {
@@ -511,9 +630,16 @@ export function buildDailySnapshot(params: {
   const ratioConquista =
     jornadaMin > 0 ? conquistaMin / jornadaMin : cerradosManual / Math.max(totalSeg, 1);
 
-  const bloquesDesglosador = countBloquesDesglosadorSubsHoy(vehicles, dayStartMs);
-  const bloquesCompletados = countBloquesCompletados(vehicles, dayStartMs);
-  const bloquesOtros = Math.max(0, bloquesCompletados - bloquesDesglosador);
+  const combustible = computeCombustibleDia(vehicles, dayStartMs);
+  const {
+    bloques: bloquesCompletados,
+    desglosadoresCerrados,
+    bloquesOtros,
+    subsTiempo: subsDesglosadorCumplidos,
+    decisiones: decisionesDelDia,
+    subsSituacion: decisionesSubsSituacion,
+    misionesDirectas: decisionesMisiones,
+  } = combustible;
 
   const disciplina = computeDisciplinaDia({
     segmentos,
@@ -545,8 +671,14 @@ export function buildDailySnapshot(params: {
     segmentosEntropia: entropiaSeg,
     segmentosTotales: totalSeg,
     bloquesCompletados,
-    bloquesDesglosador,
+    desglosadoresCerrados,
+    subsDesglosadorCumplidos,
+    bloquesDesglosador: desglosadoresCerrados,
     bloquesOtros,
+    decisionesDelDia,
+    decisionesSubsTiempo: subsDesglosadorCumplidos,
+    decisionesSubsSituacion,
+    decisionesMisiones,
     disciplina,
   };
 }
@@ -593,10 +725,14 @@ export function computeTermodinamicaCompare(
   const yEsp = yesterday?.espectroBloques;
   const tEsp = today.espectroBloques;
 
+  const subsHoy = decisionesFromSnapshot(today);
+  const subsAyer = yesterday ? decisionesFromSnapshot(yesterday) : 0;
+
   const rows: TermodinamicaCompareRow[] = [
-    compareRow("limite", "Bloques al límite", tEsp.limite, yEsp?.limite ?? 0),
-    compareRow("concentrado", "Bloques concentrados", tEsp.concentrado, yEsp?.concentrado ?? 0),
+    compareRow("limite", "Subs al límite", tEsp.limite, yEsp?.limite ?? 0),
+    compareRow("concentrado", "Subs concentrados", tEsp.concentrado, yEsp?.concentrado ?? 0),
     compareRow("bloques", "Bloques completados", today.bloquesCompletados, yesterday?.bloquesCompletados ?? 0),
+    compareRow("decisiones", "Decisiones ejecutadas", subsHoy, subsAyer),
     compareRow(
       "segmentos",
       "Segmentos cierre manual",
@@ -622,7 +758,10 @@ export function computeTermodinamicaCompare(
 
   let headline: string;
   if (!hasYesterday) {
-    headline = `Hoy: ${PROFUNDIDAD_LABEL[profundidadHoy]} · ${today.bloquesCompletados} bloque${today.bloquesCompletados !== 1 ? "s" : ""}`;
+    const bloqueLabel = `${today.bloquesCompletados} bloque${today.bloquesCompletados !== 1 ? "s" : ""}`;
+    const subsLabel =
+      subsHoy > 0 ? ` · ${subsHoy} decisión${subsHoy !== 1 ? "es" : ""}` : "";
+    headline = `Hoy: ${PROFUNDIDAD_LABEL[profundidadHoy]} · ${bloqueLabel}${subsLabel}`;
   } else if (rankHoy > rankAyer) {
     headline = `Profundidad superior a ayer (${PROFUNDIDAD_LABEL[profundidadHoy]})`;
   } else if (wins >= 2) {
@@ -699,9 +838,15 @@ export function computeTermodinamicaCompareV2(
     ),
     compareRow(
       "bloques",
-      "Subs completados (desglosador)",
-      today.bloquesDesglosador ?? today.bloquesCompletados,
-      yesterday?.bloquesDesglosador ?? yesterday?.bloquesCompletados ?? 0
+      "Bloques completados",
+      today.bloquesCompletados,
+      yesterday?.bloquesCompletados ?? 0
+    ),
+    compareRow(
+      "decisiones",
+      "Decisiones ejecutadas",
+      decisionesFromSnapshot(today),
+      yesterday ? decisionesFromSnapshot(yesterday) : 0
     ),
     compareRow(
       "espectro_fluido",
