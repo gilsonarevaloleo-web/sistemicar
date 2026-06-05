@@ -120,7 +120,7 @@ function getLocalProyectos(userId: string): Proyecto[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Proyecto[];
     return parsed.map(p => {
-      const legacy = p as Record<string, unknown>;
+      const legacy = p as unknown as Record<string, unknown>;
       const legacyCount = legacy["pelda\u00f1osConquistados"];
       return {
         ...p,
@@ -193,8 +193,8 @@ async function loadProyectosFromFirestore(userId: string): Promise<Proyecto[]> {
       const data = d.data() as Proyecto & Record<string, unknown>;
       const legacyCount = data["pelda\u00f1osConquistados"];
       return {
-        id: d.id,
         ...data,
+        id: d.id,
         peldanosConquistados:
           (data as Proyecto).peldanosConquistados ??
           (typeof legacyCount === "number" ? legacyCount : 0),

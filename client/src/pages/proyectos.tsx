@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
+import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Layers,
@@ -98,6 +99,8 @@ export default function ProyectosPage() {
   const [claridadEdit, setClaridadEdit] = useState<RutasMentalesSet | null>(null);
   const [oleadaTituloEdit, setOleadaTituloEdit] = useState("");
   const [guardandoClaridad, setGuardandoClaridad] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [creatingProyecto, setCreatingProyecto] = useState(false);
 
   const reloadList = useCallback(async () => {
     if (!user) return;
@@ -106,23 +109,28 @@ export default function ProyectosPage() {
 
   const reloadDetail = useCallback(async () => {
     if (!user || !detailId) return;
-    const [p, pel] = await Promise.all([
-      getProyectoById(user.uid, detailId),
-      getPeldanosByProyecto(user.uid, detailId),
-    ]);
-    setProyecto(p);
-    setPeldanos(pel);
-    setNotaEdit(p?.nota ?? "");
-    setOleadaTituloEdit(p?.oleadaTitulo ?? "");
-    if (p) {
-      const claridad = resolveClaridadParaProyecto(p, pel) ?? buildDefaultClaridadDireccion({
-        tituloProyecto: p.titulo,
-        etiqueta: p.etiqueta,
-        focoTitulo: p.oleadaTitulo ?? p.titulo,
-      });
-      setClaridadEdit(claridad);
-    } else {
-      setClaridadEdit(null);
+    setDetailLoading(true);
+    try {
+      const [p, pel] = await Promise.all([
+        getProyectoById(user.uid, detailId),
+        getPeldanosByProyecto(user.uid, detailId),
+      ]);
+      setProyecto(p);
+      setPeldanos(pel);
+      setNotaEdit(p?.nota ?? "");
+      setOleadaTituloEdit(p?.oleadaTitulo ?? "");
+      if (p) {
+        const claridad = resolveClaridadParaProyecto(p, pel) ?? buildDefaultClaridadDireccion({
+          tituloProyecto: p.titulo,
+          etiqueta: p.etiqueta,
+          focoTitulo: p.oleadaTitulo ?? p.titulo,
+        });
+        setClaridadEdit(claridad);
+      } else {
+        setClaridadEdit(null);
+      }
+    } finally {
+      setDetailLoading(false);
     }
   }, [user, detailId]);
 
@@ -178,18 +186,45 @@ export default function ProyectosPage() {
   };
 
   const handleCreateProyecto = async () => {
-    if (!user || !newTitulo.trim()) return;
-    const color = PROYECTO_COLORS[proyectos.length % PROYECTO_COLORS.length];
-    const p = await addProyecto(user.uid, {
-      titulo: newTitulo.trim(),
-      etiqueta: newEtiqueta,
-      nota: newNota.trim() || undefined,
-      color,
-    });
-    setShowNew(false);
-    setNewTitulo("");
-    setNewNota("");
-    navigate(`/proyectos?id=${p.id}`);
+    if (!user || creatingProyecto) return;
+    const titulo = newTitulo.trim();
+    if (!titulo) {
+      toast.error("Escribe un nombre para el proyecto o centro");
+      return;
+    }
+    setCreatingProyecto(true);
+    try {
+      const color = PROYECTO_COLORS[proyectos.length % PROYECTO_COLORS.length];
+      const p = await addProyecto(user.uid, {
+        titulo,
+        etiqueta: newEtiqueta,
+        nota: newNota.trim() || undefined,
+        color,
+      });
+      const claridad =
+        p.claridadActiva ??
+        buildDefaultClaridadDireccion({
+          tituloProyecto: p.titulo,
+          etiqueta: p.etiqueta,
+          focoTitulo: p.oleadaTitulo ?? p.titulo,
+        });
+      setProyectos(prev => [p, ...prev.filter(x => x.id !== p.id)]);
+      setProyecto(p);
+      setPeldanos([]);
+      setClaridadEdit(claridad);
+      setNotaEdit(p.nota ?? "");
+      setOleadaTituloEdit(p.oleadaTitulo ?? "");
+      setShowNew(false);
+      setNewTitulo("");
+      setNewNota("");
+      setNewEtiqueta("proyecto");
+      navigate(`/proyectos?id=${p.id}`);
+      toast.success(`"${p.titulo}" creado`);
+    } catch {
+      toast.error("No se pudo crear el proyecto. Intenta de nuevo.");
+    } finally {
+      setCreatingProyecto(false);
+    }
   };
 
   const handleAddIdea = async () => {
@@ -213,10 +248,37 @@ export default function ProyectosPage() {
     );
   }
 
-  if (detailId && proyecto) {
+  const detailReady = Boolean(detailId && proyecto && proyecto.id === detailId);
+
+  if (detailId && !detailReady) {
+    return (
+      <div
+        className="p-4 md:p-6 max-w-lg mx-auto min-h-screen pb-32 flex flex-col items-center justify-center"
+        style={{ backgroundColor: "#020202" }}
+      >
+        {detailLoading ? (
+          <p className="text-center text-slate-600 text-sm py-8">Cargando proyecto…</p>
+        ) : (
+          <>
+            <p className="text-sm text-slate-500 mb-4">Proyecto no encontrado</p>
+            <button
+              type="button"
+              onClick={() => navigate("/proyectos")}
+              className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500"
+            >
+              <ArrowLeft size={14} /> Volver al listado
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (detailReady && proyecto) {
     return (
       <div className="p-4 md:p-6 max-w-lg mx-auto min-h-screen pb-32" style={{ backgroundColor: "#020202" }}>
         <button
+          type="button"
           onClick={() => navigate("/proyectos")}
           className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4"
         >
@@ -497,7 +559,7 @@ export default function ProyectosPage() {
                               )}
                             </p>
                           )}
-                          {pel.resumen.subResumen?.map((s, j) => (
+                          {pel.resumen?.subResumen?.map((s, j) => (
                             <p key={j} className="pl-2 text-slate-500">
                               • {s.titulo} ({s.status})
                             </p>
@@ -554,13 +616,16 @@ export default function ProyectosPage() {
             <input
               value={newTitulo}
               onChange={e => setNewTitulo(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && void handleCreateProyecto()}
               placeholder="Nombre (ej: Costura, Salud…)"
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm focus:outline-none"
+              autoFocus
             />
             <div className="flex gap-2">
               {(["proyecto", "centro"] as const).map(e => (
                 <button
                   key={e}
+                  type="button"
                   onClick={() => setNewEtiqueta(e)}
                   className={cn(
                     "flex-1 py-2 rounded-lg text-[9px] font-bold uppercase",
@@ -583,15 +648,22 @@ export default function ProyectosPage() {
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-slate-300 text-[11px] resize-none min-h-[50px] focus:outline-none"
             />
             <div className="flex gap-2">
-              <button onClick={() => setShowNew(false)} className="flex-1 py-2 text-[10px] font-bold text-slate-500">
+              <button
+                type="button"
+                onClick={() => setShowNew(false)}
+                disabled={creatingProyecto}
+                className="flex-1 py-2 text-[10px] font-bold text-slate-500 disabled:opacity-50"
+              >
                 Cancelar
               </button>
               <button
+                type="button"
                 onClick={() => void handleCreateProyecto()}
-                className="flex-1 py-2 rounded-lg text-[10px] font-bold uppercase"
+                disabled={creatingProyecto || !newTitulo.trim()}
+                className="flex-1 py-2 rounded-lg text-[10px] font-bold uppercase disabled:opacity-50"
                 style={{ backgroundColor: CYAN, color: "#000" }}
               >
-                Crear
+                {creatingProyecto ? "Creando…" : "Crear"}
               </button>
             </div>
           </motion.div>
