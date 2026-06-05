@@ -61,6 +61,8 @@ import { CierreJornadaModal } from "@/components/cierre-jornada-modal";
 import { CentinelaEngine } from "@/components/centinela-engine";
 import { useSovereigntyToast } from "@/components/sovereignty-toast";
 import { DoctorIAChat } from "@/components/doctor-ia-chat";
+import { AppErrorBoundary } from "@/components/app-error-boundary";
+import { runStartupStorageHygiene } from "@/lib/storageHygiene";
 
 interface AuthContextType {
   user: AppUser | null;
@@ -184,7 +186,13 @@ function ModuleRoute({
     );
   }
 
-  if (!user || !hasAccess(progression)) return null;
+  if (!user || !hasAccess(progression)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: "#020202" }}>
+        <p className="text-sm text-slate-500">Redirigiendo…</p>
+      </div>
+    );
+  }
 
   return <Component />;
 }
@@ -375,9 +383,18 @@ function SovereigntyListener() {
 }
 
 function App() {
+  useEffect(() => {
+    const report = runStartupStorageHygiene();
+    if (report && report.removedKeys > 0) {
+      console.info(`[storage] Poda al inicio: ${report.removedKeys} claves (~${Math.round(report.freedBytesEstimate / 1024)} KB)`);
+    }
+  }, []);
+
   return (
     <AuthProvider>
-      <Router />
+      <AppErrorBoundary>
+        <Router />
+      </AppErrorBoundary>
       <DoctorIAChat />
       <CentinelaEngine />
       <CierreJornadaModal />

@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { db, getPrivatePath, isFirebaseConfigured } from "./firebase";
 import { activateSovereignModeGlobal, deactivateSovereignModeGlobal, backupToLocal, restoreFromLocal } from "./sovereign-mode";
+import { emergencyPruneStorage, safeSetItem } from "./storageHygiene";
 import type { DetalleSubTarea } from "./persistence";
 
 export type SituacionReservaEstado = "activa" | "retomada_libre" | "retomada_cron";
@@ -126,29 +127,24 @@ function isLocalOnlyReservaId(reservaId: string): boolean {
 }
 
 function saveAllLocalReserva(items: SituacionReservaItem[]): boolean {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    window.dispatchEvent(new CustomEvent(SITUACION_RESERVA_EVENT));
-    return true;
-  } catch (err) {
-    const isQuota =
-      err &&
-      typeof err === "object" &&
-      ((err as { name?: string }).name === "QuotaExceededError" ||
-        (err as { code?: number }).code === 22);
-    if (isQuota) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, 200)));
-        window.dispatchEvent(new CustomEvent(SITUACION_RESERVA_EVENT));
-        return true;
-      } catch (e2) {
-        console.error("[saveAllLocalReserva] Reintento recortado falló:", e2);
-        return false;
-      }
-    }
-    console.error("[saveAllLocalReserva] No se pudo persistir reservas:", err);
-    return false;
-  }
+  const persist = (list: SituacionReservaItem[]) => {
+    const ok = safeSetItem(STORAGE_KEY, JSON.stringify(list));
+    if (ok) window.dispatchEvent(new CustomEvent(SITUACION_RESERVA_EVENT));
+    return ok;
+  };
+
+  if (persist(items)) return true;
+
+  emergencyPruneStorage({ aggressive: true });
+  if (persist(items)) return true;
+
+  const trimmed = items
+    .filter(i => i.estado === "activa")
+    .slice(0, 120);
+  if (persist(trimmed)) return true;
+
+  console.error("[saveAllLocalReserva] No se pudo persistir reservas tras poda");
+  return false;
 }
 
 /** Conserva reservas locales aún no reflejadas en Firebase (evita que onSnapshot las borre). */

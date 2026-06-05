@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { safeSetItem } from './storageHygiene';
 
 interface SovereignState {
   isOfflineMode: boolean;
@@ -24,9 +25,11 @@ export function deactivateSovereignModeGlobal(): void {
 
 export const BACKUP_PREFIX = "sistemicar_backup_";
 
-export function backupToLocal(key: string, data: any): void {
+export function backupToLocal(key: string, data: unknown): void {
   try {
-    localStorage.setItem(`${BACKUP_PREFIX}${key}`, JSON.stringify(data));
+    const payload = JSON.stringify(data);
+    if (payload.length > 1_500_000) return;
+    safeSetItem(`${BACKUP_PREFIX}${key}`, payload);
   } catch (e) {
     console.warn("Error backing up to localStorage:", e);
   }

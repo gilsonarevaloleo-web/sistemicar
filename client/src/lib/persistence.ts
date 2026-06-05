@@ -20,6 +20,7 @@ import {
   isFirebaseConfigured
 } from "./firebase";
 import { activateSovereignModeGlobal, deactivateSovereignModeGlobal, backupToLocal, restoreFromLocal } from "./sovereign-mode";
+import { emergencyPruneStorage, safeSetItem } from "./storageHygiene";
 import type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
 import type { RutaSeguimientoPatron } from "./rutaSeguimiento";
 export type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
@@ -807,23 +808,19 @@ export function saveLocalVehicles(vehicles: Vehicle[]): boolean {
     console.warn(`[saveLocalVehicles] Preservando ${preserved.length} activo(s) no presentes en datos nuevos:`, preserved.map(v => `${v.id}:${v.titulo}`));
     vehicles = [...preserved, ...vehicles];
   }
-  try {
-    localStorage.setItem(VEHICLES_KEY, JSON.stringify(vehicles));
-    return true;
-  } catch (e) {
-    console.error("[saveLocalVehicles] No se pudo persistir vehículos:", e);
-    try {
-      const activos = vehicles.filter(v => v.status === "activo");
-      const recientes = vehicles
-        .filter(v => v.status !== "activo")
-        .slice(0, 40);
-      localStorage.setItem(VEHICLES_KEY, JSON.stringify([...activos, ...recientes]));
-      return true;
-    } catch (e2) {
-      console.error("[saveLocalVehicles] Reintento recortado falló:", e2);
-      return false;
-    }
-  }
+  const payload = JSON.stringify(vehicles);
+  if (safeSetItem(VEHICLES_KEY, payload)) return true;
+
+  emergencyPruneStorage({ aggressive: true });
+  if (safeSetItem(VEHICLES_KEY, payload)) return true;
+
+  const activos = vehicles.filter(v => v.status === "activo");
+  const recientes = vehicles.filter(v => v.status !== "activo").slice(0, 40);
+  const trimmed = JSON.stringify([...activos, ...recientes]);
+  if (safeSetItem(VEHICLES_KEY, trimmed)) return true;
+
+  console.error("[saveLocalVehicles] Reintento recortado falló");
+  return false;
 }
 
 // Per-vehicle-ID close tracking. Maps vehicleId → close timestamp.
@@ -2256,7 +2253,10 @@ function getLocalProgression(userId: string): UserProgression {
 }
 
 function saveLocalProgression(prog: UserProgression): void {
-  localStorage.setItem(PROGRESSION_KEY, JSON.stringify(prog));
+  if (!safeSetItem(PROGRESSION_KEY, JSON.stringify(prog))) {
+    console.error("[saveLocalProgression] No se pudo persistir progresión");
+    return;
+  }
   window.dispatchEvent(new CustomEvent("progression-updated"));
 }
 
@@ -5080,13 +5080,13 @@ function getLocalPlanilla(fecha: string): Planilla | null {
 }
 
 function saveLocalPlanilla(planilla: Planilla): boolean {
-  try {
-    localStorage.setItem(`${PLANILLA_LOCAL_KEY}_${planilla.fecha}`, JSON.stringify(planilla));
-    return true;
-  } catch (error) {
-    console.error("[saveLocalPlanilla] No se pudo persistir planilla:", error);
-    return false;
-  }
+  const key = `${PLANILLA_LOCAL_KEY}_${planilla.fecha}`;
+  const payload = JSON.stringify(planilla);
+  if (safeSetItem(key, payload)) return true;
+  emergencyPruneStorage({ aggressive: true });
+  if (safeSetItem(key, payload)) return true;
+  console.error("[saveLocalPlanilla] No se pudo persistir planilla tras poda");
+  return false;
 }
 
 function syncPlanillaToFirebase(userId: string, planilla: Planilla): void {

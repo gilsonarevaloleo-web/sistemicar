@@ -12,6 +12,7 @@ import {
   type RutaMentalPaso,
   type RutasMentalesSet,
 } from "./claridadDireccion";
+import { safeSetItem } from "./storageHygiene";
 
 export type {
   ClaridadProfundidad,
@@ -135,8 +136,9 @@ function getLocalProyectos(userId: string): Proyecto[] {
 }
 
 function saveLocalProyectos(userId: string, list: Proyecto[]): void {
-  localStorage.setItem(`${PROYECTOS_KEY}_${userId}`, JSON.stringify(list));
-  window.dispatchEvent(new CustomEvent("proyectos-updated"));
+  if (safeSetItem(`${PROYECTOS_KEY}_${userId}`, JSON.stringify(list))) {
+    window.dispatchEvent(new CustomEvent("proyectos-updated"));
+  }
 }
 
 function getLocalPeldanos(userId: string): ProyectoPeldano[] {
@@ -150,8 +152,9 @@ function getLocalPeldanos(userId: string): ProyectoPeldano[] {
 }
 
 function saveLocalPeldanos(userId: string, list: ProyectoPeldano[]): void {
-  localStorage.setItem(`${PELDANOS_KEY}_${userId}`, JSON.stringify(list));
-  window.dispatchEvent(new CustomEvent("proyectos-updated"));
+  if (safeSetItem(`${PELDANOS_KEY}_${userId}`, JSON.stringify(list))) {
+    window.dispatchEvent(new CustomEvent("proyectos-updated"));
+  }
 }
 
 async function syncFirestoreProyecto(userId: string, proyecto: Proyecto, isDelete = false): Promise<void> {
