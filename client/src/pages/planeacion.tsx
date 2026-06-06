@@ -282,7 +282,8 @@ import {
   computeCombustibleDia,
 } from "@/lib/termodinamicaAtencional";
 import type { PlanillaDailySnapshot } from "@/lib/termodinamicaAtencional";
-import { formatCombustibleResumen, formatCombustibleDetalle } from "@/lib/combustibleConciencia";
+import { formatCombustibleResumen, formatCombustibleDetalle, formatCombustibleCelebracionBloque } from "@/lib/combustibleConciencia";
+import { repairStuckSituacionVehicles } from "@/lib/situacionRepair";
 import {
   getProyectoById,
   getPeldanosByProyecto,
@@ -650,6 +651,7 @@ type SituacionDesgloseSummary = {
   casaHechas: number;
   casaPorTexto: CasaTextoCount[];
   mensaje: string;
+  combustibleMensaje: string;
 };
 
 function computeSituacionDesgloseSummary(vehicle: Vehicle): SituacionDesgloseSummary {
@@ -707,6 +709,11 @@ function computeSituacionDesgloseSummary(vehicle: Vehicle): SituacionDesgloseSum
     casaHechas,
     casaPorTexto,
     mensaje,
+    combustibleMensaje: formatCombustibleCelebracionBloque({
+      minutos: minutosBloque,
+      decisiones: cumplidos,
+      psTotal,
+    }),
   };
 }
 
@@ -1011,7 +1018,10 @@ export default function Planeacion() {
   const { user } = useAuthContext();
   const [, navigate] = useLocation();
   const [vehicles, setVehicles] = useState<Vehicle[]>(() => {
-    try { return getLocalVehicles(); } catch { return []; }
+    try {
+      repairStuckSituacionVehicles();
+      return getLocalVehicles();
+    } catch { return []; }
   });
   const optimisticVehiclesRef = useRef<Vehicle[]>([]);
   const proyectoLaunchRef = useRef<{
@@ -3473,10 +3483,15 @@ export default function Planeacion() {
     const byId = new Map(vehiclesRef.current.map(v => [v.id, v]));
     const actives = vehiclesRef.current.filter(v => v.status === "activo" && !v.autoVerdad);
     if (actives.length === 0) return;
+    const situacionBloqueAtascado = (v: Vehicle) =>
+      v.tipoFlota === "situacion" &&
+      v.situacionCronometro?.activo === true &&
+      situacionDesgloseBloqueListo(v.subTareas || [], v.situacionCronometro);
     const targets = actives.filter(
       v =>
         isGhostActiveVehicle(v, nowMs, dayStartMs, byId) ||
         isOrphanDesglosadorInterrupt(v, byId) ||
+        situacionBloqueAtascado(v) ||
         actives.length >= 5
     );
     if (targets.length === 0) return;
@@ -4505,7 +4520,7 @@ export default function Planeacion() {
   const handleMoveSubTareasToCronometro = async (
     vehicleId: string,
     ids: string[],
-    opts?: { usarBolsaSegundoReto?: boolean }
+    opts?: { usarBolsaSegundoReto?: boolean; objetivoMinutos?: number }
   ) => {
     if (!user || ids.length === 0) return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
@@ -4538,12 +4553,25 @@ export default function Planeacion() {
       });
       return;
     }
-    if (usarBolsa) {
+    const objetivoMin = opts?.objetivoMinutos != null && opts.objetivoMinutos > 0
+      ? Math.round(opts.objetivoMinutos)
+      : null;
+    if (objetivoMin != null) {
+      subTareas = redistribuirMinutosSituacionCronometro(subTareas, objetivoMin);
+    } else if (usarBolsa) {
       subTareas = redistribuirMinutosSituacionCronometro(subTareas, bolsaSegundo);
     }
     const firstActivation = true;
     const bloqueInicioAt = Date.now();
-    const sum = usarBolsa ? bolsaSegundo : sumMinutosCronometroPendientes(subTareas);
+    const sum = objetivoMin ?? (usarBolsa ? bolsaSegundo : sumMinutosCronometroPendientes(subTareas));
+    if (sum <= 0) {
+      toast.error("Objetivo del reto inválido", {
+        description: "Indica cuántos minutos quieres para este reto.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 3200,
+      });
+      return;
+    }
     const contratoMs = bloqueInicioAt + sum * 60000;
     const retoNumero = nextRetoNumero(prevSc);
     const situacionCronometro = {
@@ -4590,11 +4618,11 @@ export default function Planeacion() {
       if (firstActivation) void requestNotificationPermission();
       void handleSyncSituacionCupoAnchor(vehicleId);
       const retoLabel = retoSituacionLabel(retoNumero);
-      toast.success(usarBolsa || (prevSc?.retosCompletados ?? 0) > 0 ? retoLabel : "Desglose con tiempo", {
-        description: usarBolsa
-          ? `${lifted.length} fila(s) · contrato sellado ${sum} min (tu bolsa)`
-          : (prevSc?.retosCompletados ?? 0) > 0
-            ? `${lifted.length} subtarea(s) · Σ ${sum} min · nuevo bloque`
+      toast.success(retoLabel, {
+        description: objetivoMin != null
+          ? `${lifted.length} subtarea(s) · objetivo ${sum} min · meta ${new Date(contratoMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+          : usarBolsa
+            ? `${lifted.length} fila(s) · contrato sellado ${sum} min (tu bolsa)`
             : `${lifted.length} subtarea(s) · Σ ${sum} min · meta ${new Date(contratoMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 3200,
@@ -7044,13 +7072,27 @@ export default function Planeacion() {
               </div>
             </motion.div>
 
-            {activeVehicles.length >= 5 && (
+            {(() => {
+              const situacionRetoAtascado = activeVehicles.some(
+                v =>
+                  v.tipoFlota === "situacion" &&
+                  v.situacionCronometro?.activo === true &&
+                  situacionDesgloseBloqueListo(v.subTareas || [], v.situacionCronometro)
+              );
+              if (activeVehicles.length < 5 && !situacionRetoAtascado) return null;
+              return (
               <div
                 className="mb-3 p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center gap-2"
                 style={{ backgroundColor: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.35)" }}
               >
                 <p className="text-[10px] text-red-200/90 flex-1 leading-snug">
-                  Tienes <span className="font-black">{activeVehicles.length}</span> vehículos activos. Si no puedes cerrarlos uno a uno, libera las sesiones atascadas.
+                  {situacionRetoAtascado
+                    ? "Reto situacional listo pero la pantalla no responde. Usa «Archivar atascados» o «Recibir cierre del bloque» en el vehículo."
+                    : (
+                      <>
+                        Tienes <span className="font-black">{activeVehicles.length}</span> vehículos activos. Si no puedes cerrarlos uno a uno, libera las sesiones atascadas.
+                      </>
+                    )}
                 </p>
                 <button
                   type="button"
@@ -7062,7 +7104,8 @@ export default function Planeacion() {
                   Archivar atascados
                 </button>
               </div>
-            )}
+              );
+            })()}
             {activeVehicles.length > 0 ? (
               <div ref={flotaActivosRef} className="scroll-mt-4">
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length} defaultOpen>
@@ -8033,6 +8076,11 @@ export default function Planeacion() {
 
         {situacionDesgloseCelebration && (() => {
           const { titulo, summary } = situacionDesgloseCelebration;
+          const combustibleMensaje = summary.combustibleMensaje ?? formatCombustibleCelebracionBloque({
+            minutos: summary.minutosBloque,
+            decisiones: summary.cumplidos,
+            psTotal: summary.psTotal,
+          });
           const ratioPct = summary.totalFilas > 0
             ? Math.round((summary.cumplidos / summary.totalFilas) * 100)
             : 0;
@@ -8068,9 +8116,37 @@ export default function Planeacion() {
                   <p id="situacion-desglose-celebracion-titulo" className="text-sm font-black uppercase tracking-wider" style={{ color: GOLD }}>
                     Certificado · {retoSituacionLabel(summary.retoNumero)}
                   </p>
-                  <p className="text-[10px] text-slate-400 leading-relaxed px-2">{summary.mensaje}</p>
                   <p className="text-[9px] font-bold text-slate-500 truncate px-4">{titulo}</p>
                 </div>
+
+                <div
+                  className="relative rounded-xl p-3 space-y-2"
+                  style={{ backgroundColor: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.28)" }}
+                  data-testid="situacion-celebracion-combustible"
+                >
+                  <p className="text-[8px] font-black uppercase tracking-wider text-center" style={{ color: "#A78BFA" }}>
+                    Combustible de conciencia
+                  </p>
+                  <p className="text-[10px] text-slate-300 leading-relaxed text-center px-1">
+                    {combustibleMensaje}
+                  </p>
+                  <div className="flex justify-center gap-4 text-center">
+                    <div>
+                      <p className="text-[7px] uppercase text-slate-500">Tiempo</p>
+                      <p className="text-sm font-black font-mono" style={{ color: PLATA }}>{summary.minutosBloque} min</p>
+                    </div>
+                    <div>
+                      <p className="text-[7px] uppercase text-slate-500">Decisiones</p>
+                      <p className="text-sm font-black" style={{ color: VERDE }}>{summary.cumplidos}</p>
+                    </div>
+                    <div>
+                      <p className="text-[7px] uppercase text-slate-500">PS ganados</p>
+                      <p className="text-sm font-black" style={{ color: GOLD }}>+{summary.psTotal}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="relative text-[10px] text-slate-400 leading-relaxed px-2 text-center">{summary.mensaje}</p>
 
                 <div className="relative grid grid-cols-3 gap-2 text-center">
                   <div className="p-2 rounded-xl" style={{ backgroundColor: "rgba(0,200,81,0.08)", border: "1px solid rgba(0,200,81,0.25)" }}>
@@ -8150,7 +8226,7 @@ export default function Planeacion() {
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      {summary.casaPorTexto.slice(0, 6).map(g => (
+                      {(summary.casaPorTexto ?? []).slice(0, 6).map(g => (
                         <span
                           key={g.texto}
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold"
@@ -8466,7 +8542,7 @@ function VehicleCard({
   onSetSubTareaMinutosCupo?: (vehicleId: string, subTareaId: string, minutos: number | undefined) => void;
   onExtendSituacionCupo?: (vehicleId: string, subTareaId: string, delta: number) => void;
   onSyncSituacionCupoAnchor?: (vehicleId: string) => void;
-  onMoveSubTareasToCronometro?: (vehicleId: string, subTareaIds: string[], opts?: { usarBolsaSegundoReto?: boolean }) => void;
+  onMoveSubTareasToCronometro?: (vehicleId: string, subTareaIds: string[], opts?: { usarBolsaSegundoReto?: boolean; objetivoMinutos?: number }) => void;
   onSituacionCronometroSetHoraFin?: (vehicleId: string, hhmm: string) => void;
   onSituacionCronometroCumplido?: (vehicleId: string, subTareaId: string) => void;
   onSituacionCronometroFallado?: (vehicleId: string, subTareaId: string) => void;
@@ -8524,6 +8600,7 @@ function VehicleCard({
   const [expandedDetalleStId, setExpandedDetalleStId] = useState<string | null>(null);
   const [expandedCasaStId, setExpandedCasaStId] = useState<string | null>(null);
   const [situacionLibreSeleccion, setSituacionLibreSeleccion] = useState<Set<string>>(() => new Set());
+  const [situacionRetoObjetivoMin, setSituacionRetoObjetivoMin] = useState("");
   const [newDetalleTexts, setNewDetalleTexts] = useState<Record<string, string>>({});
   const [newCasaTexts, setNewCasaTexts] = useState<Record<string, string>>({});
   const [quitarMinDraft, setQuitarMinDraft] = useState<Record<string, string>>({});
@@ -9285,6 +9362,38 @@ function VehicleCard({
     0
   );
   const situacionCronActivo = vehicle.situacionCronometro?.activo === true;
+  const situacionBolsaSegundo = bolsaDisponibleSegundoReto(vehicle.situacionCronometro);
+  const situacionProximoReto = nextRetoNumero(vehicle.situacionCronometro);
+  const situacionLibrePendientes = (vehicle.subTareas || []).filter(
+    st => !st.enDesgloseCronometro && !st.completada
+  );
+  const situacionPuedeLanzarReto =
+    !situacionCronActivo &&
+    onMoveSubTareasToCronometro &&
+    situacionLibrePendientes.length > 0;
+  const situacionObjetivoMinParsed = parseInt(situacionRetoObjetivoMin.trim(), 10);
+  const situacionObjetivoMinValid =
+    Number.isFinite(situacionObjetivoMinParsed) && situacionObjetivoMinParsed > 0;
+  const situacionBloqueListo =
+    situacionCronActivo &&
+    situacionDesgloseBloqueListo(vehicle.subTareas || [], vehicle.situacionCronometro);
+  const situacionCronPendientes = (vehicle.subTareas || []).filter(situacionFilaCronometroPendiente).length;
+
+  useEffect(() => {
+    if (vehicle.tipoFlota === "situacion" && situacionBloqueListo) {
+      setSubTasksCollapsed(false);
+    }
+  }, [vehicle.tipoFlota, situacionBloqueListo]);
+
+  useEffect(() => {
+    if (situacionCronActivo) return;
+    if (situacionBolsaSegundo > 0) {
+      setSituacionRetoObjetivoMin(String(situacionBolsaSegundo));
+    } else if ((vehicle.situacionCronometro?.retosCompletados ?? 0) === 0) {
+      setSituacionRetoObjetivoMin("");
+    }
+  }, [situacionCronActivo, situacionBolsaSegundo, vehicle.situacionCronometro?.retosCompletados]);
+
   const situacionCanViewDetalles = isSituacionFlota && vehicle.status === "activo" && (situacionCronActivo || situacionTotalDetalles > 0);
   const showSituacionDetallesUi = !!(arquitectoUnlocked || situacionCanViewDetalles);
   const canAddSituacionDetalles = !!(arquitectoUnlocked || (situacionCanViewDetalles && situacionCronActivo));
@@ -10377,8 +10486,68 @@ function VehicleCard({
                     )}
                   </div>
                   <p className="text-[7px] text-slate-600 leading-snug mb-2 px-0.5 border-l-2 pl-2" style={{ borderColor: "rgba(148,163,184,0.35)" }}>
-                    Lista libre: +2 PS. Al llevar al desglose se sella la meta del reto (no se mueve al cumplir). El tiempo ganado va a bolsa; tras cerrar el bloque puedes abrir el siguiente reto con esa bolsa.
+                    Lista libre: +2 PS. Elige tu objetivo de minutos, marca subtareas y lanza cada reto sin cerrar el desglosador. El tiempo ganado va a bolsa para el siguiente reto.
                   </p>
+                  {situacionCronActivo && situacionCronPendientes > 0 && (
+                    <p className="text-[8px] mb-2 px-2 py-1.5 rounded-lg leading-snug" style={{ backgroundColor: "rgba(239,68,68,0.08)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.25)" }}>
+                      Reto en curso: marca <span className="font-black">Cumplido</span> o <span className="font-black">Fallado</span> en las {situacionCronPendientes} fila{situacionCronPendientes !== 1 ? "s" : ""} del reloj (abajo). Luego «Recibir cierre del bloque».
+                    </p>
+                  )}
+                  {!situacionCronActivo && onComplete && onArchive && (
+                    <div className="grid grid-cols-2 gap-2 mb-2" data-testid={`situacion-cerrar-vehiculo-${vehicle.id}`}>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onComplete(); }}
+                        className="py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1"
+                        style={{ backgroundColor: `${EMERALD}18`, color: EMERALD, border: `1px solid ${EMERALD}40` }}
+                      >
+                        <Check size={12} /> Cumplido
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onArchive(); }}
+                        className="py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1"
+                        style={{ backgroundColor: "rgba(245,158,11,0.12)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.35)" }}
+                      >
+                        <X size={12} /> Incumplido
+                      </button>
+                    </div>
+                  )}
+                  {situacionPuedeLanzarReto && (
+                    <div
+                      className="mb-2 p-2.5 rounded-xl border space-y-2"
+                      style={{ backgroundColor: "rgba(212,175,55,0.06)", borderColor: "rgba(212,175,55,0.28)" }}
+                      data-testid={`situacion-reto-setup-${vehicle.id}`}
+                    >
+                      <p className="text-[8px] font-black uppercase tracking-wider" style={{ color: GOLD }}>
+                        {retoSituacionLabel(situacionProximoReto)}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <label className="text-[7px] font-bold uppercase tracking-wider text-slate-500 shrink-0">Objetivo</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={999}
+                          value={situacionRetoObjetivoMin}
+                          onChange={(e) => setSituacionRetoObjetivoMin(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder="Minutos"
+                          className="flex-1 px-2 py-1.5 rounded-lg text-[10px] bg-black/40 border text-white text-center font-mono"
+                          style={{ borderColor: situacionObjetivoMinValid ? `${GOLD}55` : "rgba(148,163,184,0.35)" }}
+                          data-testid={`input-situacion-reto-objetivo-${vehicle.id}`}
+                        />
+                        <span className="text-[8px] text-slate-500 shrink-0">min</span>
+                      </div>
+                      {situacionBolsaSegundo > 0 && (
+                        <p className="text-[7px] text-slate-500 leading-snug">
+                          Bolsa del reto anterior: <span style={{ color: VERDE }}>+{situacionBolsaSegundo} min</span> — puedes usarla o elegir otro objetivo.
+                        </p>
+                      )}
+                      <p className="text-[7px] text-slate-600">
+                        Marca las subtareas que quieres en este reto ({situacionLibreSeleccion.size} seleccionada{situacionLibreSeleccion.size !== 1 ? "s" : ""}).
+                      </p>
+                    </div>
+                  )}
                   {(() => {
                     void situacionCupoUiTick;
                     const anchor = vehicle.situacionCupoAnchor;
@@ -10410,7 +10579,7 @@ function VehicleCard({
                       </p>
                     );
                   })()}
-                  {vehicle.situacionCronometro?.activo === true && onCerrarSituacionDesgloseBloque && situacionDesgloseBloqueListo(vehicle.subTareas || [], vehicle.situacionCronometro) && (
+                  {situacionBloqueListo && onCerrarSituacionDesgloseBloque && (
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); onCerrarSituacionDesgloseBloque(vehicle.id); }}
@@ -10480,24 +10649,6 @@ function VehicleCard({
                       </>
                     );
                   })()}
-                  {vehicle.situacionCronometro?.activo !== true && bolsaDisponibleSegundoReto(vehicle.situacionCronometro) > 0 && onMoveSubTareasToCronometro && (
-                    <button
-                      type="button"
-                      disabled={situacionLibreSeleccion.size === 0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onMoveSubTareasToCronometro(vehicle.id, [...situacionLibreSeleccion], { usarBolsaSegundoReto: true });
-                        setSituacionLibreSeleccion(new Set());
-                      }}
-                      className="w-full py-2.5 mb-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 disabled:opacity-40"
-                      style={{ backgroundColor: "rgba(0,200,81,0.12)", color: VERDE, border: "1px solid rgba(0,200,81,0.35)", boxShadow: "0 0 14px rgba(0,200,81,0.12)" }}
-                      data-testid={`situacion-segundo-reto-${vehicle.id}`}
-                    >
-                      <Gem size={12} />
-                      {retoSituacionLabel(nextRetoNumero(vehicle.situacionCronometro))} · +{bolsaDisponibleSegundoReto(vehicle.situacionCronometro)} min
-                      {situacionLibreSeleccion.size > 0 ? ` (${situacionLibreSeleccion.size} filas)` : " — selecciona filas"}
-                    </button>
-                  )}
                   {subTasksCollapsed && (vehicle.subTareas || []).length > 0 && (
                     <button
                       type="button"
@@ -10546,21 +10697,6 @@ function VehicleCard({
                             const horarioById = new Map(horariosCron.map(h => [h.subTareaId, h]));
                             return (
                               <>
-                                {onMoveSubTareasToCronometro && !situacionCronActivo && subsLibre.some(s => !s.completada) && bolsaDisponibleSegundoReto(vehicle.situacionCronometro) <= 0 && (
-                                  <button
-                                    type="button"
-                                    disabled={situacionLibreSeleccion.size === 0}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onMoveSubTareasToCronometro(vehicle.id, [...situacionLibreSeleccion]);
-                                      setSituacionLibreSeleccion(new Set());
-                                    }}
-                                    className="w-full py-1.5 mb-1 rounded-lg text-[8px] font-black uppercase tracking-wider disabled:opacity-40"
-                                    style={{ backgroundColor: "rgba(212,175,55,0.15)", color: GOLD, border: "1px solid rgba(212,175,55,0.35)" }}
-                                  >
-                                    Llevar al desglose con tiempo ({situacionLibreSeleccion.size} sel.)
-                                  </button>
-                                )}
                                 {subsLibre.length > 0 && (
                                   <p className="text-[7px] font-black uppercase tracking-wider text-slate-500 px-0.5">Lista libre · +2 PS</p>
                                 )}
@@ -10967,9 +11103,36 @@ function VehicleCard({
                     )}
                   </AnimatePresence>
                   <div className="flex gap-2 mt-2">
-                    <input value={newSubTarea} onChange={(e) => setNewSubTarea(e.target.value)} placeholder="Nueva sub-tarea..." className="flex-1 p-2 rounded-lg bg-black/40 border text-white text-[10px] placeholder:text-slate-600 focus:outline-none" style={{ borderColor: "rgba(148,163,184,0.2)" }} data-testid={`input-subtarea-${vehicle.id}`} />
+                    <input value={newSubTarea} onChange={(e) => setNewSubTarea(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && onAddSubTarea && newSubTarea.trim()) { onAddSubTarea(vehicle.id, newSubTarea.trim()); setNewSubTarea(""); } }} placeholder="Nueva sub-tarea..." className="flex-1 p-2 rounded-lg bg-black/40 border text-white text-[10px] placeholder:text-slate-600 focus:outline-none" style={{ borderColor: "rgba(148,163,184,0.2)" }} data-testid={`input-subtarea-${vehicle.id}`} />
                     <button onClick={() => { if (onAddSubTarea && newSubTarea.trim()) { onAddSubTarea(vehicle.id, newSubTarea.trim()); setNewSubTarea(""); } }} disabled={!newSubTarea.trim()} className="px-2 py-1 rounded-lg transition-all disabled:opacity-30" style={{ backgroundColor: "rgba(148,163,184,0.2)", color: PLATA }} data-testid={`button-add-subtarea-${vehicle.id}`}><Plus size={14} /></button>
                   </div>
+                  {situacionPuedeLanzarReto && (
+                    <button
+                      type="button"
+                      disabled={situacionLibreSeleccion.size === 0 || !situacionObjetivoMinValid}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onMoveSubTareasToCronometro?.(vehicle.id, [...situacionLibreSeleccion], {
+                          objetivoMinutos: situacionObjetivoMinParsed,
+                          usarBolsaSegundoReto: situacionBolsaSegundo > 0 && situacionObjetivoMinParsed === situacionBolsaSegundo,
+                        });
+                        setSituacionLibreSeleccion(new Set());
+                      }}
+                      className="w-full py-2.5 mt-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 disabled:opacity-40"
+                      style={{
+                        backgroundColor: situacionProximoReto > 1 ? "rgba(0,200,81,0.12)" : `${GOLD}22`,
+                        color: situacionProximoReto > 1 ? VERDE : GOLD,
+                        border: `1px solid ${situacionProximoReto > 1 ? "rgba(0,200,81,0.35)" : `${GOLD}55`}`,
+                        boxShadow: situacionProximoReto > 1 ? "0 0 14px rgba(0,200,81,0.12)" : `0 0 16px ${GOLD}20`,
+                      }}
+                      data-testid={`situacion-lanzar-reto-${vehicle.id}`}
+                    >
+                      <Flag size={12} />
+                      Lanzar {retoSituacionCorto(situacionProximoReto)}
+                      {situacionLibreSeleccion.size > 0 ? ` · ${situacionLibreSeleccion.size} subtarea${situacionLibreSeleccion.size !== 1 ? "s" : ""}` : ""}
+                      {situacionObjetivoMinValid ? ` · ${situacionObjetivoMinParsed} min` : ""}
+                    </button>
+                  )}
                 </div>
               )}
 

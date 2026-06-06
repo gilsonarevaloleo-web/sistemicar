@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   computeCombustibleDia,
+  formatCombustibleCelebracionBloque,
   subTareaDecisionEnJornada,
   countSubsSituacionCumplidosHoy,
 } from "./combustibleConciencia.ts";
@@ -107,6 +108,20 @@ describe("combustibleConciencia", () => {
     const v = makeSituacion([st]);
     assert.equal(subTareaDecisionEnJornada(st, v, dayStart), false);
     assert.equal(countSubsSituacionCumplidosHoy([v], dayStart), 0);
+  });
+
+  it("formatCombustibleCelebracionBloque con decisiones", () => {
+    const msg = formatCombustibleCelebracionBloque({ minutos: 18, decisiones: 3, psTotal: 16 });
+    assert.match(msg, /18 min/);
+    assert.match(msg, /3 decisiones/);
+    assert.match(msg, /combustible de conciencia/);
+    assert.match(msg, /\+16 PS/);
+  });
+
+  it("formatCombustibleCelebracionBloque sin decisiones", () => {
+    const msg = formatCombustibleCelebracionBloque({ minutos: 5, decisiones: 0, psTotal: 4 });
+    assert.match(msg, /combustible de conciencia/);
+    assert.doesNotMatch(msg, /resolviste/);
   });
 
   it("desglosador cerrado cuenta bloque pero subs aparte", () => {
