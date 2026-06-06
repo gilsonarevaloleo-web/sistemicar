@@ -1,6 +1,17 @@
+import { deliverPuertaVoice, enqueueMissedPuertaVoice, isAppInBackground } from "./backgroundAttentionAlerts";
+import { buildPuertaVozPhrase } from "./puertaAtencionVoice";
 import { SegmentoV5 } from "./persistence";
+import {
+  getPuertaWindowMs,
+  getVozDisparoMs,
+  PUERTA_MARGIN_MIN,
+  segmentOrdinalIndex,
+} from "./segmentAttentionEngine";
+import { getLimaDayStartMs, segmentClockMs } from "./segmentTime";
+import { isPuertaVozEnabled } from "./tikSound";
 
 const scheduledTimers: ReturnType<typeof setTimeout>[] = [];
+const MAX_SCHEDULE_MS = 24 * 3600_000;
 
 export async function requestNotificationPermission(): Promise<boolean> {
   if (!("Notification" in window)) return false;
@@ -22,25 +33,121 @@ function timeStringToMs(horaInicio: string): number {
   return target.getTime() - Date.now();
 }
 
+function scheduleAt(msFromNow: number, fn: () => void): void {
+  if (msFromNow <= 0 || msFromNow > MAX_SCHEDULE_MS) return;
+  scheduledTimers.push(setTimeout(fn, msFromNow));
+}
+
+function showScheduledNotification(opts: {
+  title: string;
+  body: string;
+  tag: string;
+  voicePhrase?: string;
+}): void {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const n = new Notification(opts.title, {
+      body: opts.body,
+      icon: "/favicon.ico",
+      tag: opts.tag,
+    });
+    n.onclick = () => {
+      window.focus();
+      window.location.href = "/planeacion";
+      n.close();
+    };
+  } catch {
+    /* noop */
+  }
+  if (opts.voicePhrase && isPuertaVozEnabled()) {
+    if (isAppInBackground()) {
+      enqueueMissedPuertaVoice(opts.voicePhrase, "puerta");
+    } else {
+      deliverPuertaVoice(opts.voicePhrase, {
+        source: "puerta",
+        notifyTitle: opts.title,
+        notifyBody: opts.body,
+        notifyTag: opts.tag,
+      });
+    }
+  }
+}
+
 export function scheduleSegmentNotifications(segmentos: SegmentoV5[]): void {
   cancelAllNotifications();
   if (!("Notification" in window) || Notification.permission !== "granted") return;
 
-  segmentos.forEach((seg) => {
-    if (seg.estado !== "pendiente") return;
-    const msUntilStart = timeStringToMs(seg.horaInicio);
-    if (msUntilStart < 0) return;
+  const dayStart = getLimaDayStartMs();
+  const total = segmentos.length;
 
-    const timer = setTimeout(() => {
-      try {
-        new Notification(`Segmento: ${seg.nombre}`, {
-          body: `${seg.horaInicio} — ${seg.horaFin}`,
-          icon: "/favicon.ico",
-          tag: `seg-${seg.id}`,
+  segmentos.forEach((seg, idx) => {
+    const ordinal = segmentOrdinalIndex(segmentos, seg.id) || idx + 1;
+
+    if (seg.estado === "pendiente") {
+      const msUntilStart = timeStringToMs(seg.horaInicio);
+      if (msUntilStart > 0) {
+        scheduleAt(msUntilStart, () => {
+          showScheduledNotification({
+            title: `Segmento: ${seg.nombre}`,
+            body: `${seg.horaInicio} — ${seg.horaFin ?? "sin fin"}`,
+            tag: `seg-start-${seg.id}`,
+          });
         });
-      } catch { }
-    }, msUntilStart);
-    scheduledTimers.push(timer);
+      }
+
+      if (seg.vozDisparadaAt == null) {
+        const vozMs = getVozDisparoMs(seg.horaInicio, dayStart);
+        const msUntilVoz = vozMs - Date.now();
+        const phrase = buildPuertaVozPhrase({ nombre: seg.nombre, ordinal, total });
+        scheduleAt(msUntilVoz, () => {
+          showScheduledNotification({
+            title: `Puerta de atención: ${seg.nombre}`,
+            body: phrase,
+            tag: `seg-voz-${seg.id}`,
+            voicePhrase: phrase,
+          });
+        });
+      }
+
+      const { windowEndMs } = getPuertaWindowMs(seg.horaInicio, dayStart);
+      const msUntilPuertaEnd = windowEndMs - Date.now();
+      scheduleAt(msUntilPuertaEnd, () => {
+        showScheduledNotification({
+          title: `Puerta cierra: ${seg.nombre}`,
+          body: "Si no abriste la puerta en ±5 min, el segmento puede caer en entropía.",
+          tag: `seg-puerta-end-${seg.id}`,
+          voicePhrase: `Puerta de ${seg.nombre} cerrada. Abre atención consciente o caerás en entropía.`,
+        });
+      });
+    }
+
+    if ((seg.estado === "pendiente" || seg.estado === "activo") && seg.horaFin) {
+      const finMs = segmentClockMs(seg.horaFin, dayStart);
+      let endAnchor = finMs;
+      if (endAnchor <= segmentClockMs(seg.horaInicio, dayStart)) {
+        endAnchor += 24 * 3600_000;
+      }
+      const cierreMs = endAnchor - PUERTA_MARGIN_MIN * 60000;
+      const msUntilCierre = cierreMs - Date.now();
+      scheduleAt(msUntilCierre, () => {
+        showScheduledNotification({
+          title: `Cierra con intención: ${seg.nombre}`,
+          body: `Ventana de cierre ±${PUERTA_MARGIN_MIN} min de ${seg.horaFin}. +2 PS si cierras a tiempo.`,
+          tag: `seg-cierre-${seg.id}`,
+          voicePhrase: `Cierra ${seg.nombre} con intención. Estás en la ventana de cierre.`,
+        });
+      });
+
+      const msUntilEntropia = endAnchor + PUERTA_MARGIN_MIN * 60000 - Date.now();
+      scheduleAt(msUntilEntropia, () => {
+        showScheduledNotification({
+          title: `Último aviso: ${seg.nombre}`,
+          body: "Si no cerraste, el segmento pasará a entropía automáticamente.",
+          tag: `seg-entropia-${seg.id}`,
+          voicePhrase: `Entropía inminente en ${seg.nombre}. Cierra ahora o pierdes los puntos.`,
+        });
+      });
+    }
   });
 }
 

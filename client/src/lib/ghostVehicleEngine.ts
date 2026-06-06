@@ -62,17 +62,46 @@ export function isGhostActiveVehicle(
   return false;
 }
 
-/** Solo preservar activos locales ausentes del snapshot si aún pueden estar sincronizando. */
+/**
+ * Preservar activos locales ausentes del snapshot de Firebase.
+ * Cualquier vehículo consciente abierto en el día-jornada actual se mantiene
+ * hasta cierre explícito (no solo 15 min de gracia de sync).
+ */
 export function shouldPreserveLocalActivo(v: Vehicle, nowMs: number, dayStartMs?: number): boolean {
   if (v.status !== "activo" || v.autoVerdad) return false;
   const dayStart = dayStartMs ?? getJournalDayStartMs(nowMs);
   if (isGhostActiveVehicle(v, nowMs, dayStart)) return false;
 
   const apertura = v.aperturaAt || (v.createdAt instanceof Date ? v.createdAt.getTime() : 0);
+  if (apertura >= dayStart) return true;
+
   const age = apertura > 0 ? nowMs - apertura : Infinity;
   if (age < LOCAL_SYNC_GRACE_MS) return true;
   if (v.clientRequestId && age < 30 * 60_000) return true;
   return false;
+}
+
+/** Reincorpora activos del día-jornada guardados en local pero ausentes del merge remoto. */
+export function recoverMissingJournalDayActives(
+  merged: Vehicle[],
+  localSource: Vehicle[],
+  nowMs: number = Date.now(),
+  isRecentlyClosed: (id: string) => boolean = () => false
+): Vehicle[] {
+  const dayStart = getJournalDayStartMs(nowMs);
+  const mergedIds = new Set(merged.map(v => v.id));
+  const mergedCrq = new Set(merged.map(v => v.clientRequestId).filter(Boolean));
+  const byId = new Map(merged.map(v => [v.id, v]));
+  const missing = localSource.filter(v => {
+    if (v.status !== "activo" || v.autoVerdad) return false;
+    if (mergedIds.has(v.id)) return false;
+    if (v.clientRequestId && mergedCrq.has(v.clientRequestId)) return false;
+    if (isRecentlyClosed(v.id)) return false;
+    if (isOrphanDesglosadorInterrupt(v, byId)) return false;
+    return shouldPreserveLocalActivo(v, nowMs, dayStart);
+  });
+  if (missing.length === 0) return merged;
+  return [...missing, ...merged];
 }
 
 /** Excluye fantasmas del cálculo de cobertura / entropía del anillo. */

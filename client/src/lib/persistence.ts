@@ -32,7 +32,11 @@ export {
 } from "./situacionSessionMerge";
 import { mergeActiveVehicleSessionState, isOrphanDesglosadorInterrupt } from "./situacionSessionMerge";
 import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
-import { isGhostActiveVehicle, shouldPreserveLocalActivo } from "./ghostVehicleEngine";
+import {
+  isGhostActiveVehicle,
+  recoverMissingJournalDayActives,
+  shouldPreserveLocalActivo,
+} from "./ghostVehicleEngine";
 import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
 import { sanitizeJournalSpLogs } from "./spLogHygiene";
 import { mergePlantillasRutina } from "./plantillasRutinaMerge";
@@ -672,6 +676,54 @@ export interface Vehicle {
 }
 
 const VEHICLES_KEY = "sistemicar_vehicles";
+const PARKED_ACTIVES_KEY = "sistemicar_parked_actives";
+
+/** Guarda activos en sessionStorage al ir a segundo plano (recuperación tras suspender la pestaña). */
+export function parkActiveVehiclesForResume(vehicles: Vehicle[]): void {
+  try {
+    const actives = vehicles.filter(v => v.status === "activo" && !v.autoVerdad);
+    if (actives.length === 0) {
+      sessionStorage.removeItem(PARKED_ACTIVES_KEY);
+      return;
+    }
+    sessionStorage.setItem(PARKED_ACTIVES_KEY, JSON.stringify(actives));
+  } catch {
+    // sessionStorage no disponible
+  }
+}
+
+function parseParkedVehicles(raw: string): Vehicle[] {
+  try {
+    const parsed = JSON.parse(raw) as Vehicle[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(v => ({
+      ...v,
+      tiempoInicio: new Date(v.tiempoInicio),
+      createdAt: new Date(v.createdAt),
+      completedAt: v.completedAt ? new Date(v.completedAt) : undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Activo(s) aparcados al ocultar la app; útil si localStorage fue pisado por un snapshot vacío. */
+export function getParkedActiveVehicles(): Vehicle[] {
+  try {
+    const raw = sessionStorage.getItem(PARKED_ACTIVES_KEY);
+    return raw ? parseParkedVehicles(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearParkedActiveVehicles(): void {
+  try {
+    sessionStorage.removeItem(PARKED_ACTIVES_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 export function getLocalVehicles(): Vehicle[] {
   try {
@@ -1125,6 +1177,12 @@ export function subscribeToVehicles(
       }
 
       sortedWithSubs = mergeMissingLocalActives(sortedWithSubs);
+      sortedWithSubs = recoverMissingJournalDayActives(
+        sortedWithSubs,
+        [...existingLocal, ...getParkedActiveVehicles()],
+        Date.now(),
+        wasVehicleRecentlyClosed
+      );
 
       // Drop orphan desglosador interrupts (parent no longer paused) so they do not block Centinela.
       {

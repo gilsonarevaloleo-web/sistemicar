@@ -7,6 +7,7 @@ import {
   hasRealActiveConsciousVehicle,
   isGhostActiveVehicle,
   isJournalStaleActiveVehicle,
+  recoverMissingJournalDayActives,
   shouldPreserveLocalActivo,
 } from "./ghostVehicleEngine.ts";
 
@@ -71,9 +72,23 @@ describe("ghostVehicleEngine", () => {
     assert.equal(isGhostActiveVehicle(child, NOW, DAY_START, byId), true);
   });
 
-  it("no preserva activo local obsoleto ausente de Firebase", () => {
-    const stale = v({ id: "s1", aperturaAt: NOW - 2 * 3600_000 });
-    assert.equal(shouldPreserveLocalActivo(stale, NOW, DAY_START), false);
+  it("preserva activo del día-jornada aunque lleve horas sin snapshot", () => {
+    const sameDay = v({ id: "s1", aperturaAt: NOW - 2 * 3600_000 });
+    assert.equal(shouldPreserveLocalActivo(sameDay, NOW, DAY_START), true);
+  });
+
+  it("no preserva sesión nocturna olvidada (fantasma)", () => {
+    const nineAm = DAY_START + 4 * 3600_000;
+    const nightOpen = DAY_START - 8 * 3600_000;
+    const stale = v({ id: "night", aperturaAt: nightOpen });
+    assert.equal(shouldPreserveLocalActivo(stale, nineAm, DAY_START), false);
+  });
+
+  it("recoverMissingJournalDayActives reincorpora activo local del día", () => {
+    const local = v({ id: "loc1", aperturaAt: DAY_START + 3600_000 });
+    const recovered = recoverMissingJournalDayActives([], [local], NOW);
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0]?.id, "loc1");
   });
 
   it("preserva activo reciente en ventana de sync", () => {

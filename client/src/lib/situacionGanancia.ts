@@ -1,4 +1,5 @@
 import type { SubTarea, Vehicle } from "./persistence";
+import { getClockDayStartMs, parseSegmentTime, segmentClockMs } from "./segmentTime";
 
 export type SituacionBolsaGanancia = {
   retoNumero: number;
@@ -88,4 +89,27 @@ export function bolsaDisponibleSegundoReto(
 ): number {
   if (!sc || sc.activo === true) return 0;
   return Math.max(0, Math.round(sc.bolsaSegundoRetoMin ?? 0));
+}
+
+/** Convierte HH:mm local en timestamp de meta (hoy o mañana si ya pasó). */
+export function situacionObjetivoHoraToContratoMs(
+  hhmm: string,
+  nowMs: number = Date.now()
+): number | null {
+  if (!parseSegmentTime(hhmm)) return null;
+  const dayStart = getClockDayStartMs(nowMs);
+  let target = segmentClockMs(hhmm, dayStart);
+  if (target <= nowMs) target += 86400000;
+  return target;
+}
+
+/** Minutos restantes hasta una meta HH:mm (mínimo 1). */
+export function situacionMinutosHastaObjetivoHora(
+  hhmm: string,
+  nowMs: number = Date.now()
+): number | null {
+  const target = situacionObjetivoHoraToContratoMs(hhmm, nowMs);
+  if (target == null) return null;
+  const remaining = Math.round((target - nowMs) / 60000);
+  return remaining >= 1 ? remaining : null;
 }

@@ -1,5 +1,6 @@
 import { formatHHMM } from "./desglosadorClock";
 import type { SubTarea, Vehicle } from "./persistence";
+import { situacionContratoFinMs } from "./situacionGanancia";
 
 export function situacionFilaCronometroPendiente(st: SubTarea): boolean {
   return !!st.enDesgloseCronometro && (st.resultadoSituacion ?? "pendiente") === "pendiente";
@@ -583,6 +584,19 @@ export function totalBudgetMinFromCronometro(
     return Math.max(1, Math.round((horaFinContratoMs - bloqueInicioAt) / 60000));
   }
   return Math.max(1, sumMinutosCronometroPendientes(subTareas));
+}
+
+/** Minutos restantes hasta la meta sellada (+ adelanto acumulado) para repartir cupos sin mover el objetivo. */
+export function remainingCronometroBudgetMin(
+  sc: Vehicle["situacionCronometro"],
+  nowMs: number = Date.now()
+): number | null {
+  if (!sc?.activo) return null;
+  const contratoMs = situacionContratoFinMs(sc);
+  if (contratoMs == null) return null;
+  const wallMin = Math.round((contratoMs - nowMs) / 60000);
+  const adelanto = sc.saldoAdelantoMin ?? 0;
+  return Math.max(1, wallMin + adelanto);
 }
 
 export function resolveFocusSubTareaId(

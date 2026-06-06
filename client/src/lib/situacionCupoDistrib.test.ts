@@ -13,6 +13,7 @@ import {
   redistribuirMinutosSituacionCronometro,
   situacionRelojDebeMostrarse,
   situacionTargetMsReloj,
+  remainingCronometroBudgetMin,
   sumMinutosCronometroPendientes,
 } from "./situacionCupoDistrib.ts";
 
@@ -54,6 +55,18 @@ describe("redistribuirMinutosSituacionCronometro", () => {
     assert.equal(a.minutosCupo, 20);
     assert.equal(a.cupoFijo, true);
     assert.equal(sumMinutosCronometroPendientes(out), 60);
+  });
+});
+
+describe("remainingCronometroBudgetMin", () => {
+  it("suma minutos hasta contrato y adelanto", () => {
+    const now = 1_000_000;
+    const sc = {
+      activo: true,
+      horaFinContratoMs: now + 25 * 60000,
+      saldoAdelantoMin: 4,
+    };
+    assert.equal(remainingCronometroBudgetMin(sc, now), 29);
   });
 });
 

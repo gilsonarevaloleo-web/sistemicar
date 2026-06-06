@@ -1,4 +1,4 @@
-import { speakUbicacionSingle } from "./speechQueue";
+import { deliverPuertaVoice } from "./backgroundAttentionAlerts";
 import { isPuertaVozEnabled } from "./tikSound";
 
 const ORDINALES: Record<number, string> = {
@@ -36,10 +36,22 @@ export function speakPuertaSegmento(params: {
   total: number;
 }): void {
   if (!isPuertaVozEnabled()) return;
-  speakUbicacionSingle(buildPuertaVozPhrase(params), "puerta");
+  const phrase = buildPuertaVozPhrase(params);
+  deliverPuertaVoice(phrase, {
+    source: "puerta",
+    notifyTitle: `Puerta: ${params.nombre}`,
+    notifyBody: phrase,
+    notifyTag: `puerta-live-${params.nombre}`,
+  });
 }
 
 export function speakEntropiaAtencionCruce(): void {
   if (!isPuertaVozEnabled()) return;
-  speakUbicacionSingle("Cierre por entropía-atención. Ordena tu jornada, operador.", "puerta");
+  const phrase = "Cierre por entropía-atención. Ordena tu jornada, operador.";
+  deliverPuertaVoice(phrase, {
+    source: "puerta",
+    notifyTitle: "Entropía-atención",
+    notifyBody: "Cierra el vehículo del segmento anterior y abre otro en esta zona.",
+    notifyTag: "entropia-cruce-live",
+  });
 }

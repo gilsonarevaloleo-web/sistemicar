@@ -8,6 +8,8 @@ import {
   nextRetoNumero,
   retoSituacionLabel,
   situacionContratoFinMs,
+  situacionMinutosHastaObjetivoHora,
+  situacionObjetivoHoraToContratoMs,
   sumMinutosEnColaGanancia,
 } from "./situacionGanancia.ts";
 
@@ -65,6 +67,15 @@ describe("situacionGanancia", () => {
   it("bolsaDisponibleSegundoReto solo tras cierre", () => {
     assert.equal(bolsaDisponibleSegundoReto({ activo: true, bolsaSegundoRetoMin: 10 }), 0);
     assert.equal(bolsaDisponibleSegundoReto({ activo: false, bolsaSegundoRetoMin: 14 }), 14);
+  });
+
+  it("situacionObjetivoHoraToContratoMs usa hoy o mañana", () => {
+    const now = new Date(2026, 5, 6, 8, 0, 0).getTime();
+    const hoy = situacionObjetivoHoraToContratoMs("09:30", now);
+    assert.equal(hoy, new Date(2026, 5, 6, 9, 30, 0).getTime());
+    const manana = situacionObjetivoHoraToContratoMs("07:30", now);
+    assert.equal(manana, new Date(2026, 5, 7, 7, 30, 0).getTime());
+    assert.equal(situacionMinutosHastaObjetivoHora("09:30", now), 90);
   });
 
   it("sumMinutosEnColaGanancia ignora cumplidas", () => {
