@@ -107,6 +107,8 @@ import {
   getTodayCierreJornada,
   getDailyPoints,
   getDailyPointsLocalSync,
+  getLocalSPLog,
+  repairJournalSpLogInflation,
   getYesterdayDailyPointsTotal,
   subscribeToDailyPoints,
   getLimaDateString,
@@ -151,9 +153,11 @@ import {
 import {
   awardDesglosadorSubPointsIfNeeded,
   settleDesglosadorCyclePoints,
+  desglosadorCycleCloseSource,
   sumDesglosadorSubsPsAlreadyGranted,
   estimateDesglosadorSessionPs,
 } from "@/lib/desglosadorPointsAward";
+import { hasJournalSpExactSource, hasJournalSpSourcePrefix } from "@/lib/spLogHygiene";
 import {
   releaseCentinela,
   resetCentinelaTimerState,
@@ -1510,6 +1514,18 @@ export default function Planeacion() {
 
   useEffect(() => {
     if (!user) return;
+    const repair = repairJournalSpLogInflation(user.uid);
+    if (repair.removed > 0) {
+      console.warn(
+        `[PS] Limpieza día-jornada: -${repair.removed} entradas duplicadas (${repair.journalTotalBefore} → ${repair.journalTotalAfter} PS)`
+      );
+      setDailyPS(repair.journalTotalAfter);
+      toast.info("Barra del día corregida", {
+        description: `Se quitaron ${repair.removed} registros duplicados por cierres atascados (${repair.journalTotalAfter} PS hoy).`,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+        duration: 6000,
+      });
+    }
     const unsub = subscribeToDailyPoints(user.uid, (data) => setDailyPS(data.total), (e) => console.error(e));
     return unsub;
   }, [user]);
@@ -3718,14 +3734,25 @@ export default function Planeacion() {
     const elapsedSec = getDesglosadorSessionElapsedSec(vehicle);
     const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
     const depthGranted = options?.resetGranted ?? vehicle.desglosadorBloqueDepthPsGranted ?? 0;
+    const newGranted = totalDepthPs;
+    const depthSource = `Profundidad desglosador [${vehicleId}] nivel:${newGranted}`;
+    const spLogs = getLocalSPLog(user.uid);
+    if (hasJournalSpExactSource(spLogs, depthSource)) {
+      if (depthGranted < newGranted) {
+        const patchOnly = (list: Vehicle[]) =>
+          list.map(v => v.id === vehicleId ? { ...v, desglosadorBloqueDepthPsGranted: newGranted } : v);
+        setVehicles(patchOnly);
+        vehiclesRef.current = patchOnly(vehiclesRef.current);
+        try { saveLocalVehicles(vehiclesRef.current); } catch { /* ignore */ }
+      }
+      return { grantedTotal: Math.max(depthGranted, newGranted), awardedNow: 0 };
+    }
+
     const delta = totalDepthPs - depthGranted;
     if (delta <= 0) return { grantedTotal: depthGranted, awardedNow: 0 };
 
-    const label = options?.sourceLabel ?? "Profundidad desglosador (sesión)";
-    const ok = await safeAwardPS(delta, label);
+    const ok = await safeAwardPS(delta, depthSource);
     if (!ok) return { grantedTotal: depthGranted, awardedNow: 0 };
-
-    const newGranted = totalDepthPs;
     const patchVehicles = (list: Vehicle[]) =>
       list.map(v => v.id === vehicleId ? { ...v, desglosadorBloqueDepthPsGranted: newGranted } : v);
     setVehicles(patchVehicles);
@@ -3977,10 +4004,17 @@ export default function Planeacion() {
     try {
       const latestSubs = vehiclesRef.current.find(v => v.id === vehicleId)?.subVehiculos ?? subsConRuta;
       const subsPsBefore = sumDesglosadorSubsPsAlreadyGranted(latestSubs);
+      const spLogs = getLocalSPLog(user.uid);
+      const skipCycleClose = hasJournalSpSourcePrefix(
+        spLogs,
+        `Cierre ciclo desglosador [${vehicleId}]`
+      );
       const { subs: subsSettled, subsPsAwarded, cycleClosePs } = await settleDesglosadorCyclePoints(
+        vehicleId,
         vehicle.titulo,
         latestSubs,
-        safeAwardPS
+        safeAwardPS,
+        { skipCycleClose }
       );
       const subsPsTotal = subsPsBefore + subsPsAwarded;
       const sessionTotalPs = subsPsTotal + cycleClosePs + depthPsGranted;

@@ -44,6 +44,7 @@ describe("desglosadorPointsAward", () => {
   it("settle otorga todos los subs + base de cierre", async () => {
     const amounts: number[] = [];
     const result = await settleDesglosadorCyclePoints(
+      "veh_1",
       "Ciclo",
       [makeSub("1", "cumplido"), makeSub("2", "cumplido"), makeSub("3", "fallado")],
       async (amount, _source) => {

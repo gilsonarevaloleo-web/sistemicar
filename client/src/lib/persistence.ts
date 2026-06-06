@@ -34,6 +34,7 @@ import { mergeActiveVehicleSessionState, isOrphanDesglosadorInterrupt } from "./
 import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
 import { isGhostActiveVehicle, shouldPreserveLocalActivo } from "./ghostVehicleEngine";
 import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
+import { sanitizeJournalSpLogs } from "./spLogHygiene";
 import { mergePlantillasRutina } from "./plantillasRutinaMerge";
 import {
   type ModuleAccessInput,
@@ -2643,7 +2644,7 @@ function spLogKey(userId: string): string {
   return `${SP_LOG_KEY_PREFIX}${userId}`;
 }
 
-function getLocalSPLog(userId: string): SovereigntyPointsLog[] {
+export function getLocalSPLog(userId: string): SovereigntyPointsLog[] {
   try {
     const data = localStorage.getItem(spLogKey(userId));
     if (!data) {
@@ -2718,7 +2719,8 @@ async function collectDailyPointsForRange(
   const inRange = (ts: number) => isLogTimestampInDayRange(ts, dayStartMs, dayEndMs);
   const candidates: SovereigntyPointsLog[] = [];
 
-  getLocalSPLog(userId)
+  const { logs: sanitizedLocal } = sanitizeJournalSpLogs(getLocalSPLog(userId), dayStartMs);
+  sanitizedLocal
     .filter(l => inRange(spLogEffectiveMs(l)))
     .forEach(l => candidates.push(l));
 
@@ -2908,11 +2910,45 @@ export function getDailyPointsLocalSync(userId: string): {
   logs: SovereigntyPointsLog[];
 } {
   const journalStartMs = getJournalDayStartMs();
-  const logs = getLocalSPLog(userId).filter(l =>
+  const { logs: sanitized } = sanitizeJournalSpLogs(getLocalSPLog(userId), journalStartMs);
+  const logs = sanitized.filter(l =>
     isLogTimestampInDayRange(spLogEffectiveMs(l), journalStartMs, null)
   );
   const total = logs.reduce((sum, log) => sum + log.amount, 0);
   return { total, logs };
+}
+
+/** Corrige PS inflados del día-jornada (reintentos de cierre / profundidad duplicada). */
+export function repairJournalSpLogInflation(userId: string): {
+  removed: number;
+  journalTotalBefore: number;
+  journalTotalAfter: number;
+} {
+  const journalStartMs = getJournalDayStartMs();
+  const raw = getLocalSPLog(userId);
+  const journalTotalBefore = raw
+    .filter(l => isLogTimestampInDayRange(spLogEffectiveMs(l), journalStartMs, null))
+    .reduce((s, l) => s + l.amount, 0);
+  const { logs: cleaned, removed, journalTotal } = sanitizeJournalSpLogs(raw, journalStartMs);
+  if (removed > 0) {
+    persistSpLogWithPrune(userId, cleaned);
+    const allTimeTotal = cleaned.reduce((s, l) => s + l.amount, 0);
+    const prog = getLocalProgression(userId);
+    saveLocalProgression({
+      ...prog,
+      userId,
+      sovereigntyPoints: allTimeTotal,
+      updatedAt: new Date(),
+    });
+    backupToLocal("progression", {
+      ...prog,
+      userId,
+      sovereigntyPoints: allTimeTotal,
+      updatedAt: new Date(),
+    });
+    window.dispatchEvent(new CustomEvent("sp-log-repaired"));
+  }
+  return { removed, journalTotalBefore, journalTotalAfter: journalTotal };
 }
 
 /** Total PS del día-jornada anterior, misma agregación que getDailyPoints. */

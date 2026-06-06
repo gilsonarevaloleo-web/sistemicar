@@ -28,11 +28,17 @@ export async function awardDesglosadorSubPointsIfNeeded(
   return { sub: { ...sub, psOtorgados: amount }, awarded: amount };
 }
 
-/** Asegura PS de todos los subs cumplidos + base de cierre de ciclo. */
+export function desglosadorCycleCloseSource(vehicleId: string, vehicleTitulo: string): string {
+  return `Cierre ciclo desglosador [${vehicleId}]: ${vehicleTitulo}`;
+}
+
+/** Asegura PS de todos los subs cumplidos + base de cierre de ciclo (una vez por vehículo). */
 export async function settleDesglosadorCyclePoints(
+  vehicleId: string,
   vehicleTitulo: string,
   subs: SubVehiculo[],
-  award: AwardPsFn
+  award: AwardPsFn,
+  options?: { skipCycleClose?: boolean }
 ): Promise<{
   subs: SubVehiculo[];
   subsPsAwarded: number;
@@ -52,10 +58,10 @@ export async function settleDesglosadorCyclePoints(
   }
 
   let cycleClosePs = 0;
-  if (DESGLOSADOR_CYCLE_CLOSE_BASE_PS > 0) {
+  if (!options?.skipCycleClose && DESGLOSADOR_CYCLE_CLOSE_BASE_PS > 0) {
     const ok = await award(
       DESGLOSADOR_CYCLE_CLOSE_BASE_PS,
-      `Cierre ciclo desglosador: ${vehicleTitulo}`
+      desglosadorCycleCloseSource(vehicleId, vehicleTitulo)
     );
     if (ok) cycleClosePs = DESGLOSADOR_CYCLE_CLOSE_BASE_PS;
   }
