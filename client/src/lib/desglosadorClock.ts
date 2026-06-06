@@ -149,6 +149,33 @@ export type SubCloseVerdict = "gain" | "loss" | "neutral" | "noRef";
 
 const SUB_CLOSE_NEUTRAL_SEC = 5;
 
+export type SubCloseCantidadValidation =
+  | { ok: true; cantidad: number }
+  | { ok: false; message: string };
+
+/** Exige cantidad lograda cuando el sub tiene cantidad objetivo (evita cierre sin medición). */
+export function validateSubCloseCantidad(
+  sub: SubVehiculo,
+  cantidadInput: string,
+  status: "cumplido" | "fallado"
+): SubCloseCantidadValidation {
+  if (!sub.cantidadObjetivo || sub.cantidadObjetivo <= 0) {
+    return { ok: true, cantidad: Math.max(0, Number(cantidadInput) || 0) };
+  }
+  const trimmed = cantidadInput.trim();
+  if (trimmed === "") {
+    return { ok: false, message: "Indica la cantidad lograda antes de cerrar este sub." };
+  }
+  const cantidad = Number(trimmed);
+  if (!Number.isFinite(cantidad) || cantidad < 0) {
+    return { ok: false, message: "Cantidad inválida. Usa un número ≥ 0." };
+  }
+  if (status === "cumplido" && cantidad === 0) {
+    return { ok: false, message: "Si no completaste unidades, cierra como Fallado (cantidad 0)." };
+  }
+  return { ok: true, cantidad };
+}
+
 /** Veredicto al cerrar sub desglosador tiempo vs referencia sugerida. */
 export function computeSubCloseVerdict(sub: SubVehiculo): {
   verdict: SubCloseVerdict;

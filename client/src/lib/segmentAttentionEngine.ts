@@ -12,7 +12,12 @@ export const PUERTA_MARGIN_MIN = 5;
 export const VOZ_OFFSET_MIN = 4;
 
 export type SegmentAttentionEvent =
-  | { type: "entropia"; segId: string; nombre: string; reason: "past_end" | "missed_puerta" | "missed_window" }
+  | {
+      type: "entropia";
+      segId: string;
+      nombre: string;
+      reason: "past_end" | "missed_puerta" | "missed_window" | "cruce_sin_cierre";
+    }
   | { type: "day_rollover_entropia"; segId: string; nombre: string }
   | { type: "voz_disparada"; segId: string; nombre: string; ordinal: number; total: number };
 

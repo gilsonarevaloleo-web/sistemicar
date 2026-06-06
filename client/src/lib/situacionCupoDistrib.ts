@@ -53,12 +53,50 @@ export function situacionTargetMsReloj(
       const start = sc.bloqueInicioAt ?? aperturaMs;
       return start + firstPending.minutosCupo! * 60000 - adelantoMs;
     }
-    if (sc.horaFinMs != null) return sc.horaFinMs - adelantoMs;
+    const proy = computeSituacionProyeccionFinMs(subs, {
+      bloqueInicioAt: sc.bloqueInicioAt ?? aperturaMs,
+      anchor,
+      now,
+      saldoAdelantoMin: sc.saldoAdelantoMin,
+    });
+    if (proy != null) return proy - adelantoMs;
+    const contrato = sc.horaFinContratoMs ?? sc.horaFinMs;
+    if (contrato != null) return contrato - adelantoMs;
     const sum = sumMinutosCronometroPendientes(subs);
     if (sum > 0) return (sc.bloqueInicioAt ?? aperturaMs) + sum * 60000 - adelantoMs;
   }
 
   return null;
+}
+
+/** Fin proyectado del bloque según filas pendientes y tiempo ganado en vivo. */
+export function computeSituacionProyeccionFinMs(
+  subTareas: SubTarea[],
+  opts: {
+    bloqueInicioAt: number;
+    anchor?: { subTareaId: string; startedAt: number } | null;
+    now?: number;
+    saldoAdelantoMin?: number;
+  }
+): number | null {
+  const horarios = computeSituacionCronometroHorarios(subTareas, {
+    bloqueInicioAt: opts.bloqueInicioAt,
+    anchor: opts.anchor,
+    now: opts.now,
+    previewTiempoGanado: true,
+    saldoAdelantoMin: opts.saldoAdelantoMin,
+  });
+  if (horarios.length === 0) return null;
+  return horarios[horarios.length - 1]!.finMs;
+}
+
+/** Minutos de ventaja vs contrato sellado (positivo = vas ganando). */
+export function situacionGananciaVsContratoMin(
+  contratoMs: number | null,
+  proyeccionMs: number | null
+): number | null {
+  if (contratoMs == null || proyeccionMs == null) return null;
+  return Math.round((contratoMs - proyeccionMs) / 60000);
 }
 
 export function isCupoFijo(st: SubTarea): boolean {
@@ -539,10 +577,10 @@ export function applyCupoManualYRedistribuir(
 export function totalBudgetMinFromCronometro(
   subTareas: SubTarea[],
   bloqueInicioAt: number,
-  horaFinMs?: number
+  horaFinContratoMs?: number
 ): number {
-  if (horaFinMs != null) {
-    return Math.max(1, Math.round((horaFinMs - bloqueInicioAt) / 60000));
+  if (horaFinContratoMs != null) {
+    return Math.max(1, Math.round((horaFinContratoMs - bloqueInicioAt) / 60000));
   }
   return Math.max(1, sumMinutosCronometroPendientes(subTareas));
 }

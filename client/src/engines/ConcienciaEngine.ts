@@ -360,8 +360,8 @@ export function filterVehiculosCalendarioHoy(
 /**
  * Reloj 24h — 4 estados visuales:
  * - Morado = conquista (ejecución consciente: tiempo, situación o descanso).
- * - Rojo = entropía (huecos en segmento planificado sin cobertura consciente).
- * - Gris = libre (antes del umbral o fuera de planificación).
+ * - Rojo = entropía (huecos sin cobertura consciente: en segmento planificado o en contingencia sin segmentos).
+ * - Gris = libre (antes del umbral o fuera de ventana planificada con segmentos).
  */
 export function computeTimelineClockArcs(params: {
   vehiculos: VehiculoAnilloLite[];
@@ -404,17 +404,9 @@ export function computeTimelineClockArcs(params: {
     livedStartMs,
     livedEndMs
   );
-  const centinelaSessions = collectClippedSessions(
-    todayVehicles,
-    now,
-    v => !!v.autoVerdad,
-    livedStartMs,
-    livedEndMs
-  );
 
   const conquistaMerged = mergeMsIntervals(conquistaSessions);
   const gapCoverMerged = mergeMsIntervals(gapCoverSessions);
-  const centinelaMerged = mergeMsIntervals(centinelaSessions);
 
   for (const interval of conquistaMerged) {
     arcs.push(...intervalToClockArcs(interval, limaDayStartMs, "conquista"));
@@ -441,11 +433,12 @@ export function computeTimelineClockArcs(params: {
         arcs.push(...intervalToClockArcs(gap, limaDayStartMs, "entropia"));
       }
     }
-  }
-
-  const centinelaNet = subtractMsIntervals(centinelaMerged, gapCoverMerged);
-  for (const interval of centinelaNet) {
-    arcs.push(...intervalToClockArcs(interval, limaDayStartMs, "entropia"));
+  } else {
+    const window: MsInterval = { start: livedStartMs, end: livedEndMs };
+    const gaps = subtractMsIntervals([window], gapCoverMerged);
+    for (const gap of gaps) {
+      arcs.push(...intervalToClockArcs(gap, limaDayStartMs, "entropia"));
+    }
   }
 
   return arcs;
@@ -495,14 +488,20 @@ export function computeAnilloEstado(params: {
     };
   }
 
-  if (
-    hasSegments &&
-    isNowInPlannedGap(segmentos, todayVehicles, nowMs, limaDayStartMs)
-  ) {
-    return { deg, mode: "entropia", umbralMin, sinSegmentos: false };
+  if (hasSegments) {
+    if (isNowInPlannedGap(segmentos, todayVehicles, nowMs, limaDayStartMs)) {
+      return { deg, mode: "entropia", umbralMin, sinSegmentos: false };
+    }
+    return { deg, mode: "libre", umbralMin, sinSegmentos: false };
   }
 
-  return { deg, mode: "libre", umbralMin, sinSegmentos: !hasSegments };
+  return {
+    deg,
+    mode: "entropia",
+    umbralMin,
+    sinSegmentos: true,
+    centerGuide: "Sin cobertura consciente",
+  };
 }
 
 export function computeTimelineDayStats(params: {
@@ -543,17 +542,8 @@ export function computeTimelineDayStats(params: {
     livedStartMs,
     livedEndMs
   );
-  const centinelaSessions = collectClippedSessions(
-    todayVehicles,
-    now,
-    v => !!v.autoVerdad,
-    livedStartMs,
-    livedEndMs
-  );
-
   const conquistaMerged = mergeMsIntervals(conquistaSessions);
   const gapCoverMerged = mergeMsIntervals(gapCoverSessions);
-  const centinelaMerged = mergeMsIntervals(centinelaSessions);
 
   const entropyRaw: MsInterval[] = [];
   if (segmentos.length > 0) {
@@ -574,10 +564,11 @@ export function computeTimelineDayStats(params: {
         .filter((s): s is MsInterval => s != null);
       entropyRaw.push(...subtractMsIntervals([window], mergeMsIntervals(coverInWindow)));
     }
+  } else {
+    const window: MsInterval = { start: livedStartMs, end: livedEndMs };
+    entropyRaw.push(...subtractMsIntervals([window], gapCoverMerged));
   }
-  const segmentEntropy = mergeMsIntervals(entropyRaw);
-  const centinelaNet = subtractMsIntervals(centinelaMerged, gapCoverMerged);
-  const entropiaMerged = mergeMsIntervals([...segmentEntropy, ...centinelaNet]);
+  const entropiaMerged = mergeMsIntervals(entropyRaw);
 
   const sumMin = (intervals: MsInterval[]) =>
     intervals.reduce((acc, i) => acc + (i.end - i.start) / 60000, 0);
@@ -589,7 +580,7 @@ export function computeTimelineDayStats(params: {
 
   return {
     conquistaMin: Math.round(conquistaMin * 10) / 10,
-    centinelaMin: Math.round(sumMin(centinelaMerged) * 10) / 10,
+    centinelaMin: 0,
     vacioMin: Math.round(vacioMin * 10) / 10,
     entropiaMin: Math.round(entropiaMin * 10) / 10,
   };
@@ -625,40 +616,6 @@ export function filterVehiculosJornadaActual(
     if (!session) return false;
     return session.end >= journalStart && session.start <= now;
   });
-}
-
-function computeConquistaEntropiaMinutos(params: {
-  vehiculos: VehiculoAnilloLite[];
-  now: number;
-}): { conquistaMin: number; entropiaMin: number } {
-  const { vehiculos, now } = params;
-  const journalStart = getJournalDayStartMs(now);
-
-  const consciousSessions = vehiculos
-    .filter(v => !v.autoVerdad)
-    .map(v => vehicleSessionRange(v, now))
-    .filter((s): s is { start: number; end: number } => s != null);
-
-  const centinelaSessions = vehiculos
-    .filter(v => v.autoVerdad)
-    .map(v => vehicleSessionRange(v, now))
-    .filter((s): s is { start: number; end: number } => s != null);
-
-  let conquistaMin = 0;
-  for (const s of consciousSessions) {
-    conquistaMin += sessionMinutesInWindow(s, journalStart, now);
-  }
-
-  let entropiaMin = 0;
-  for (const cs of centinelaSessions) {
-    let mins = sessionMinutesInWindow(cs, journalStart, now);
-    for (const qs of consciousSessions) {
-      mins -= overlapMinutes(cs.start, cs.end, qs.start, qs.end);
-    }
-    entropiaMin += Math.max(0, mins);
-  }
-
-  return { conquistaMin, entropiaMin };
 }
 
 /** Conquista vs entropía comparten el mismo presupuesto de jornada (arcos complementarios). */
@@ -728,7 +685,7 @@ function segmentDurationMin(horaInicio: string, horaFin: string): number {
   return durationMin;
 }
 
-/** Balance del día: tiempo conquistado vs centinela vs vacío, desglosado por segmento. */
+/** Balance del día: tiempo conquistado vs entropía vs vacío, desglosado por segmento. */
 export function calcularBalanceConquistaJornada(params: {
   segmentos: Array<SegmentoAnilloLite & { nombre?: string; estado?: string }>;
   vehiculos: VehiculoAnilloLite[];
@@ -746,7 +703,6 @@ export function calcularBalanceConquistaJornada(params: {
   });
 
   const consciousToday = jornadaVehiculos.filter(v => !v.autoVerdad);
-  const centinelas = jornadaVehiculos.filter(v => v.autoVerdad);
 
   const segmentosBalance: SegmentoConquistaBalance[] = params.segmentos.map(seg => {
     const duracionMin = Math.max(0, segmentDurationMin(seg.horaInicio || "", seg.horaFin || ""));
@@ -755,25 +711,26 @@ export function calcularBalanceConquistaJornada(params: {
       seg.horaFin || "0:0",
       segmentDayStartMs
     );
+    const evalStart = winStart;
+    const evalEnd = Math.min(winEnd, now);
 
     let conquistaMin = 0;
-    for (const v of consciousToday) {
-      const session = vehicleSessionRange(v, now);
-      if (session) conquistaMin += overlapMinutes(session.start, session.end, winStart, winEnd);
+    const consciousSessions = consciousToday
+      .map(v => vehicleSessionRange(v, now))
+      .filter((s): s is MsInterval => s != null);
+
+    for (const session of consciousSessions) {
+      conquistaMin += overlapMinutes(session.start, session.end, winStart, winEnd);
     }
 
     let entropiaMin = 0;
-    const consciousSessions = consciousToday
-      .map(v => vehicleSessionRange(v, now))
-      .filter((s): s is { start: number; end: number } => s != null);
-    for (const v of centinelas) {
-      const session = vehicleSessionRange(v, now);
-      if (!session) continue;
-      let mins = overlapMinutes(session.start, session.end, winStart, winEnd);
-      for (const qs of consciousSessions) {
-        mins -= overlapMinutes(session.start, session.end, qs.start, qs.end);
-      }
-      entropiaMin += Math.max(0, mins);
+    if (evalEnd > evalStart) {
+      const window: MsInterval = { start: evalStart, end: evalEnd };
+      const coverInWindow = consciousSessions
+        .map(s => clipInterval(s, evalStart, evalEnd))
+        .filter((s): s is MsInterval => s != null);
+      const gaps = subtractMsIntervals([window], mergeMsIntervals(coverInWindow));
+      entropiaMin = gaps.reduce((acc, g) => acc + (g.end - g.start) / 60000, 0);
     }
 
     const vacioMin = Math.max(0, duracionMin - conquistaMin - entropiaMin);

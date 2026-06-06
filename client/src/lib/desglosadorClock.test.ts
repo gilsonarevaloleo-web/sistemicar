@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SubVehiculo } from "./persistence.ts";
-import { computeSubCloseVerdict, suggestedSec } from "./desglosadorClock.ts";
+import { computeSubCloseVerdict, suggestedSec, validateSubCloseCantidad } from "./desglosadorClock.ts";
 
 function sub(partial: Partial<SubVehiculo> & Pick<SubVehiculo, "id">): SubVehiculo {
   return {
@@ -55,5 +55,37 @@ describe("computeSubCloseVerdict", () => {
       tiempoRecordMinPerUnit: 5,
     });
     assert.equal(suggestedSec(s), 600);
+  });
+});
+
+describe("validateSubCloseCantidad", () => {
+  const withObj = sub({ id: "o", cantidadObjetivo: 3 });
+
+  it("permite cierre sin cantidad si no hay objetivo", () => {
+    const r = validateSubCloseCantidad(sub({ id: "n" }), "", "cumplido");
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.cantidad, 0);
+  });
+
+  it("bloquea cierre con objetivo y cantidad vacía", () => {
+    const r = validateSubCloseCantidad(withObj, "", "fallado");
+    assert.equal(r.ok, false);
+  });
+
+  it("permite fallado con cantidad 0 explícita", () => {
+    const r = validateSubCloseCantidad(withObj, "0", "fallado");
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.cantidad, 0);
+  });
+
+  it("bloquea cumplido con cantidad 0", () => {
+    const r = validateSubCloseCantidad(withObj, "0", "cumplido");
+    assert.equal(r.ok, false);
+  });
+
+  it("acepta cumplido con cantidad positiva", () => {
+    const r = validateSubCloseCantidad(withObj, "2", "cumplido");
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.cantidad, 2);
   });
 });

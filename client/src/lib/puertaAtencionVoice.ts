@@ -38,3 +38,8 @@ export function speakPuertaSegmento(params: {
   if (!isPuertaVozEnabled()) return;
   speakUbicacionSingle(buildPuertaVozPhrase(params), "puerta");
 }
+
+export function speakEntropiaAtencionCruce(): void {
+  if (!isPuertaVozEnabled()) return;
+  speakUbicacionSingle("Cierre por entropía-atención. Ordena tu jornada, operador.", "puerta");
+}

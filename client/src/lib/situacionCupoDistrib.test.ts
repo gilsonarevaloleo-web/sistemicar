@@ -5,6 +5,8 @@ import {
   aplicarTiempoGanadoAlCumplir,
   applyCupoManualYRedistribuir,
   computeSituacionCronometroHorarios,
+  computeSituacionProyeccionFinMs,
+  situacionGananciaVsContratoMin,
   descontarMinutosDeFlexiblesPosteriores,
   extraerSubTareaAReserva,
   quitarMinutosHaciaFoco,
@@ -131,6 +133,28 @@ describe("computeSituacionCronometroHorarios", () => {
       previewTiempoGanado: true,
     });
     assert.ok(conPreview[1]!.finMs <= sinPreview[1]!.finMs);
+  });
+});
+
+describe("contrato vs proyección", () => {
+  it("situacionGananciaVsContratoMin positivo cuando proyección termina antes", () => {
+    const contrato = 1_000_000;
+    const proy = contrato - 8 * 60000;
+    assert.equal(situacionGananciaVsContratoMin(contrato, proy), 8);
+  });
+
+  it("computeSituacionProyeccionFinMs acorta con tiempo ganado en foco", () => {
+    const base = 1_700_000_000_000;
+    const subs = [st("a", 15), st("b", 10)];
+    const now = base + 8 * 60000;
+    const proy = computeSituacionProyeccionFinMs(subs, {
+      bloqueInicioAt: base,
+      anchor: { subTareaId: "a", startedAt: base },
+      now,
+      saldoAdelantoMin: 0,
+    });
+    assert.ok(proy != null);
+    assert.ok(proy < base + 25 * 60000);
   });
 });
 

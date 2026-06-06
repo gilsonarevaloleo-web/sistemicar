@@ -1,4 +1,4 @@
-/** IDs de m�dulos vendibles (Planificaci�n + futuros). */
+/** IDs de módulos vendibles (Planificación + futuros). */
 export type ModuleId =
   | "planificacion_base"
   | "soberania_dia"
@@ -10,14 +10,14 @@ export const MODULE_IDS = {
   OPERATIVO: "operativo" as const,
 };
 
-/** Planes de checkout activos (Planificaci�n mensual + Espejo aparte). */
+/** Planes de checkout activos (Planificación mensual + Espejo aparte). */
 export type ActivePlanId =
   | "corazon-sabio"
   | "planificacion_base"
   | "soberania_dia"
   | "operativo";
 
-/** Planes legacy � solo grandfather / webhooks antiguos. */
+/** Planes legacy — solo grandfather / webhooks antiguos. */
 export type LegacyPlanId = "arquitecto" | "soberano_operativo" | "soberano" | "soberania-mental";
 
 export type SubscriptionPlanId = ActivePlanId | LegacyPlanId;
@@ -31,14 +31,14 @@ export interface ModuleAccessInput {
 
 const OWNER_EMAIL = "gilsonarevalo.leo@gmail.com";
 
-/** M�dulos que otorga cada plan legacy (grandfather). */
+/** Módulos que otorga cada plan legacy (grandfather). */
 export const LEGACY_PLAN_MODULES: Record<string, ModuleId[]> = {
   arquitecto: ["planificacion_base", "soberania_dia"],
   soberano_operativo: ["planificacion_base", "soberania_dia", "operativo"],
   soberano: ["planificacion_base", "soberania_dia", "operativo"],
 };
 
-/** M�dulos que otorga cada plan nuevo en checkout. */
+/** Módulos que otorga cada plan nuevo en checkout. */
 export const PLAN_MODULE_GRANTS: Record<string, ModuleId[]> = {
   planificacion_base: ["planificacion_base"],
   soberania_dia: ["soberania_dia"],
@@ -55,7 +55,7 @@ export function isOwnerEmail(email?: string | null): boolean {
   return email?.toLowerCase() === OWNER_EMAIL;
 }
 
-/** Resuelve el set efectivo de m�dulos activos (explicit + legacy). */
+/** Resuelve el set efectivo de módulos activos (explicit + legacy). */
 export function resolveActiveModules(input: ModuleAccessInput): Set<ModuleId> {
   const set = new Set<ModuleId>();
   if (isOwnerEmail(input.email)) {

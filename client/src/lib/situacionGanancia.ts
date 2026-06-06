@@ -73,3 +73,19 @@ export function nextRetoNumero(prevSc: Vehicle["situacionCronometro"]): number {
   const completados = prevSc?.retosCompletados ?? 0;
   return completados > 0 ? completados + 1 : 1;
 }
+
+/** Meta sellada del reto (fallback a horaFinMs en datos legacy). */
+export function situacionContratoFinMs(
+  sc: Vehicle["situacionCronometro"] | null | undefined
+): number | null {
+  if (!sc) return null;
+  return sc.horaFinContratoMs ?? sc.horaFinMs ?? null;
+}
+
+/** Minutos disponibles para abrir el siguiente reto (tras cerrar bloque). */
+export function bolsaDisponibleSegundoReto(
+  sc: Vehicle["situacionCronometro"] | null | undefined
+): number {
+  if (!sc || sc.activo === true) return 0;
+  return Math.max(0, Math.round(sc.bolsaSegundoRetoMin ?? 0));
+}

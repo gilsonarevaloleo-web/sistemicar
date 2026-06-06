@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SubTarea } from "./persistence.ts";
 import {
+  bolsaDisponibleSegundoReto,
   computeEficienciaSituacionPct,
   computeSituacionBolsaGanancia,
   nextRetoNumero,
   retoSituacionLabel,
+  situacionContratoFinMs,
   sumMinutosEnColaGanancia,
 } from "./situacionGanancia.ts";
 
@@ -50,6 +52,19 @@ describe("situacionGanancia", () => {
   it("computeEficienciaSituacionPct", () => {
     assert.equal(computeEficienciaSituacionPct(10, 40), 20);
     assert.equal(computeEficienciaSituacionPct(0, 40), null);
+  });
+
+  it("situacionContratoFinMs prefiere horaFinContratoMs", () => {
+    assert.equal(
+      situacionContratoFinMs({ activo: true, horaFinMs: 5000, horaFinContratoMs: 9000 }),
+      9000
+    );
+    assert.equal(situacionContratoFinMs({ activo: true, horaFinMs: 5000 }), 5000);
+  });
+
+  it("bolsaDisponibleSegundoReto solo tras cierre", () => {
+    assert.equal(bolsaDisponibleSegundoReto({ activo: true, bolsaSegundoRetoMin: 10 }), 0);
+    assert.equal(bolsaDisponibleSegundoReto({ activo: false, bolsaSegundoRetoMin: 14 }), 14);
   });
 
   it("sumMinutosEnColaGanancia ignora cumplidas", () => {

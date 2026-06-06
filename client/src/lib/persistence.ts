@@ -606,6 +606,8 @@ export interface Vehicle {
   segmentoMontadoId?: string;
   segmentoMontadoNombre?: string;
   segmentosCruzados?: number;
+  /** Voz de cierre por cruce de segmento (entropía-atención) ya disparada. */
+  cruceEntropiaVozAt?: number;
   rendimientoConsciente?: "igual" | "mejor" | "peor";
   recordSugerido?: number;
   tiempoElegido?: number;
@@ -626,6 +628,8 @@ export interface Vehicle {
   situacionCronometro?: {
     activo: boolean;
     horaFinMs?: number;
+    /** Meta sellada del reto (no se mueve al cumplir filas). */
+    horaFinContratoMs?: number;
     bloqueInicioAt?: number;
     /** Suma de PS de profundidad (+5/h de bloque) ya entregados en este vehículo activo. */
     depthBlockPsGranted?: number;
@@ -639,6 +643,8 @@ export interface Vehicle {
     minutosGanadosReto?: number;
     /** Minutos ganados acumulados en todos los retos del vehículo. */
     minutosGanadosSesion?: number;
+    /** Bolsa para abrir el siguiente reto tras «Recibir cierre del bloque». */
+    bolsaSegundoRetoMin?: number;
   } | null;
   /** PS de profundidad por duración real del desglosador de tiempo (sesión); curva progresiva 5→6→8→12… sin tope. */
   desglosadorBloqueDepthPsGranted?: number;
@@ -1247,7 +1253,7 @@ export async function deleteVehicle(userId: string, vehicleId: string): Promise<
 export async function updateVehicle(
   userId: string,
   vehicleId: string,
-  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentoOrigen" | "segmentoId" | "segmentoMontadoId" | "segmentoMontadoNombre" | "segmentosCruzados" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted" | "desglosadorPausa" | "interrupcionActiva" | "excluirDeHistorial" | "vehiculoPadreDesglosadorId">>
+  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentoOrigen" | "segmentoId" | "segmentoMontadoId" | "segmentoMontadoNombre" | "segmentosCruzados" | "cruceEntropiaVozAt" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted" | "desglosadorPausa" | "interrupcionActiva" | "excluirDeHistorial" | "vehiculoPadreDesglosadorId">>
 ): Promise<void> {
   const updateLocally = () => {
     const vehicles = getLocalVehicles().map(v =>

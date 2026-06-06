@@ -71,12 +71,28 @@ describe("computeTimelineClockArcs", () => {
     assert.equal(arcs.filter(a => a.kind === "entropia").length, 0);
   });
 
-  it("sin segmentos tras 06:00 no genera rojo", () => {
+  it("sin segmentos tras 06:00 genera entropía en ventana vivida", () => {
     const now = limaAt(2026, 4, 18, 8, 0);
     const arcs = computeTimelineClockArcs({ vehiculos: [], segmentos: [], now });
-    assert.equal(arcs.filter(a => a.kind === "entropia").length, 0);
+    assert.ok(arcs.some(a => a.kind === "entropia"));
     const stats = computeTimelineDayStats({ vehiculos: [], segmentos: [], now });
-    assert.equal(stats.entropiaMin, 0);
+    assert.ok(stats.entropiaMin > 0);
+  });
+
+  it("sin segmentos descanso activo cubre ventana sin entropía", () => {
+    const apertura = limaAt(2026, 4, 18, 6, 0);
+    const now = limaAt(2026, 4, 18, 8, 0);
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "descanso",
+      status: "activo",
+      aperturaAt: apertura,
+    }];
+    const arcs = computeTimelineClockArcs({ vehiculos, segmentos: [], now });
+    assert.equal(arcs.filter(a => a.kind === "entropia").length, 0);
+    const st = computeAnilloEstado({ segmentos: [], vehiculos, now });
+    assert.equal(st.mode, "conquista");
+    assert.equal(st.centerGuide, "Recarga consciente activa");
   });
 
   it("hueco planificado sin vehículo genera entropía roja", () => {
@@ -209,10 +225,11 @@ describe("computeTimelineClockArcs", () => {
 });
 
 describe("computeAnilloEstado", () => {
-  it("modo libre sin segmentos después de 06:00", () => {
+  it("modo entropía sin segmentos después de 06:00 sin flota activa", () => {
     const now = limaAt(2026, 4, 18, 7, 0);
     const st = computeAnilloEstado({ segmentos: [], vehiculos: [], now });
-    assert.equal(st.mode, "libre");
+    assert.equal(st.mode, "entropia");
+    assert.equal(st.sinSegmentos, true);
   });
 
   it("modo libre antes del primer segmento", () => {

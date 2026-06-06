@@ -58,7 +58,6 @@ import ApiCheckout from "@/pages/api-checkout";
 import ApiDocs from "@/pages/api-docs";
 import NotFound from "@/pages/not-found";
 import { CierreJornadaModal } from "@/components/cierre-jornada-modal";
-import { CentinelaEngine } from "@/components/centinela-engine";
 import { useSovereigntyToast } from "@/components/sovereignty-toast";
 import { DoctorIAChat } from "@/components/doctor-ia-chat";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
@@ -396,7 +395,6 @@ function App() {
         <Router />
       </AppErrorBoundary>
       <DoctorIAChat />
-      <CentinelaEngine />
       <CierreJornadaModal />
       <SovereigntyListener />
       <Toaster />

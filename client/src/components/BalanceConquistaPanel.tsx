@@ -31,8 +31,6 @@ function StatCell({
 }
 
 export default function BalanceConquistaPanel({ balance }: BalanceConquistaPanelProps) {
-  const centinelaSegmentoCero =
-    balance.segmentos.length > 0 && balance.segmentos.every(s => s.entropiaMin <= 0);
   const resumenEntropiaCero = balance.entropiaMin <= 0;
 
   return (
@@ -47,7 +45,7 @@ export default function BalanceConquistaPanel({ balance }: BalanceConquistaPanel
             Balance de Conquista
           </p>
           <p className="text-[8px] text-slate-500 mt-0.5 leading-snug">
-            Conquista = trabajo consciente · Entropía = huecos y Centinela · Vacío = plan sin cubrir
+            Conquista = trabajo consciente · Entropía = huecos sin vehículo · Vacío = plan sin cubrir
           </p>
         </div>
         <span className="text-[8px] text-slate-500 font-mono">
@@ -65,7 +63,7 @@ export default function BalanceConquistaPanel({ balance }: BalanceConquistaPanel
         <StatCell
           label="Entropía"
           value={formatMinutosJornada(balance.entropiaMin)}
-          sub={`${balance.entropiaPct}% del plan · huecos + Centinela`}
+          sub={`${balance.entropiaPct}% del plan · huecos`}
           color={BLOOD}
         />
         <StatCell
@@ -78,18 +76,13 @@ export default function BalanceConquistaPanel({ balance }: BalanceConquistaPanel
 
       {resumenEntropiaCero && (
         <p className="text-[8px] text-slate-500 leading-relaxed px-0.5" data-testid="cierre-nota-entropia-cero">
-          Entropía en cero: no hubo huecos relevantes ni tiempo del vehículo Centinela hoy. Es habitual si trabajaste con vehículos conscientes la mayor parte del día.
+          Entropía en cero: no hubo huecos relevantes en segmentos planificados. Es habitual si trabajaste con vehículos conscientes la mayor parte del día.
         </p>
       )}
 
       {balance.segmentos.length > 0 && (
         <div className="space-y-2 pt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
           <p className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Por segmento (minutos)</p>
-          {centinelaSegmentoCero && (
-            <p className="text-[8px] text-slate-500 leading-relaxed" data-testid="cierre-nota-centinela-cero">
-              La columna Centinela cuenta solo el vehículo automático «Modo Centinela» en ese horario. Si todo sale 0 min, es normal: hoy no se activó o no estuvo abierto en esos bloques (no es entropía de puerta ni de segmento).
-            </p>
-          )}
           {balance.segmentos.map((seg, i) => (
             <div
               key={`${seg.nombre}-${i}`}
@@ -111,7 +104,7 @@ export default function BalanceConquistaPanel({ balance }: BalanceConquistaPanel
                   </p>
                 </div>
                 <div>
-                  <p className="text-[6px] uppercase text-slate-600">Centinela</p>
+                  <p className="text-[6px] uppercase text-slate-600">Entropía</p>
                   <p className="text-xs font-black tabular-nums" style={{ color: BLOOD }}>
                     {formatMinutosJornada(seg.entropiaMin)}
                   </p>
