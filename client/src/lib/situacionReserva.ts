@@ -102,6 +102,34 @@ export function sortReservasTacticas(items: SituacionReservaItem[]): SituacionRe
 
 const STORAGE_KEY = "sistemicar_situacion_reserva";
 export const SITUACION_RESERVA_EVENT = "sistemicar-situacion-reserva-changed";
+/** Ventana para emparejar un apunte local provisional con su doc en Firebase. */
+const RESERVA_PENDING_MATCH_MS = 20_000;
+
+function reservaPendingMatch(
+  local: SituacionReservaItem,
+  remote: SituacionReservaItem
+): boolean {
+  if (local.userId !== remote.userId) return false;
+  if (local.texto.trim() !== remote.texto.trim()) return false;
+  return Math.abs((local.reservadaAt ?? 0) - (remote.reservadaAt ?? 0)) < RESERVA_PENDING_MATCH_MS;
+}
+
+/** Elimina duplicados por id y apuntes locales `reserva_*` ya reflejados en Firebase. */
+export function dedupeReservasItems(items: SituacionReservaItem[]): SituacionReservaItem[] {
+  const byId = new Map<string, SituacionReservaItem>();
+  for (const item of items) {
+    const prev = byId.get(item.id);
+    if (!prev || (item.reservadaAt ?? 0) >= (prev.reservadaAt ?? 0)) {
+      byId.set(item.id, item);
+    }
+  }
+  const list = Array.from(byId.values());
+  const firebaseRows = list.filter(i => !i.id.startsWith("reserva_"));
+  return list.filter(item => {
+    if (!item.id.startsWith("reserva_")) return true;
+    return !firebaseRows.some(remote => reservaPendingMatch(item, remote));
+  });
+}
 
 function normalizeItem(raw: SituacionReservaItem): SituacionReservaItem {
   const base = {
@@ -127,6 +155,7 @@ function isLocalOnlyReservaId(reservaId: string): boolean {
 }
 
 function saveAllLocalReserva(items: SituacionReservaItem[]): boolean {
+  items = dedupeReservasItems(items);
   const persist = (list: SituacionReservaItem[]) => {
     const ok = safeSetItem(STORAGE_KEY, JSON.stringify(list));
     if (ok) window.dispatchEvent(new CustomEvent(SITUACION_RESERVA_EVENT));
@@ -159,9 +188,10 @@ function mergeReservaRemoteWithLocalPending(
     i =>
       i.estado === "activa" &&
       !remoteIds.has(i.id) &&
-      (i.id.startsWith("reserva_") || now - (i.reservadaAt ?? 0) < pendingMs)
+      !remote.some(r => reservaPendingMatch(i, r)) &&
+      (i.id.startsWith("reserva_") ? now - (i.reservadaAt ?? 0) < pendingMs : now - (i.reservadaAt ?? 0) < pendingMs)
   );
-  return sortReservasTacticas([...remote, ...localPending]);
+  return dedupeReservasItems(sortReservasTacticas([...remote, ...localPending]));
 }
 
 function buildFirestoreReservaPayload(
@@ -291,10 +321,13 @@ function syncAddReservaToFirebase(
           estado: created.estado,
         })
       );
-      const withFirebaseId = getAllLocalReserva().map(i =>
-        i.id === tempId && i.userId === userId ? { ...i, id: docRef.id } : i
+      const withoutTemp = getAllLocalReserva().filter(
+        i => !(i.id === tempId && i.userId === userId)
       );
-      saveAllLocalReserva(withFirebaseId);
+      const withoutDupFirebase = withoutTemp.filter(
+        i => !(i.id === docRef.id && i.userId === userId)
+      );
+      saveAllLocalReserva([{ ...created, id: docRef.id }, ...withoutDupFirebase]);
     } catch (error) {
       console.error("[addSituacionReserva] Firebase sync en segundo plano:", error);
     }
