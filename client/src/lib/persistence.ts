@@ -765,6 +765,8 @@ export function mergeMissingLocalActives(sorted: Vehicle[], nowMs = Date.now()):
     if (v.clientRequestId && firebaseClientRequestIds.has(v.clientRequestId)) return false;
     if (wasVehicleRecentlyClosed(v.id)) return false;
     if (isOrphanDesglosadorInterrupt(v, snapshotById)) return false;
+    const snap = snapshotById.get(v.id);
+    if (snap && snap.status !== "activo") return false;
     return shouldPreserveLocalActivo(v, nowMs);
   });
   if (missing.length === 0) return sorted;
@@ -797,8 +799,11 @@ export function saveLocalVehicles(vehicles: Vehicle[]): boolean {
     vehicles.map(v => v.clientRequestId).filter(Boolean)
   );
   const nowMs = Date.now();
+  const incomingById = new Map(vehicles.map(v => [v.id, v]));
   const preserved = current.filter(v => {
     if (v.status !== "activo" || v.autoVerdad) return false;
+    const incoming = incomingById.get(v.id);
+    if (incoming && incoming.status !== "activo") return false;
     if (newIds.has(v.id)) return false;
     if (v.clientRequestId && newClientRequestIds.has(v.clientRequestId)) return false;
     if (wasVehicleRecentlyClosed(v.id)) return false;
@@ -1021,8 +1026,24 @@ export function subscribeToVehicles(
 
       const journalStartMs = getJournalDayStartMs();
       const thirtyDaysAgoMs = journalStartMs - 30 * 24 * 60 * 60 * 1000;
+      const existingLocalForFilter = getLocalVehicles();
+      const localById = new Map(existingLocalForFilter.map(v => [v.id, v]));
 
-      const activos = data.filter(v => v.status === "activo" && !wasVehicleRecentlyClosed(v.id));
+      const activos = data.filter(v => {
+        if (v.status !== "activo") return false;
+        if (wasVehicleRecentlyClosed(v.id)) return false;
+        const localV = localById.get(v.id);
+        if (localV && localV.status !== "activo") return false;
+        return true;
+      });
+
+      const cerradosLocalesPendientesSync = data
+        .filter(v => {
+          if (v.status !== "activo" || v.autoVerdad) return false;
+          const localV = localById.get(v.id);
+          return !!localV && localV.status !== "activo";
+        })
+        .map(v => mergeActiveVehicleSessionState(v, localById.get(v.id)));
 
       const completadosRecientes = data.filter(v => {
         if (v.status !== "cumplido" && v.status !== "archivado") return false;
@@ -1043,7 +1064,7 @@ export function subscribeToVehicles(
         return cierreMs >= journalStartMs;
       });
 
-      const merged = [...activos, ...completadosRecientes, ...centinelasCerradosHoy];
+      const merged = [...activos, ...cerradosLocalesPendientesSync, ...completadosRecientes, ...centinelasCerradosHoy];
       const sorted = merged.sort((a, b) => {
         const aTime = a.createdAt?.getTime?.() || a.aperturaAt || 0;
         const bTime = b.createdAt?.getTime?.() || b.aperturaAt || 0;

@@ -139,7 +139,7 @@ import {
   isOrphanDesglosadorInterrupt,
   reconcileGhostActiveVehicles,
 } from "@/lib/persistence";
-import { filterVehiclesForEntropy, shouldPreserveLocalActivo } from "@/lib/ghostVehicleEngine";
+import { filterVehiclesForEntropy, isGhostActiveVehicle, shouldPreserveLocalActivo } from "@/lib/ghostVehicleEngine";
 import {
   computeDesglosadorSubAwardPS,
   DESGLOSADOR_CYCLE_CLOSE_BASE_PS,
@@ -1467,14 +1467,18 @@ export default function Planeacion() {
       const mergedIds = new Set(merged.map(v => v.id));
       const mergedById = new Map(merged.map(v => [v.id, v]));
       const nowMs = Date.now();
+      const localClosedIds = new Set(
+        getLocalVehicles().filter(lv => lv.status !== "activo").map(lv => lv.id)
+      );
       const rescueFrom = (list: Vehicle[]) =>
         list.filter(
           v =>
             v.status === "activo" &&
             !v.autoVerdad &&
             !mergedIds.has(v.id) &&
+            !localClosedIds.has(v.id) &&
             !(v.clientRequestId && merged.some(m => m.clientRequestId === v.clientRequestId)) &&
-            !closingInProgressRef.current.has(v.id) &&
+            !isCloseBlocked(v.id) &&
             !wasVehicleRecentlyClosed(v.id) &&
             !isOrphanDesglosadorInterrupt(v, mergedById) &&
             shouldPreserveLocalActivo(v, nowMs)
@@ -1877,7 +1881,23 @@ export default function Planeacion() {
 
   const vehiclesRef = useRef(vehicles);
   const desglosadorSyncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const closingInProgressRef = useRef<Set<string>>(new Set());
+  const closingInProgressRef = useRef<Map<string, number>>(new Map());
+  const CLOSING_STALE_MS = 45_000;
+  const isCloseBlocked = (vehicleId: string): boolean => {
+    const started = closingInProgressRef.current.get(vehicleId);
+    if (started == null) return false;
+    if (Date.now() - started > CLOSING_STALE_MS) {
+      closingInProgressRef.current.delete(vehicleId);
+      return false;
+    }
+    return true;
+  };
+  const beginClose = (vehicleId: string) => {
+    closingInProgressRef.current.set(vehicleId, Date.now());
+  };
+  const endClose = (vehicleId: string) => {
+    closingInProgressRef.current.delete(vehicleId);
+  };
   const pausaInterrupcionLockRef = useRef<string | null>(null);
   vehiclesRef.current = vehicles;
 
@@ -1933,7 +1953,7 @@ export default function Planeacion() {
       v =>
         isOrphanDesglosadorInterrupt(v, byId) &&
         !orphanInterruptSweepRef.current.has(v.id) &&
-        !closingInProgressRef.current.has(v.id)
+        !isCloseBlocked(v.id)
     );
     if (orphans.length === 0) return;
     const now = Date.now();
@@ -3039,10 +3059,10 @@ export default function Planeacion() {
 
   const handleDescansoClose = async (vehicleId: string, closingStatus: "cumplido" | "archivado", etiqueta: "recuperado" | "parcial" | "fragmentado", nota: string, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => {
     if (!user) return;
-    if (closingInProgressRef.current.has(vehicleId)) return;
-    closingInProgressRef.current.add(vehicleId);
+    if (isCloseBlocked(vehicleId)) return;
+    beginClose(vehicleId);
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
-    if (!vehicle) { closingInProgressRef.current.delete(vehicleId); return; }
+    if (!vehicle) { endClose(vehicleId); return; }
 
     const aperturaAt = vehicle.aperturaAt || Date.now();
     const cierreAt = Date.now();
@@ -3079,10 +3099,11 @@ export default function Planeacion() {
 
     try {
       await updateVehicle(user.uid, vehicleId, optimisticClose);
+      await updateVehicleStatus(user.uid, vehicleId, closingStatus);
     } catch {
       /* updateVehicle ya persiste en local si Firebase falla */
     } finally {
-      closingInProgressRef.current.delete(vehicleId);
+      endClose(vehicleId);
     }
     recordDescansoCuerpo(vehicleId);
     void safeAwardPS(psTotal, `Descanso cerrado (${ETIQUETA_LABELS[etiqueta]}): ${vehicle.titulo}`);
@@ -3116,8 +3137,11 @@ export default function Planeacion() {
     if (!user) return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) { console.warn("[handleFlotaStatusChange] Vehículo no encontrado:", vehicleId); return; }
-    if (closingInProgressRef.current.has(vehicleId)) return;
-    closingInProgressRef.current.add(vehicleId);
+    if (isCloseBlocked(vehicleId)) {
+      toast.info("Cierre en curso…", { description: "Espera unos segundos y reintenta.", duration: 2500 });
+      return;
+    }
+    beginClose(vehicleId);
 
     const tipoFlota = vehicle.tipoFlota;
     const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || Date.now();
@@ -3152,16 +3176,11 @@ export default function Planeacion() {
     if (!vehicle.autoVerdad) triggerConquistaPulse();
     if (intensidadEnergeticaFin) recordVehiculoCierre(vehicleId, intensidadEnergeticaFin);
 
-    if (vehicle.vehiculoPadreDesglosadorId) {
-      try {
-        await updateVehicle(user.uid, vehicleId, {
-          ...optimisticClose,
-          ...situacionCloseExtras,
-        });
-        await updateVehicleStatus(user.uid, vehicleId, status);
-      } catch (e) {
-        console.warn("[handleFlotaStatusChange] persist interrupción:", e);
-      }
+    try {
+      await updateVehicle(user.uid, vehicleId, { ...optimisticClose, status });
+      await updateVehicleStatus(user.uid, vehicleId, status);
+    } catch (e) {
+      console.warn("[handleFlotaStatusChange] persist anticipado:", e);
     }
 
     // Helper: fire-and-forget (no await) — no bloqueamos la UI
@@ -3327,16 +3346,83 @@ export default function Planeacion() {
     } catch (err: any) {
       console.error("[handleFlotaStatusChange] ERROR:", err);
     } finally {
-      closingInProgressRef.current.delete(vehicleId);
+      endClose(vehicleId);
     }
+  };
+
+  const forceCloseVehicle = async (
+    vehicleId: string,
+    status: "cumplido" | "archivado" = "archivado"
+  ) => {
+    if (!user) return;
+    const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
+    if (!vehicle || vehicle.status !== "activo") return;
+    notifyVehicleClosed(vehicleId);
+    const cierreAt = Date.now();
+    const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || cierreAt;
+    const duracionFinal = Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
+    const patch = {
+      status,
+      cierreAt,
+      duracionFinal,
+      cierreManual: status === "cumplido",
+      interrupcionActiva: false,
+      desglosadorPausa: undefined,
+      situacionCronometro: null as const,
+      situacionCupoAnchor: null as const,
+    };
+    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...patch } : v)));
+    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...patch } : v));
+    saveLocalVehicles(vehiclesRef.current);
+    try {
+      await updateVehicle(user.uid, vehicleId, patch);
+      await updateVehicleStatus(user.uid, vehicleId, status);
+    } catch (e) {
+      console.warn("[forceCloseVehicle]", vehicleId, e);
+    }
+  };
+
+  const handleEmergencyArchiveStuckActives = async () => {
+    if (!user) return;
+    const nowMs = Date.now();
+    const dayStartMs = getJournalDayStartMs(nowMs);
+    const byId = new Map(vehiclesRef.current.map(v => [v.id, v]));
+    const actives = vehiclesRef.current.filter(v => v.status === "activo" && !v.autoVerdad);
+    if (actives.length === 0) return;
+    const targets = actives.filter(
+      v =>
+        isGhostActiveVehicle(v, nowMs, dayStartMs, byId) ||
+        isOrphanDesglosadorInterrupt(v, byId) ||
+        actives.length >= 5
+    );
+    if (targets.length === 0) return;
+    let closed = 0;
+    for (const v of targets) {
+      const subs = v.subVehiculos || [];
+      const desglosadorListo =
+        v.tipoReloj === "desglosador" &&
+        subs.length > 0 &&
+        subs.every(s => s.status === "cumplido" || s.status === "fallado");
+      if (desglosadorListo) {
+        await handleDesglosadorGlobalClose(v.id, subs);
+      } else {
+        await forceCloseVehicle(v.id, "archivado");
+      }
+      closed++;
+    }
+    toast.success(`${closed} vehículo(s) archivado(s)`, {
+      description: "Sesiones atascadas liberadas. Revisa el historial.",
+      style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+      duration: 5000,
+    });
   };
 
   const handleInvestigadorClose = async (vehicleId: string, cumplido: boolean, cantidadRealizada: number, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => {
     if (!user) return;
-    if (closingInProgressRef.current.has(vehicleId)) return;
-    closingInProgressRef.current.add(vehicleId);
+    if (isCloseBlocked(vehicleId)) return;
+    beginClose(vehicleId);
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
-    if (!vehicle) { closingInProgressRef.current.delete(vehicleId); return; }
+    if (!vehicle) { endClose(vehicleId); return; }
 
     notifyVehicleClosed(vehicleId);
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
@@ -3431,7 +3517,7 @@ export default function Planeacion() {
         duration: 5000,
       });
     } finally {
-      closingInProgressRef.current.delete(vehicleId);
+      endClose(vehicleId);
     }
   };
 
@@ -3752,15 +3838,18 @@ export default function Planeacion() {
     rutaDeclaradaGlobal?: RutaBandaId[]
   ) => {
     if (!user) return;
-    if (closingInProgressRef.current.has(vehicleId)) return;
-    closingInProgressRef.current.add(vehicleId);
+    if (isCloseBlocked(vehicleId)) {
+      toast.info("Cierre en curso…", { description: "Espera unos segundos y reintenta.", duration: 2500 });
+      return;
+    }
+    beginClose(vehicleId);
     const pendingSubSync = desglosadorSyncTimersRef.current.get(vehicleId);
     if (pendingSubSync) {
       clearTimeout(pendingSubSync);
       desglosadorSyncTimersRef.current.delete(vehicleId);
     }
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
-    if (!vehicle) { closingInProgressRef.current.delete(vehicleId); return; }
+    if (!vehicle) { endClose(vehicleId); return; }
     const cierreAt = Date.now();
     const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || 0;
     const duracionFinal = aperturaAt > 0 ? Math.round((cierreAt - aperturaAt) / 60000) : 0;
@@ -3957,7 +4046,7 @@ export default function Planeacion() {
       console.error("[desglosadorGlobalClose] Error:", err);
       toast.error("Error al cerrar ciclo. El cierre local se conservó; reintenta si hace falta.");
     } finally {
-      closingInProgressRef.current.delete(vehicleId);
+      endClose(vehicleId);
     }
   };
 
@@ -6887,6 +6976,25 @@ export default function Planeacion() {
               </div>
             </motion.div>
 
+            {activeVehicles.length >= 5 && (
+              <div
+                className="mb-3 p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center gap-2"
+                style={{ backgroundColor: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.35)" }}
+              >
+                <p className="text-[10px] text-red-200/90 flex-1 leading-snug">
+                  Tienes <span className="font-black">{activeVehicles.length}</span> vehículos activos. Si no puedes cerrarlos uno a uno, libera las sesiones atascadas.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleEmergencyArchiveStuckActives()}
+                  className="shrink-0 px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider"
+                  style={{ backgroundColor: "rgba(239,68,68,0.2)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.45)" }}
+                  data-testid="button-emergency-archive-stuck"
+                >
+                  Archivar atascados
+                </button>
+              </div>
+            )}
             {activeVehicles.length > 0 ? (
               <div ref={flotaActivosRef} className="scroll-mt-4">
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length} defaultOpen>
