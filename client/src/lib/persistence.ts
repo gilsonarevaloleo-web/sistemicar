@@ -29,8 +29,13 @@ export {
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
   isOrphanDesglosadorInterrupt,
+  archiveOrphanDesglosadorInterrupts,
 } from "./situacionSessionMerge";
-import { mergeActiveVehicleSessionState, isOrphanDesglosadorInterrupt } from "./situacionSessionMerge";
+import {
+  mergeActiveVehicleSessionState,
+  isOrphanDesglosadorInterrupt,
+  archiveOrphanDesglosadorInterrupts,
+} from "./situacionSessionMerge";
 import { getJournalDateString, getJournalDayStartMs, getNextJournalDayStartMs } from "./segmentTime";
 import {
   isGhostActiveVehicle,
@@ -497,6 +502,14 @@ export interface SubTarea {
   cerradaAt?: number;
   /** Minutos ganados acumulados (chip dopamina en cola; no infla cupo base). */
   minutosGanadosAcum?: number;
+  /** Proyecto/centro destino (desde Imán de pensamientos). */
+  proyectoId?: string;
+  /** Reserva del imán que originó esta sub. */
+  origenImanId?: string;
+  /** Paso 1–3 de la ruta mental al capturar en el nido. */
+  rutaSeguimientoPaso?: 1 | 2 | 3;
+  /** Número correlativo en el proyecto al cumplir (anti-miopía). */
+  pasoEjecutadoNumero?: number;
 }
 
 export interface SubVehiculo {
@@ -1184,11 +1197,8 @@ export function subscribeToVehicles(
         wasVehicleRecentlyClosed
       );
 
-      // Drop orphan desglosador interrupts (parent no longer paused) so they do not block Centinela.
-      {
-        const byId = new Map(sortedWithSubs.map(v => [v.id, v]));
-        sortedWithSubs = sortedWithSubs.filter(v => !isOrphanDesglosadorInterrupt(v, byId));
-      }
+      // Archiva interrupciones huérfanas (no las elimina — deben aparecer en historial).
+      sortedWithSubs = archiveOrphanDesglosadorInterrupts(sortedWithSubs);
 
       // Persist the merged result locally (always save the fullest result)
       if (sortedWithSubs.length > 0) {
@@ -2899,6 +2909,84 @@ export async function awardSovereigntyPoints(
   }));
 
   return { newTotal: getLocalProgression(userId).sovereigntyPoints || 0 };
+}
+
+/** Resta PS (penalización). No baja el total por debajo de 0. */
+export async function deductSovereigntyPoints(
+  userId: string,
+  amount: number,
+  source?: string
+): Promise<{ newTotal: number; deducted: number }> {
+  const roundedAmount = Math.max(0, Math.round(amount));
+  if (roundedAmount <= 0) {
+    return { newTotal: getLocalProgression(userId).sovereigntyPoints || 0, deducted: 0 };
+  }
+
+  const progBefore = getLocalProgression(userId);
+  const current = progBefore.sovereigntyPoints || 0;
+  const deducted = Math.min(roundedAmount, current);
+  const newTotal = Math.max(0, current - deducted);
+
+  const logEntry: SovereigntyPointsLog = {
+    id: `sp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    amount: -deducted,
+    source: source || "Penalización",
+    timestamp: new Date(),
+  };
+
+  const logs = getLocalSPLog(userId);
+  logs.unshift(logEntry);
+  try {
+    persistSpLogWithPrune(userId, logs);
+  } catch (error) {
+    console.error("[deductSovereigntyPoints] No se pudo persistir SP log (local):", error);
+  }
+  try {
+    saveLocalProgression({ ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
+    backupToLocal("progression", { ...progBefore, userId, sovereigntyPoints: newTotal, updatedAt: new Date() });
+  } catch (error) {
+    console.error("[deductSovereigntyPoints] No se pudo persistir progresión (local):", error);
+  }
+
+  if (isFirebaseConfigured() && db) {
+    try {
+      const path = getPrivatePath(userId, "sovereigntyPointsLog");
+      await addDoc(collection(db, path), {
+        ...logEntry,
+        timestamp: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("Error saving SP deduction log to Firebase:", error);
+    }
+  }
+
+  if (isFirebaseConfigured() && db && deducted > 0) {
+    try {
+      const { updateDoc, getDocs, increment } = await import("firebase/firestore");
+      const pathProg = getPrivatePath(userId, "progression");
+      const snap = await getDocs(query(collection(db, pathProg)));
+      if (snap.empty) {
+        await updateProgression(userId, { sovereigntyPoints: newTotal });
+      } else {
+        const latest = pickLatestProgressionDoc(snap.docs);
+        const targetId = latest?.id ?? snap.docs[0].id;
+        await updateDoc(doc(db, pathProg, targetId), {
+          sovereigntyPoints: increment(-deducted),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error("[deductSovereigntyPoints] Error actualizando progresión:", error);
+    }
+  }
+
+  window.dispatchEvent(
+    new CustomEvent("sovereignty-points-awarded", {
+      detail: { amount: -deducted, source, newTotal: getLocalProgression(userId).sovereigntyPoints || 0 },
+    })
+  );
+
+  return { newTotal: getLocalProgression(userId).sovereigntyPoints || 0, deducted };
 }
 
 // Calcular inicio del día en Lima (UTC-5) - Función helper
@@ -5164,6 +5252,8 @@ export interface SegmentoV5 {
   activadoAt?: number; // timestamp when activated
   cerradoAt?: number; // timestamp when closed
   puertaTiming?: "antes_voz" | "despues_voz";
+  /** Puerta abierta por el sistema tras perder la ventana manual (entropía de atención). */
+  puertaSistema?: boolean;
   vozDisparadaAt?: number;
   reflexion?: string;
   centinelaEnabled?: boolean; // undefined/true = activo (backward compat); false = desactivado

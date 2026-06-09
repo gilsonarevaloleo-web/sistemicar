@@ -46,6 +46,27 @@ describe("computeAtencionPanoramicaDia", () => {
     expect(r.ratioAntesVoz).toBe(50);
   });
 
+  it("puerta sistema activa cuenta como puerta perdida", () => {
+    const { start } = segmentWindowMs("09:00", "09:30", dayStart);
+    const r = computeAtencionPanoramicaDia({
+      segmentos: [
+        seg({
+          id: "y",
+          estado: "activo",
+          activadoAt: start + 6 * 60000,
+          puertaSistema: true,
+          puertaTiming: "despues_voz",
+          horaFin: "09:30",
+        }),
+      ],
+      nowMs: start + 30 * 60000,
+      dayStartMs: dayStart,
+    });
+    expect(r.puertasPerdidas).toBe(1);
+    expect(r.puertasAbiertas).toBe(1);
+    expect(atencionBadgeLabel(r.segmentos[0]!)).toBe("—");
+  });
+
   it("puerta perdida en entropía sin activadoAt", () => {
     const { end } = segmentWindowMs("09:00", "09:30", dayStart);
     const r = computeAtencionPanoramicaDia({

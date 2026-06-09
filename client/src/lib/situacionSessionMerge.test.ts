@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import type { SubTarea, Vehicle } from "./persistence.ts";
 import type { SubVehiculo } from "./persistence.ts";
 import {
+  archiveOrphanDesglosadorInterrupts,
+  clearStuckDesglosadorPause,
   isOrphanDesglosadorInterrupt,
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
@@ -70,6 +72,60 @@ describe("isOrphanDesglosadorInterrupt", () => {
       ["i1", interrupt()],
     ]);
     assert.equal(isOrphanDesglosadorInterrupt(interrupt(), byId), false);
+  });
+});
+
+describe("archiveOrphanDesglosadorInterrupts", () => {
+  it("archiva huérfanas en lugar de quitarlas del listado", () => {
+    const parent = {
+      id: "p1",
+      titulo: "Desglose",
+      status: "activo",
+      tipoReloj: "desglosador",
+      interrupcionActiva: false,
+      criterioFin: "tiempo",
+      criterioDetalle: "",
+      ejes: {},
+      tiempoInicio: new Date(),
+      createdAt: new Date(),
+    } as Vehicle;
+    const interrupt = {
+      id: "i1",
+      titulo: "Llamada",
+      status: "activo",
+      vehiculoPadreDesglosadorId: "p1",
+      aperturaAt: Date.now() - 120_000,
+      criterioFin: "circunstancia",
+      criterioDetalle: "Interrupción",
+      ejes: {},
+      tiempoInicio: new Date(),
+      createdAt: new Date(),
+    } as Vehicle;
+    const out = archiveOrphanDesglosadorInterrupts([parent, interrupt], 9_999_999_999);
+    assert.equal(out.length, 2);
+    assert.equal(out.find(v => v.id === "i1")?.status, "archivado");
+    assert.ok(out.find(v => v.id === "i1")?.cierreAt);
+  });
+});
+
+describe("clearStuckDesglosadorPause", () => {
+  it("libera pausa cuando no hay interrupción activa visible", () => {
+    const parent = {
+      id: "p1",
+      titulo: "Desglose",
+      status: "activo",
+      tipoReloj: "desglosador",
+      interrupcionActiva: true,
+      desglosadorPausa: { pausadoAt: 1, subActivoId: "s1", elapsedSecSnapshot: 10 },
+      criterioFin: "tiempo",
+      criterioDetalle: "",
+      ejes: {},
+      tiempoInicio: new Date(),
+      createdAt: new Date(),
+    } as Vehicle;
+    const out = clearStuckDesglosadorPause([parent], () => false);
+    assert.equal(out[0].interrupcionActiva, false);
+    assert.equal(out[0].desglosadorPausa, undefined);
   });
 });
 

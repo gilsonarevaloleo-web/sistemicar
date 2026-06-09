@@ -51,6 +51,15 @@ export interface SituacionReservaItem {
   texto: string;
   reservadaAt: number;
   ruta?: ReservaTacticaRuta;
+  /** Nido: proyecto o centro donde aterriza el pensamiento. */
+  proyectoId?: string;
+  proyectoTitulo?: string;
+  proyectoEtiqueta?: "proyecto" | "centro";
+  /** Segmento del día en que se capturó (opcional). */
+  segmentoId?: string;
+  segmentoNombre?: string;
+  /** Paso 1–3 de la ruta mental activa del proyecto (seguimiento). */
+  rutaSeguimientoPaso?: 1 | 2 | 3;
   origenVehiculoTitulo?: string;
   origenVehiculoId?: string;
   minutosCupo?: number;
@@ -58,6 +67,8 @@ export interface SituacionReservaItem {
   estado: SituacionReservaEstado;
   retomadaAt?: number;
   retomadaEnVehiculoId?: string;
+  /** Número correlativo asignado al ejecutarse en desglosador (fase 3). */
+  pasoEjecutadoNumero?: number;
 }
 
 const RUTA_STORAGE_KEY = "sistemicar-reserva-ruta-default";
@@ -205,6 +216,12 @@ function buildFirestoreReservaPayload(
     minutosCupo?: number | null;
     detalles?: DetalleSubTarea[] | null;
     estado: string;
+    proyectoId?: string | null;
+    proyectoTitulo?: string | null;
+    proyectoEtiqueta?: "proyecto" | "centro" | null;
+    segmentoId?: string | null;
+    segmentoNombre?: string | null;
+    rutaSeguimientoPaso?: 1 | 2 | 3 | null;
   }
 ): Record<string, unknown> {
   const doc: Record<string, unknown> = {
@@ -219,6 +236,12 @@ function buildFirestoreReservaPayload(
   if (payload.origenVehiculoId) doc.origenVehiculoId = payload.origenVehiculoId;
   if (payload.minutosCupo != null && payload.minutosCupo > 0) doc.minutosCupo = payload.minutosCupo;
   if (payload.detalles?.length) doc.detalles = payload.detalles;
+  if (payload.proyectoId) doc.proyectoId = payload.proyectoId;
+  if (payload.proyectoTitulo) doc.proyectoTitulo = payload.proyectoTitulo;
+  if (payload.proyectoEtiqueta) doc.proyectoEtiqueta = payload.proyectoEtiqueta;
+  if (payload.segmentoId) doc.segmentoId = payload.segmentoId;
+  if (payload.segmentoNombre) doc.segmentoNombre = payload.segmentoNombre;
+  if (payload.rutaSeguimientoPaso) doc.rutaSeguimientoPaso = payload.rutaSeguimientoPaso;
   return doc;
 }
 
@@ -264,6 +287,13 @@ export function subscribeToSituacionReserva(
             estado: row.estado ?? "activa",
             retomadaAt: row.retomadaAt,
             retomadaEnVehiculoId: row.retomadaEnVehiculoId,
+            proyectoId: row.proyectoId,
+            proyectoTitulo: row.proyectoTitulo,
+            proyectoEtiqueta: row.proyectoEtiqueta,
+            segmentoId: row.segmentoId,
+            segmentoNombre: row.segmentoNombre,
+            rutaSeguimientoPaso: row.rutaSeguimientoPaso,
+            pasoEjecutadoNumero: row.pasoEjecutadoNumero,
           });
         });
         const merged = mergeReservaRemoteWithLocalPending(userId, data);
@@ -319,6 +349,12 @@ function syncAddReservaToFirebase(
           minutosCupo: item.minutosCupo ?? null,
           detalles: item.detalles ?? null,
           estado: created.estado,
+          proyectoId: item.proyectoId ?? null,
+          proyectoTitulo: item.proyectoTitulo ?? null,
+          proyectoEtiqueta: item.proyectoEtiqueta ?? null,
+          segmentoId: item.segmentoId ?? null,
+          segmentoNombre: item.segmentoNombre ?? null,
+          rutaSeguimientoPaso: item.rutaSeguimientoPaso ?? null,
         })
       );
       const withoutTemp = getAllLocalReserva().filter(
@@ -355,6 +391,12 @@ export async function addSituacionReserva(
     ...(item.origenVehiculoId ? { origenVehiculoId: item.origenVehiculoId } : {}),
     ...(item.minutosCupo != null && item.minutosCupo > 0 ? { minutosCupo: item.minutosCupo } : {}),
     ...(item.detalles?.length ? { detalles: item.detalles } : {}),
+    ...(item.proyectoId ? { proyectoId: item.proyectoId } : {}),
+    ...(item.proyectoTitulo ? { proyectoTitulo: item.proyectoTitulo } : {}),
+    ...(item.proyectoEtiqueta ? { proyectoEtiqueta: item.proyectoEtiqueta } : {}),
+    ...(item.segmentoId ? { segmentoId: item.segmentoId } : {}),
+    ...(item.segmentoNombre ? { segmentoNombre: item.segmentoNombre } : {}),
+    ...(item.rutaSeguimientoPaso ? { rutaSeguimientoPaso: item.rutaSeguimientoPaso } : {}),
   };
 
   const withoutDup = getAllLocalReserva().filter(i => i.id !== tempId);
@@ -388,6 +430,30 @@ export async function updateSituacionReservaEstado(
         });
       } catch (error) {
         console.error("[updateSituacionReservaEstado] Firebase sync:", error);
+      }
+    })();
+  }
+  return true;
+}
+
+export async function markImanReservaEjecutada(
+  userId: string,
+  reservaId: string,
+  pasoEjecutadoNumero: number
+): Promise<boolean> {
+  const all = getAllLocalReserva().map(i =>
+    i.id === reservaId && i.userId === userId ? { ...i, pasoEjecutadoNumero } : i
+  );
+  const localSaved = saveAllLocalReserva(all);
+  if (!localSaved) return false;
+
+  if (isFirebaseConfigured() && db && !isLocalOnlyReservaId(reservaId)) {
+    void (async () => {
+      try {
+        const path = getPrivatePath(userId, "situacionReserva");
+        await updateDoc(doc(db, path, reservaId), { pasoEjecutadoNumero });
+      } catch (error) {
+        console.error("[markImanReservaEjecutada] Firebase sync:", error);
       }
     })();
   }

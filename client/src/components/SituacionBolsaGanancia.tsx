@@ -1,7 +1,6 @@
 import { motion } from "framer-motion";
 import { Gem, TrendingUp } from "lucide-react";
 import type { SituacionBolsaGanancia } from "@/lib/situacionGanancia";
-import { retoSituacionCorto } from "@/lib/situacionGanancia";
 
 const CYAN = "#00FFC3";
 const GOLD = "#D4AF37";
@@ -37,9 +36,11 @@ export function SituacionBolsaGananciaPanel({ bolsa, compact = false }: Props) {
             Bolsa de ganancia
           </span>
         </div>
-        <span className="text-[7px] font-bold uppercase tracking-wider shrink-0 text-slate-500">
-          {retoSituacionCorto(bolsa.retoNumero)}
-        </span>
+        {bolsa.minutosGanadosSesion > 0 && (
+          <span className="text-[7px] font-bold uppercase tracking-wider shrink-0 text-slate-500">
+            sesión +{bolsa.minutosGanadosSesion} min
+          </span>
+        )}
       </div>
       <div className="px-2.5 py-2 space-y-1.5">
         <div className="flex items-baseline justify-between gap-2">

@@ -16,7 +16,13 @@ export type SegmentAttentionEvent =
       type: "entropia";
       segId: string;
       nombre: string;
-      reason: "past_end" | "missed_puerta" | "missed_window" | "cruce_sin_cierre";
+      reason: "past_end" | "missed_window" | "cruce_sin_cierre";
+    }
+  | {
+      type: "auto_apertura";
+      segId: string;
+      nombre: string;
+      reason: "missed_puerta";
     }
   | { type: "day_rollover_entropia"; segId: string; nombre: string }
   | { type: "voz_disparada"; segId: string; nombre: string; ordinal: number; total: number };
@@ -98,12 +104,19 @@ export function applySegmentAttentionTick(
       if (isPastPuertaWindow(nowMs, seg.horaInicio, dayStart)) {
         changed = true;
         events.push({
-          type: "entropia",
+          type: "auto_apertura",
           segId: seg.id,
           nombre: seg.nombre,
           reason: "missed_puerta",
         });
-        return { ...seg, estado: "entropia" as const, cerradoAt: nowMs, psGanados: 0 };
+        return {
+          ...seg,
+          estado: "activo" as const,
+          activadoAt: nowMs,
+          puertaTiming: "despues_voz" as const,
+          puertaSistema: true,
+          psGanados: -2,
+        };
       }
       if (seg.horaFin && isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin, PUERTA_MARGIN_MIN, dayStart)) {
         changed = true;

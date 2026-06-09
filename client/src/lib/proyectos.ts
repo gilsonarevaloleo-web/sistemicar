@@ -110,6 +110,8 @@ export interface Proyecto {
   claridadActiva?: RutasMentalesSet;
   /** Oleada / objetivo actual (ej. producción 10 días). */
   oleadaTitulo?: string;
+  /** Pasos ejecutados desde el Imán (subs cumplidas con proyecto vinculado). */
+  pasosEjecutadosTotal?: number;
 }
 
 const PROYECTOS_KEY = "sistemicar_proyectos";
@@ -782,6 +784,19 @@ export async function registrarActividadFlotaEnProyecto(
   list[idx] = updated;
   saveLocalProyectos(userId, list);
   void syncFirestoreProyecto(userId, updated);
+}
+
+/** Incrementa el correlativo de pasos ejecutados al cumplir una sub del Imán. */
+export async function registrarPasoEjecutadoEnProyecto(
+  userId: string,
+  proyectoId: string
+): Promise<{ pasoNumero: number } | null> {
+  const list = getLocalProyectos(userId);
+  const idx = list.findIndex(p => p.id === proyectoId);
+  if (idx === -1) return null;
+  const pasoNumero = (list[idx].pasosEjecutadosTotal ?? 0) + 1;
+  await updateProyecto(userId, proyectoId, { pasosEjecutadosTotal: pasoNumero });
+  return { pasoNumero };
 }
 
 export function subscribeToProyectos(userId: string, onData: () => void): () => void {

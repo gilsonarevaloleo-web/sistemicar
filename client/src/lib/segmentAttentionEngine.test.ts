@@ -26,7 +26,7 @@ function seg(partial: Partial<SegmentoV5> & Pick<SegmentoV5, "id" | "estado">): 
 describe("applySegmentAttentionTick", () => {
   const dayStart = new Date("2026-05-18T05:00:00-05:00").getTime();
 
-  it("entropía si pendiente pierde ventana de puerta (+5 min)", () => {
+  it("auto-apertura si pendiente pierde ventana de puerta (+5 min)", () => {
     const { start } = segmentWindowMs("09:00", "17:00", dayStart);
     const nowMs = start + 6 * 60000;
     const { segmentos, events, changed } = applySegmentAttentionTick(
@@ -35,8 +35,12 @@ describe("applySegmentAttentionTick", () => {
       dayStart
     );
     expect(changed).toBe(true);
-    expect(segmentos[0].estado).toBe("entropia");
-    expect(events[0]).toMatchObject({ type: "entropia", reason: "missed_puerta" });
+    expect(segmentos[0].estado).toBe("activo");
+    expect(segmentos[0].puertaSistema).toBe(true);
+    expect(segmentos[0].psGanados).toBe(-2);
+    expect(segmentos[0].puertaTiming).toBe("despues_voz");
+    expect(segmentos[0].activadoAt).toBe(nowMs);
+    expect(events[0]).toMatchObject({ type: "auto_apertura", reason: "missed_puerta" });
   });
 
   it("no auto-inicia pendiente tras +6 min", () => {
@@ -64,7 +68,7 @@ describe("applySegmentAttentionTick", () => {
     expect(events[0]).toMatchObject({ type: "entropia", reason: "past_end" });
   });
 
-  it("entropía directa si pendiente pasó fin completo sin activar", () => {
+  it("auto-apertura si pendiente pasó fin completo sin activar manualmente", () => {
     const { end } = segmentWindowMs("09:00", "09:05", dayStart);
     const nowMs = end + 6 * 60000;
     const { segmentos, events } = applySegmentAttentionTick(
@@ -72,8 +76,9 @@ describe("applySegmentAttentionTick", () => {
       nowMs,
       dayStart
     );
-    expect(segmentos[0].estado).toBe("entropia");
-    expect(events[0]?.type).toBe("entropia");
+    expect(segmentos[0].estado).toBe("activo");
+    expect(segmentos[0].puertaSistema).toBe(true);
+    expect(events[0]?.type).toBe("auto_apertura");
   });
 
   it("no modifica segmentos ya cerrados manualmente", () => {

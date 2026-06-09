@@ -140,10 +140,12 @@ function repartirProporcional(weights: number[], total: number, minPerSlot = 1):
   return alloc;
 }
 
+/** Reparte minutos ganados en partes iguales entre filas pendientes elegibles. */
 function repartirMinutosGanadosAcum(
   subTareas: SubTarea[],
   minutosGanados: number,
-  excludeSubTareaIds: string[]
+  excludeSubTareaIds: string[],
+  opts?: { includeCupoFijo?: boolean }
 ): SubTarea[] {
   if (minutosGanados <= 0) return subTareas;
   const exclude = new Set(excludeSubTareaIds);
@@ -153,12 +155,15 @@ function repartirMinutosGanadosAcum(
       ({ st }) =>
         situacionFilaCronometroPendiente(st) &&
         !exclude.has(st.id) &&
-        !isCupoFijo(st)
+        (opts?.includeCupoFijo || !isCupoFijo(st))
     );
   if (pendingIdx.length === 0) return subTareas;
 
-  const weights = pendingIdx.map(({ st }) => Math.max(1, st.minutosCupo ?? 1));
-  const bonus = repartirProporcional(weights, minutosGanados, 0);
+  const bonus = repartirProporcional(
+    pendingIdx.map(() => 1),
+    minutosGanados,
+    0
+  );
   const next = [...subTareas];
   pendingIdx.forEach(({ st, i }, k) => {
     next[i] = {
@@ -166,6 +171,24 @@ function repartirMinutosGanadosAcum(
       minutosGanadosAcum: (st.minutosGanadosAcum ?? 0) + bonus[k],
     };
   });
+  return next;
+}
+
+function transferirMinutosAlFoco(
+  subTareas: SubTarea[],
+  focusSubTareaId: string,
+  minutos: number
+): SubTarea[] {
+  if (minutos <= 0) return subTareas;
+  const focoIdx = subTareas.findIndex(st => st.id === focusSubTareaId);
+  if (focoIdx === -1) return subTareas;
+  const foco = subTareas[focoIdx];
+  if (!situacionFilaCronometroPendiente(foco)) return subTareas;
+  const next = [...subTareas];
+  next[focoIdx] = {
+    ...foco,
+    minutosCupo: (foco.minutosCupo ?? 0) + minutos,
+  };
   return next;
 }
 
@@ -466,11 +489,22 @@ export function aplicarTiempoGanadoAlCumplir(
 
   let saldoAdelantoMin = 0;
   if (minutosGanados > 0) {
-    const exclude = [subTareaId, anchor?.subTareaId].filter(Boolean) as string[];
-    const before = JSON.stringify(next);
-    next = repartirMinutosGanadosAcum(next, minutosGanados, exclude);
-    if (JSON.stringify(next) === before) {
-      saldoAdelantoMin = minutosGanados;
+    const eraFoco = anchor?.subTareaId === subTareaId;
+    if (eraFoco) {
+      const before = JSON.stringify(next);
+      next = repartirMinutosGanadosAcum(next, minutosGanados, [subTareaId]);
+      if (JSON.stringify(next) === before) {
+        saldoAdelantoMin = minutosGanados;
+      }
+    } else {
+      const focusId = resolveFocusSubTareaId(subTareas, anchor);
+      const before = JSON.stringify(next);
+      if (focusId) {
+        next = transferirMinutosAlFoco(next, focusId, minutosGanados);
+      }
+      if (JSON.stringify(next) === before) {
+        saldoAdelantoMin = minutosGanados;
+      }
     }
   }
 
@@ -493,6 +527,28 @@ export function extraerSubTareaAReserva(
     subTareas: subTareas.filter(st => st.id !== subTareaId),
     extraido: target,
   };
+}
+
+/** Cierra todas las filas pendientes del cronómetro de un golpe (fallado con tiempo real en foco). */
+export function cerrarCronometroDeGolpe(
+  subTareas: SubTarea[],
+  anchor: { subTareaId: string; startedAt: number } | null | undefined,
+  now: number,
+  bloqueInicioAt: number
+): SubTarea[] {
+  return subTareas.map(st => {
+    if (!st.enDesgloseCronometro || (st.resultadoSituacion ?? "pendiente") !== "pendiente") {
+      return st;
+    }
+    const { duracionRealSec } = calcMinutosGanadosCierre(st, anchor, now, bloqueInicioAt, subTareas);
+    return {
+      ...st,
+      completada: false,
+      resultadoSituacion: "fallado" as const,
+      duracionRealSec,
+      cerradaAt: now,
+    };
+  });
 }
 
 /** Registra cierre fallado con duración real (sin redistribuir tiempo). */
@@ -541,8 +597,11 @@ export function redistribuirMinutosSituacionCronometro(subTareas: SubTarea[], re
   if (flexible.length === 0) return next;
 
   const flexBudget = Math.max(flexible.length, Math.round(remainingMin) - fixedSum);
-  const weights = flexible.map(({ st }) => Math.max(1, st.minutosCupo ?? 1));
-  const alloc = repartirProporcional(weights, flexBudget, 1);
+  const alloc = repartirProporcional(
+    flexible.map(() => 1),
+    flexBudget,
+    1
+  );
 
   flexible.forEach(({ st, i }, k) => {
     next[i] = { ...st, minutosCupo: alloc[k] };

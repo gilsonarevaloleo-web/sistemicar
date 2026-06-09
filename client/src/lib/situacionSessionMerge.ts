@@ -262,3 +262,46 @@ export function isOrphanDesglosadorInterrupt(
   if (parent.status !== "activo") return true;
   return !parent.interrupcionActiva;
 }
+
+/** Archiva interrupciones huérfanas en lugar de eliminarlas del listado (preserva historial). */
+export function archiveOrphanDesglosadorInterrupts(
+  vehicles: Vehicle[],
+  nowMs: number = Date.now()
+): Vehicle[] {
+  const byId = new Map(vehicles.map(v => [v.id, v]));
+  let changed = false;
+  const next = vehicles.map(v => {
+    if (!isOrphanDesglosadorInterrupt(v, byId)) return v;
+    changed = true;
+    const apertura = v.aperturaAt || v.createdAt?.getTime?.() || nowMs;
+    return {
+      ...v,
+      status: "archivado" as const,
+      cierreAt: v.cierreAt ?? nowMs,
+      duracionFinal: v.duracionFinal ?? Math.max(1, Math.round((nowMs - apertura) / 60000)),
+      cierreManual: false,
+    };
+  });
+  return changed ? next : vehicles;
+}
+
+/** Desglosador activo en pausa sin vehículo de interrupción visible — libera la cola de subs. */
+export function clearStuckDesglosadorPause(
+  vehicles: Vehicle[],
+  hasOpenInterrupt: (parentId: string) => boolean
+): Vehicle[] {
+  let changed = false;
+  const next = vehicles.map(v => {
+    if (
+      v.tipoReloj !== "desglosador" ||
+      v.status !== "activo" ||
+      !v.interrupcionActiva ||
+      hasOpenInterrupt(v.id)
+    ) {
+      return v;
+    }
+    changed = true;
+    return { ...v, interrupcionActiva: false, desglosadorPausa: undefined };
+  });
+  return changed ? next : vehicles;
+}

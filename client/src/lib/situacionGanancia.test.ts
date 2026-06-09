@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { SubTarea } from "./persistence.ts";
 import {
   bolsaDisponibleSegundoReto,
+  buildSituacionCronometroCierre,
   computeEficienciaSituacionPct,
   computeSituacionBolsaGanancia,
   nextRetoNumero,
@@ -76,6 +77,25 @@ describe("situacionGanancia", () => {
     const manana = situacionObjetivoHoraToContratoMs("07:30", now);
     assert.equal(manana, new Date(2026, 5, 7, 7, 30, 0).getTime());
     assert.equal(situacionMinutosHastaObjetivoHora("09:30", now), 90);
+  });
+
+  it("buildSituacionCronometroCierre suma ganancia y tiempo restante en meta", () => {
+    const now = 1_000_000;
+    const cierre = buildSituacionCronometroCierre(
+      {
+        activo: true,
+        bloqueInicioAt: now - 20 * 60000,
+        horaFinContratoMs: now + 25 * 60000,
+        minutosGanadosReto: 5,
+        saldoAdelantoMin: 3,
+        retosCompletados: 0,
+        retoNumero: 1,
+      },
+      now
+    );
+    assert.equal(cierre.activo, false);
+    assert.equal(cierre.retosCompletados, 1);
+    assert.equal(cierre.bolsaSegundoRetoMin, 33);
   });
 
   it("sumMinutosEnColaGanancia ignora cumplidas", () => {

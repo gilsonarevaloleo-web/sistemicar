@@ -1,11 +1,8 @@
 import type { FocusBandEvent, FocusBandId } from "./focusBandLedger";
 import type { SegmentoV5, SovereigntyPointsLog, SubTarea, SubVehiculo, Vehicle } from "./persistence";
-import { computeSubCloseVerdict } from "./desglosadorClock";
-import {
-  subDominioFluidoPorDeclaracion,
-  subFriccionPorDeclaracion,
-} from "./rutaSeguimiento";
-import { computeRutaEnfoquePS } from "./rutaEnfoque";
+import { computeSubCloseVerdict, suggestedSec } from "./desglosadorClock";
+import { getRutaTiempoSegmento } from "./rutaSeguimiento";
+import { computeRutaEnfoquePS, type RutaCruzadaSnapshot } from "./rutaEnfoque";
 import type { RutaBandaId } from "./rutaEnfoque";
 import { computeDisciplinaDia } from "./disciplinaEngine";
 import type { DisciplinaDia } from "./disciplinaEngine";
@@ -40,8 +37,14 @@ export type FaseAtencional = "entrenamiento" | "integracion" | "dominio_fluido";
 
 export interface ResistenciaDia {
   subsConRuta: number;
+  /** Subs que objetivamente no cruzaron concentrado/límite (piloto automático). */
   bloquesDominioFluido: number;
+  /** Subs que cruzaron concentrado o límite (contador / ledger). */
   friccionBloques: number;
+  /** Subs que cruzaron concentrado y límite — los 3 tramos de la ruta. */
+  subsEstructuraCompleta: number;
+  /** Subs cerrados en segmento temporal B o C (≥50% del tiempo sugerido). */
+  subsPersistenciaBC: number;
   subsConGanancia: number;
   gananciaTiempoSeg: number;
   indiceResistencia: number;
@@ -472,41 +475,79 @@ function subEnJornada(sub: SubVehiculo, vehicle: Vehicle, dayStartMs: number): b
   return subCumplidoEnJornada(sub, vehicle, dayStartMs);
 }
 
-/** Sub con fricción: declaración del usuario; si no hay, cruce automático / ledger. */
+/** Cruce de bandas medido por contador y ledger — no usa declaración del usuario (espejo). */
+export function subCruceObjetivo(
+  sub: SubVehiculo,
+  events: FocusBandEvent[],
+  dayStartMs: number
+): RutaCruzadaSnapshot {
+  const base = sub.rutaEnfoque?.cruzado ?? { fluido: false, concentrado: false, limite: false };
+  let fluido = base.fluido || !!sub.rutaEnfoque?.activa;
+  let concentrado = base.concentrado;
+  let limite = base.limite;
+  for (const e of events) {
+    if (e.timestamp < dayStartMs || e.source !== "ruta_cruce") continue;
+    if (e.subVehicleId !== sub.id) continue;
+    if (e.banda === "fluido") fluido = true;
+    if (e.banda === "concentrado") concentrado = true;
+    if (e.banda === "limite") limite = true;
+  }
+  return { fluido, concentrado, limite };
+}
+
+/** Calibración objetiva: cruzó concentrado o límite en el contador. */
 export function subTuvoFriccion(
   sub: SubVehiculo,
   events: FocusBandEvent[],
   dayStartMs: number
 ): boolean {
-  if (sub.rutaDeclarada?.length) return subFriccionPorDeclaracion(sub);
-  const cruzado = sub.rutaEnfoque?.cruzado;
-  if (cruzado?.concentrado || cruzado?.limite) return true;
-  const subKey = sub.id;
-  for (const e of events) {
-    if (e.timestamp < dayStartMs || e.source !== "ruta_cruce") continue;
-    if (e.subVehicleId !== subKey) continue;
-    if (e.banda === "concentrado" || e.banda === "limite") return true;
-  }
-  return false;
+  const c = subCruceObjetivo(sub, events, dayStartMs);
+  return c.concentrado || c.limite;
 }
 
+/** Solo fluido objetivo — no cruzó calibración (piloto automático). */
 export function subEnDominioFluido(
   sub: SubVehiculo,
   events: FocusBandEvent[],
   dayStartMs: number
 ): boolean {
   if (!sub.rutaEnfoque?.activa || sub.status !== "cumplido") return false;
-  if (sub.rutaDeclarada?.length) return subDominioFluidoPorDeclaracion(sub);
   return !subTuvoFriccion(sub, events, dayStartMs);
+}
+
+/** Recorrió fluido → concentrado → límite según el contador. */
+export function subEstructuraCompletaObjetiva(
+  sub: SubVehiculo,
+  events: FocusBandEvent[],
+  dayStartMs: number
+): boolean {
+  const c = subCruceObjetivo(sub, events, dayStartMs);
+  return c.concentrado && c.limite;
+}
+
+/** Sostuvo al menos la mitad del tiempo sugerido antes de cerrar (segmentos B o C). */
+export function subPersistenciaSegmentoBC(sub: SubVehiculo): boolean {
+  const refSec = suggestedSec(sub);
+  const realSec = sub.duracionFinal ?? null;
+  if (refSec == null || realSec == null || sub.status !== "cumplido") return false;
+  const seg = getRutaTiempoSegmento(realSec, refSec);
+  return seg === "B" || seg === "C";
 }
 
 export function inferFaseAtencional(r: ResistenciaDia): FaseAtencional {
   if (r.subsConRuta === 0) return "entrenamiento";
-  const dominioPct = (100 * r.bloquesDominioFluido) / r.subsConRuta;
-  const gananciaPct = (100 * r.subsConGanancia) / r.subsConRuta;
-  const friccionPct = (100 * r.friccionBloques) / r.subsConRuta;
-  if (dominioPct >= 60 && friccionPct <= 35) return "dominio_fluido";
-  if (dominioPct >= 35 || gananciaPct >= 45 || r.indiceResistencia >= 55) return "integracion";
+  const estructuraPct = (100 * r.subsEstructuraCompleta) / r.subsConRuta;
+  const calibracionPct = (100 * r.friccionBloques) / r.subsConRuta;
+  const persistenciaPct = (100 * r.subsPersistenciaBC) / r.subsConRuta;
+  if (estructuraPct >= 50 && calibracionPct >= 40) return "dominio_fluido";
+  if (
+    calibracionPct >= 30 ||
+    estructuraPct >= 25 ||
+    persistenciaPct >= 40 ||
+    r.indiceResistencia >= 50
+  ) {
+    return "integracion";
+  }
   return "entrenamiento";
 }
 
@@ -526,7 +567,7 @@ function clampIndex(n: number): number {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-/** Métricas v2: dominio fluido, fricción y ganancia de tiempo (desglosador tiempo + ruta). */
+/** Métricas v2: resistencia objetiva (contador + tiempo). La declaración del usuario no entra aquí. */
 export function computeResistenciaDia(
   vehicles: Vehicle[],
   dayStartMs: number,
@@ -535,6 +576,8 @@ export function computeResistenciaDia(
   let subsConRuta = 0;
   let bloquesDominioFluido = 0;
   let friccionBloques = 0;
+  let subsEstructuraCompleta = 0;
+  let subsPersistenciaBC = 0;
   let subsConGanancia = 0;
   let gananciaTiempoSeg = 0;
 
@@ -546,6 +589,8 @@ export function computeResistenciaDia(
       const friccion = subTuvoFriccion(sub, events, dayStartMs);
       if (friccion) friccionBloques++;
       else bloquesDominioFluido++;
+      if (subEstructuraCompletaObjetiva(sub, events, dayStartMs)) subsEstructuraCompleta++;
+      if (subPersistenciaSegmentoBC(sub)) subsPersistenciaBC++;
 
       const verdict = computeSubCloseVerdict(sub);
       if (verdict.verdict === "gain") {
@@ -562,6 +607,8 @@ export function computeResistenciaDia(
       subsConRuta: 0,
       bloquesDominioFluido: 0,
       friccionBloques: 0,
+      subsEstructuraCompleta: 0,
+      subsPersistenciaBC: 0,
       subsConGanancia: 0,
       gananciaTiempoSeg: 0,
       indiceResistencia: 0,
@@ -569,16 +616,18 @@ export function computeResistenciaDia(
     };
   }
 
-  const dominioPct = (100 * bloquesDominioFluido) / subsConRuta;
-  const gananciaPct = (100 * subsConGanancia) / subsConRuta;
-  const friccionPct = (100 * friccionBloques) / subsConRuta;
+  const estructuraPct = (100 * subsEstructuraCompleta) / subsConRuta;
+  const calibracionPct = (100 * friccionBloques) / subsConRuta;
+  const persistenciaPct = (100 * subsPersistenciaBC) / subsConRuta;
   const indiceResistencia = clampIndex(
-    0.5 * dominioPct + 0.4 * gananciaPct + 0.1 * (100 - friccionPct)
+    0.45 * estructuraPct + 0.35 * calibracionPct + 0.2 * persistenciaPct
   );
   const base: ResistenciaDia = {
     subsConRuta,
     bloquesDominioFluido,
     friccionBloques,
+    subsEstructuraCompleta,
+    subsPersistenciaBC,
     subsConGanancia,
     gananciaTiempoSeg,
     indiceResistencia,
@@ -623,7 +672,7 @@ export function buildDailySnapshot(params: {
   );
 
   const cerradosManual = segmentos.filter(s => s.estado === "cerrado_manual").length;
-  const entropiaSeg = segmentos.filter(s => s.estado === "entropia").length;
+  const entropiaSeg = segmentos.filter(s => s.estado === "entropia" || s.puertaSistema).length;
   const totalSeg = segmentos.length;
 
   const jornadaMin = conquistaMin + entropiaMin + vacioMin;
@@ -810,7 +859,7 @@ export type TermodinamicaCompareV2Model = TermodinamicaCompareModel & {
   indiceAyer: number | null;
 };
 
-/** Comparativa v2: dominio fluido y resistencia (no premia más fricción). */
+/** Comparativa v2: resistencia objetiva (estructura + calibración + persistencia). */
 export function computeTermodinamicaCompareV2(
   yesterday: PlanillaDailySnapshot | null,
   today: PlanillaDailySnapshot
@@ -825,16 +874,22 @@ export function computeTermodinamicaCompareV2(
 
   const rows: TermodinamicaCompareRow[] = [
     compareRow(
-      "dominio_fluido",
-      "Dominio fluido (con ruta)",
-      rHoy?.bloquesDominioFluido ?? 0,
-      rAyer?.bloquesDominioFluido ?? 0
+      "estructura_completa",
+      "Estructura completa (3 tramos)",
+      rHoy?.subsEstructuraCompleta ?? 0,
+      rAyer?.subsEstructuraCompleta ?? 0
     ),
     compareRow(
-      "ganancia",
-      "Subs con ganancia de tiempo",
-      rHoy?.subsConGanancia ?? 0,
-      rAyer?.subsConGanancia ?? 0
+      "friccion",
+      "Calibración (conc/límite)",
+      rHoy?.friccionBloques ?? 0,
+      rAyer?.friccionBloques ?? 0
+    ),
+    compareRow(
+      "persistencia",
+      "Persistencia (seg. B/C)",
+      rHoy?.subsPersistenciaBC ?? 0,
+      rAyer?.subsPersistenciaBC ?? 0
     ),
     compareRow(
       "bloques",
@@ -847,6 +902,19 @@ export function computeTermodinamicaCompareV2(
       "Decisiones ejecutadas",
       decisionesFromSnapshot(today),
       yesterday ? decisionesFromSnapshot(yesterday) : 0
+    ),
+    compareRow(
+      "solo_fluido",
+      "Solo fluido (piloto automático)",
+      rHoy?.bloquesDominioFluido ?? 0,
+      rAyer?.bloquesDominioFluido ?? 0,
+      false
+    ),
+    compareRow(
+      "ganancia",
+      "Subs con ganancia de tiempo",
+      rHoy?.subsConGanancia ?? 0,
+      rAyer?.subsConGanancia ?? 0
     ),
     compareRow(
       "espectro_fluido",
@@ -866,13 +934,6 @@ export function computeTermodinamicaCompareV2(
       today.espectroBloques?.limite ?? 0,
       yesterday?.espectroBloques?.limite ?? 0
     ),
-    compareRow(
-      "friccion",
-      "Fricción (conc/límite)",
-      rHoy?.friccionBloques ?? 0,
-      rAyer?.friccionBloques ?? 0,
-      false
-    ),
   ];
 
   const hasYesterday = yesterday != null;
@@ -886,20 +947,20 @@ export function computeTermodinamicaCompareV2(
     headline = `+${indiceHoy - indiceAyer} puntos de resistencia vs ayer`;
     motivacion =
       estadoHoy === "dominio_fluido"
-        ? "El fluido gana terreno — menos fricción, más ganancia de tiempo."
-        : "La secuencia pesa menos; sigue entrenando el piloto automático.";
+        ? "Sostienes más tiempo los 3 tramos — la estructura se vuelve hábito."
+        : "Más calibración objetiva; la declaración consciente sigue en el espejo de cada sub.";
   } else {
-    const domRow = rows.find(r => r.key === "dominio_fluido");
+    const estRow = rows.find(r => r.key === "estructura_completa");
     const frRow = rows.find(r => r.key === "friccion");
-    if (domRow && domRow.delta > 0 && frRow && frRow.delta < 0) {
-      headline = "Más dominio fluido y menos fricción que ayer";
+    if (estRow && estRow.delta > 0 && frRow && frRow.delta >= 0) {
+      headline = "Más estructura completa y calibración que ayer";
       motivacion = FASE_ATENCIONAL_LABEL[estadoHoy];
     } else if (indiceHoy < (indiceAyer ?? 0)) {
-      headline = "Día de más fricción — normal en la curva de aprendizaje";
-      motivacion = "Los márgenes concentrado/límite son andamiaje, no el premio final.";
+      headline = "Día de menos resistencia estructural — normal en la curva";
+      motivacion = "La resistencia mide tramos sostenidos, no velocidad en piloto automático.";
     } else {
       headline = `Estado: ${FASE_ATENCIONAL_LABEL[estadoHoy]}`;
-      motivacion = "Compites contigo de ayer en dominio fluido y tiempo ganado.";
+      motivacion = "Índice calculado por el contador; tu declaración al cerrar subs alimenta el espejo.";
     }
   }
 

@@ -232,13 +232,13 @@ describe("termodinamicaAtencional", () => {
     assert.equal(subEnDominioFluido(sub, [], dayStart), false);
   });
 
-  it("computeResistenciaDia usa declaración del usuario, no solo cruce automático", () => {
+  it("computeResistenciaDia ignora declaración del usuario — solo contador objetivo", () => {
     const dayStart = Date.now() - 3600_000;
-    const rutaAuto = createRutaEnfoqueState(6);
-    rutaAuto.activa = true;
-    rutaAuto.cruzado = { fluido: true, concentrado: true, limite: true };
+    const rutaTres = createRutaEnfoqueState(6);
+    rutaTres.activa = true;
+    rutaTres.cruzado = { fluido: true, concentrado: true, limite: true };
 
-    const entrenamiento = computeResistenciaDia(
+    const conEstructura = computeResistenciaDia(
       [
         makeDesglosadorVehicle([
           {
@@ -246,44 +246,53 @@ describe("termodinamicaAtencional", () => {
             titulo: "A",
             status: "cumplido",
             cierreAt: Date.now(),
-            rutaEnfoque: rutaAuto,
-            rutaDeclarada: ["fluido", "concentrado", "limite"],
-          },
-        ]),
-      ],
-      dayStart
-    );
-    assert.equal(entrenamiento.friccionBloques, 1);
-    assert.equal(entrenamiento.bloquesDominioFluido, 0);
-
-    const dominio = computeResistenciaDia(
-      [
-        makeDesglosadorVehicle([
-          {
-            id: "s1",
-            titulo: "A",
-            status: "cumplido",
-            cierreAt: Date.now(),
-            rutaEnfoque: rutaAuto,
+            rutaEnfoque: rutaTres,
             rutaDeclarada: ["fluido"],
             tiempoSugeridoSeg: 600,
             duracionFinal: 400,
-            cantidadObjetivo: 10,
-            tiempoRecordMinPerUnit: 1,
           },
         ]),
       ],
       dayStart
     );
-    assert.equal(dominio.bloquesDominioFluido, 1);
-    assert.equal(dominio.friccionBloques, 0);
+    assert.equal(conEstructura.friccionBloques, 1);
+    assert.equal(conEstructura.subsEstructuraCompleta, 1);
+    assert.equal(conEstructura.bloquesDominioFluido, 0);
+
+    const rutaSoloFluido = createRutaEnfoqueState(6);
+    rutaSoloFluido.activa = true;
+    rutaSoloFluido.cruzado = { fluido: true, concentrado: false, limite: false };
+
+    const pilotoAuto = computeResistenciaDia(
+      [
+        makeDesglosadorVehicle([
+          {
+            id: "s1",
+            titulo: "A",
+            status: "cumplido",
+            cierreAt: Date.now(),
+            rutaEnfoque: rutaSoloFluido,
+            rutaDeclarada: ["fluido", "concentrado", "limite"],
+            tiempoSugeridoSeg: 600,
+            duracionFinal: 200,
+          },
+        ]),
+      ],
+      dayStart
+    );
+    assert.equal(pilotoAuto.bloquesDominioFluido, 1);
+    assert.equal(pilotoAuto.friccionBloques, 0);
+    assert.equal(pilotoAuto.subsEstructuraCompleta, 0);
+    assert.ok(pilotoAuto.indiceResistencia < conEstructura.indiceResistencia);
   });
 
   it("inferFaseAtencional clasifica integración en el medio", () => {
     const fase = inferFaseAtencional({
       subsConRuta: 4,
-      bloquesDominioFluido: 2,
-      friccionBloques: 2,
+      bloquesDominioFluido: 1,
+      friccionBloques: 3,
+      subsEstructuraCompleta: 1,
+      subsPersistenciaBC: 2,
       subsConGanancia: 2,
       gananciaTiempoSeg: 120,
       indiceResistencia: 58,
@@ -321,10 +330,15 @@ describe("termodinamicaAtencional", () => {
     assert.equal(cmp.rows.find(r => r.key === "limite")?.delta, 2);
   });
 
-  it("computeTermodinamicaCompareV2 premia dominio fluido, no más fricción", () => {
+  it("computeTermodinamicaCompareV2 premia estructura objetiva, no declaración", () => {
     const dayStart = Date.now() - 3600_000;
-    const ruta = createRutaEnfoqueState(6);
-    ruta.activa = true;
+    const rutaCompleta = createRutaEnfoqueState(6);
+    rutaCompleta.activa = true;
+    rutaCompleta.cruzado = { fluido: true, concentrado: true, limite: true };
+
+    const rutaFluido = createRutaEnfoqueState(6);
+    rutaFluido.activa = true;
+    rutaFluido.cruzado = { fluido: true, concentrado: false, limite: false };
 
     const yesterday = buildDailySnapshot({
       fecha: "2026-05-17",
@@ -336,8 +350,9 @@ describe("termodinamicaAtencional", () => {
             titulo: "A",
             status: "cumplido",
             cierreAt: Date.now(),
-            rutaEnfoque: ruta,
-            rutaDeclarada: ["fluido", "concentrado", "limite"],
+            rutaEnfoque: rutaFluido,
+            tiempoSugeridoSeg: 600,
+            duracionFinal: 200,
           },
         ]),
       ],
@@ -355,8 +370,7 @@ describe("termodinamicaAtencional", () => {
             titulo: "A",
             status: "cumplido",
             cierreAt: Date.now(),
-            rutaEnfoque: ruta,
-            rutaDeclarada: ["fluido"],
+            rutaEnfoque: rutaCompleta,
             tiempoSugeridoSeg: 600,
             duracionFinal: 500,
           },
@@ -365,8 +379,7 @@ describe("termodinamicaAtencional", () => {
             titulo: "B",
             status: "cumplido",
             cierreAt: Date.now(),
-            rutaEnfoque: ruta,
-            rutaDeclarada: ["fluido"],
+            rutaEnfoque: rutaCompleta,
             tiempoSugeridoSeg: 400,
             duracionFinal: 360,
           },
@@ -378,15 +391,10 @@ describe("termodinamicaAtencional", () => {
 
     const cmp = computeTermodinamicaCompareV2(yesterday, today);
     assert.equal(cmp.hasYesterday, true);
-    assert.equal(cmp.rows.find(r => r.key === "dominio_fluido")?.delta, 2);
-    assert.equal(cmp.rows.find(r => r.key === "friccion")?.delta, -1);
-    assert.ok(
-      cmp.headline.includes("dominio fluido") ||
-        cmp.headline.includes("resistencia") ||
-        cmp.estadoHoy === "dominio_fluido" ||
-        cmp.estadoHoy === "integracion"
-    );
+    assert.equal(cmp.rows.find(r => r.key === "estructura_completa")?.delta, 2);
+    assert.equal(cmp.rows.find(r => r.key === "friccion")?.delta, 2);
+    assert.ok(cmp.indiceHoy > cmp.indiceAyer!);
     const frRow = cmp.rows.find(r => r.key === "friccion");
-    assert.equal(frRow?.betterWhenHigher, false);
+    assert.equal(frRow?.betterWhenHigher, true);
   });
 });

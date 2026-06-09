@@ -4,6 +4,7 @@ import type { SubTarea } from "./persistence.ts";
 import {
   aplicarTiempoGanadoAlCumplir,
   applyCupoManualYRedistribuir,
+  cerrarCronometroDeGolpe,
   computeSituacionCronometroHorarios,
   computeSituacionProyeccionFinMs,
   situacionGananciaVsContratoMin,
@@ -31,10 +32,13 @@ function st(id: string, minutosCupo: number, cupoFijo?: boolean): SubTarea {
 }
 
 describe("redistribuirMinutosSituacionCronometro", () => {
-  it("reparte entre todas las filas si ninguna está fija", () => {
+  it("reparte en partes iguales si ninguna está fija", () => {
     const subs = [st("a", 10), st("b", 10), st("c", 10)];
     const out = redistribuirMinutosSituacionCronometro(subs, 30);
     assert.equal(sumMinutosCronometroPendientes(out), 30);
+    assert.equal(out.find(s => s.id === "a")!.minutosCupo, 10);
+    assert.equal(out.find(s => s.id === "b")!.minutosCupo, 10);
+    assert.equal(out.find(s => s.id === "c")!.minutosCupo, 10);
   });
 
   it("conserva cupos fijos y reparte el sobrante entre flexibles", () => {
@@ -109,8 +113,8 @@ describe("quitarMinutosHaciaFoco", () => {
     const r = quitarMinutosHaciaFoco(subs, "a", "b", 5);
     assert.equal(r.ok, true);
     if (!r.ok) return;
-    assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 20);
-    assert.equal(r.subTareas.find(s => s.id === "c")!.minutosCupo, 5);
+    assert.equal(r.subTareas.find(s => s.id === "b")!.minutosCupo, 15);
+    assert.equal(r.subTareas.find(s => s.id === "c")!.minutosCupo, 10);
   });
 });
 
@@ -207,6 +211,21 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     assert.equal(c.minutosGanadosAcum, undefined);
   });
 
+  it("tarea no foco transfiere minutos ganados al foco", () => {
+    const subs = [st("a", 10), st("b", 15), st("c", 10)];
+    const now = base + 12 * 60000;
+    const { subTareas: out, minutosGanados } = aplicarTiempoGanadoAlCumplir(
+      subs,
+      "c",
+      { subTareaId: "a", startedAt: base },
+      now,
+      base
+    );
+    assert.equal(minutosGanados, 10);
+    assert.equal(out.find(s => s.id === "a")!.minutosCupo, 20);
+    assert.equal(out.find(s => s.id === "c")!.resultadoSituacion, "cumplido");
+  });
+
   it("sin cola flexible acumula saldo adelanto", () => {
     const subs = [st("a", 15), st("b", 10, true)];
     const now = base + 5 * 60000;
@@ -221,6 +240,22 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     assert.equal(saldoAdelantoMin, 10);
     assert.equal(out.find(s => s.id === "b")!.minutosCupo, 10);
     assert.equal(sumMinutosCronometroPendientes(out), 10);
+  });
+});
+
+describe("cerrarCronometroDeGolpe", () => {
+  const base = 1_700_000_000_000;
+
+  it("marca todas las pendientes como falladas", () => {
+    const subs = [st("a", 10), st("b", 15)];
+    const out = cerrarCronometroDeGolpe(
+      subs,
+      { subTareaId: "a", startedAt: base },
+      base + 5 * 60000,
+      base
+    );
+    assert.equal(out.filter(s => s.resultadoSituacion === "fallado").length, 2);
+    assert.equal(out.find(s => s.id === "a")!.duracionRealSec, 300);
   });
 });
 

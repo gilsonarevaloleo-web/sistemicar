@@ -35,6 +35,9 @@ export function atencionBadgeLabel(sa: SegmentoAtencion): string | null {
 }
 
 export function describeSegmentoAtencion(sa: SegmentoAtencion): string {
+  if (sa.puertaPerdida && sa.puertaAbierta) {
+    return "Puerta abierta por el sistema — entropía de atención. Cierra para recuperar +2 PS";
+  }
   if (sa.puertaPerdida) return "Puerta de atención no abierta a tiempo";
   if (sa.cierreConsciente) {
     if (sa.puertaTiming === "antes_voz") return "Puerta abierta antes de la voz · cierre consciente";
@@ -63,7 +66,8 @@ export function computeAtencionPanoramicaDia(params: {
       seg.activadoAt != null &&
       (seg.estado === "activo" || seg.estado === "cerrado_manual" || seg.estado === "entropia");
     const puertaPerdida =
-      seg.estado === "entropia" && (seg.activadoAt == null || !puertaAbierta);
+      seg.puertaSistema === true ||
+      (seg.estado === "entropia" && (seg.activadoAt == null || !puertaAbierta));
     const cierreConsciente = seg.estado === "cerrado_manual";
     const ventanaPuertaAbierta =
       seg.estado === "pendiente" && isWithinPuertaWindow(nowMs, seg.horaInicio, dayStartMs);

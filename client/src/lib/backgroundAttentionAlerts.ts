@@ -139,7 +139,7 @@ export function deliverSegmentEntropiaAlert(params: {
   const title = `ENTROPÍA: ${params.nombre}`;
   const body =
     params.reason === "missed_puerta"
-      ? "Puerta de atención no abierta en ±5 min. 0 PS."
+      ? "Puerta abierta por el sistema. −2 PS. Cierra la puerta para recuperar +2 PS."
       : params.reason === "past_end"
         ? "No cerraste a tiempo. El sistema no perdona la omisión."
         : params.reason === "cruce_sin_cierre"

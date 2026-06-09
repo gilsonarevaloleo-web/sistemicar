@@ -91,6 +91,34 @@ export function bolsaDisponibleSegundoReto(
   return Math.max(0, Math.round(sc.bolsaSegundoRetoMin ?? 0));
 }
 
+/** Cierra el bloque activo: marca reto cumplido y calcula bolsa (ganancia + tiempo restante en meta). */
+export function buildSituacionCronometroCierre(
+  sc: NonNullable<Vehicle["situacionCronometro"]>,
+  nowMs: number = Date.now()
+): NonNullable<Vehicle["situacionCronometro"]> {
+  const contratoMs = situacionContratoFinMs(sc);
+  const minutosRestantesObjetivo =
+    contratoMs != null ? Math.max(0, Math.round((contratoMs - nowMs) / 60000)) : 0;
+  const bolsaGanada = (sc.minutosGanadosReto ?? 0) + (sc.saldoAdelantoMin ?? 0);
+  const bolsaTotal = bolsaGanada + minutosRestantesObjetivo;
+  return {
+    activo: false,
+    bloqueInicioAt: sc.bloqueInicioAt,
+    depthBlockPsGranted: sc.depthBlockPsGranted ?? 0,
+    retosCompletados: (sc.retosCompletados ?? 0) + 1,
+    retoNumero: sc.retoNumero ?? 1,
+    minutosGanadosReto: sc.minutosGanadosReto ?? 0,
+    minutosGanadosSesion: sc.minutosGanadosSesion ?? 0,
+    saldoAdelantoMin: 0,
+    bolsaSegundoRetoMin: bolsaTotal > 0 ? bolsaTotal : undefined,
+    ...(sc.horaFinContratoMs != null
+      ? { horaFinContratoMs: sc.horaFinContratoMs, horaFinMs: sc.horaFinContratoMs }
+      : sc.horaFinMs != null
+        ? { horaFinMs: sc.horaFinMs, horaFinContratoMs: sc.horaFinMs }
+        : {}),
+  };
+}
+
 /** Convierte HH:mm local en timestamp de meta (hoy o mañana si ya pasó). */
 export function situacionObjetivoHoraToContratoMs(
   hhmm: string,
