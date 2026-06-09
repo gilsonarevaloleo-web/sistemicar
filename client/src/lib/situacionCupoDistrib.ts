@@ -140,38 +140,54 @@ function repartirProporcional(weights: number[], total: number, minPerSlot = 1):
   return alloc;
 }
 
-/** Reparte minutos ganados en partes iguales entre filas pendientes elegibles. */
+/** Reparte minutos ganados directamente en minutosCupo de filas pendientes posteriores. */
+export function repartirMinutosGanadosACupo(
+  subTareas: SubTarea[],
+  minutosGanados: number,
+  afterSubTareaId?: string,
+  opts?: { includeCupoFijo?: boolean }
+): SubTarea[] {
+  if (minutosGanados <= 0) return subTareas;
+  const cronOrder = filasCronometroOrdenadas(subTareas);
+  const afterIdx = afterSubTareaId ? cronOrder.findIndex(st => st.id === afterSubTareaId) : -1;
+
+  const pendingTargets = subTareas
+    .map((st, i) => ({ st, i }))
+    .filter(({ st }) => {
+      if (!situacionFilaCronometroPendiente(st)) return false;
+      if (afterSubTareaId) {
+        const orderIdx = cronOrder.findIndex(c => c.id === st.id);
+        if (orderIdx <= afterIdx) return false;
+      }
+      if (!opts?.includeCupoFijo && isCupoFijo(st)) return false;
+      return true;
+    });
+  if (pendingTargets.length === 0) return subTareas;
+
+  const bonus = repartirProporcional(
+    pendingTargets.map(() => 1),
+    minutosGanados,
+    0
+  );
+  const next = [...subTareas];
+  pendingTargets.forEach(({ st, i }, k) => {
+    next[i] = {
+      ...st,
+      minutosCupo: (st.minutosCupo ?? 0) + bonus[k]!,
+    };
+  });
+  return next;
+}
+
+/** @deprecated Usar repartirMinutosGanadosACupo — conservado como alias interno. */
 function repartirMinutosGanadosAcum(
   subTareas: SubTarea[],
   minutosGanados: number,
   excludeSubTareaIds: string[],
   opts?: { includeCupoFijo?: boolean }
 ): SubTarea[] {
-  if (minutosGanados <= 0) return subTareas;
-  const exclude = new Set(excludeSubTareaIds);
-  const pendingIdx = subTareas
-    .map((st, i) => ({ st, i }))
-    .filter(
-      ({ st }) =>
-        situacionFilaCronometroPendiente(st) &&
-        !exclude.has(st.id) &&
-        (opts?.includeCupoFijo || !isCupoFijo(st))
-    );
-  if (pendingIdx.length === 0) return subTareas;
-
-  const bonus = repartirProporcional(
-    pendingIdx.map(() => 1),
-    minutosGanados,
-    0
-  );
-  const next = [...subTareas];
-  pendingIdx.forEach(({ st, i }, k) => {
-    next[i] = {
-      ...st,
-      minutosGanadosAcum: (st.minutosGanadosAcum ?? 0) + bonus[k],
-    };
-  });
-  return next;
+  const excludeId = excludeSubTareaIds[0];
+  return repartirMinutosGanadosACupo(subTareas, minutosGanados, excludeId, opts);
 }
 
 function transferirMinutosAlFoco(
@@ -311,7 +327,7 @@ function inicioMsFilaCronometro(
   return bloqueInicioAt;
 }
 
-/** Copia virtual: minutos ganados en foco → chips en cola (preview UI). */
+/** Copia virtual: minutos ganados en foco → cupo extra en filas posteriores (preview UI). */
 function aplicarPreviewTiempoGanado(
   subTareas: SubTarea[],
   anchor: { subTareaId: string; startedAt: number },
@@ -324,7 +340,27 @@ function aplicarPreviewTiempoGanado(
   const elapsedMin = Math.floor(Math.max(0, now - anchor.startedAt) / 60000);
   const minutosVirtualesGanados = Math.max(0, cupoMin - elapsedMin);
   if (minutosVirtualesGanados <= 0) return subTareas;
-  return repartirMinutosGanadosAcum(subTareas, minutosVirtualesGanados, [anchor.subTareaId]);
+  return repartirMinutosGanadosACupo(subTareas, minutosVirtualesGanados, anchor.subTareaId);
+}
+
+/** Suma minutos de preview repartidos en filas pendientes posteriores al foco. */
+export function sumBonusPreviewEnColaPendiente(
+  subTareas: SubTarea[],
+  anchor: { subTareaId: string; startedAt: number } | null | undefined,
+  now?: number
+): number {
+  if (!anchor?.subTareaId) return 0;
+  const t = now ?? Date.now();
+  const effective = aplicarPreviewTiempoGanado(subTareas, anchor, t);
+  const effById = new Map(filasCronometroOrdenadas(effective).map(st => [st.id, st]));
+  let bonus = 0;
+  for (const st of filasCronometroOrdenadas(subTareas)) {
+    if (!situacionFilaCronometroPendiente(st)) continue;
+    if (st.id === anchor.subTareaId) continue;
+    const eff = effById.get(st.id);
+    bonus += Math.max(0, (eff?.minutosCupo ?? 0) - (st.minutosCupo ?? 0));
+  }
+  return bonus;
 }
 
 export type SituacionFilaHorario = {
@@ -364,7 +400,9 @@ export function computeSituacionCronometroHorarios(
     const eff = effectiveById.get(st.id) ?? st;
     const pendiente = situacionFilaCronometroPendiente(st);
     const enFoco = pendiente && opts.anchor?.subTareaId === st.id;
-    const minutosCupo = st.minutosCupo ?? eff.minutosCupo ?? 0;
+    const minutosCupo = opts.previewTiempoGanado
+      ? (eff.minutosCupo ?? st.minutosCupo ?? 0)
+      : (st.minutosCupo ?? 0);
 
     if (!pendiente) {
       const durationSec =
@@ -452,7 +490,7 @@ function calcMinutosGanadosCierre(
 }
 
 /**
- * Al marcar cumplido: registra duración real, reparte minutos ganados como chips en cola.
+ * Al marcar cumplido: registra duración real y reparte minutos ganados en minutosCupo de la cola.
  */
 export function aplicarTiempoGanadoAlCumplir(
   subTareas: SubTarea[],
@@ -492,7 +530,7 @@ export function aplicarTiempoGanadoAlCumplir(
     const eraFoco = anchor?.subTareaId === subTareaId;
     if (eraFoco) {
       const before = JSON.stringify(next);
-      next = repartirMinutosGanadosAcum(next, minutosGanados, [subTareaId]);
+      next = repartirMinutosGanadosACupo(next, minutosGanados, subTareaId);
       if (JSON.stringify(next) === before) {
         saldoAdelantoMin = minutosGanados;
       }

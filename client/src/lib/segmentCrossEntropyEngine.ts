@@ -1,6 +1,7 @@
 import type { SegmentoV5, Vehicle } from "./persistence";
 import type { SegmentAttentionEvent } from "./segmentAttentionEngine";
 import { segmentClockMs } from "./segmentTime";
+import { isDesglosadorCrossSegmentExempt } from "./vehicleOperationalSlots";
 
 export const CRUCE_GRACE_MIN = 8;
 export const CRUCE_WARNING_MIN = 6;
@@ -42,6 +43,7 @@ export function isExcludedFromCrossEntropy(vehicle: Vehicle): boolean {
   if (vehicle.autoVerdad) return true;
   if (vehicle.tipoFlota === "descanso") return true;
   if (vehicle.status !== "activo") return true;
+  if (isDesglosadorCrossSegmentExempt(vehicle)) return true;
   return false;
 }
 

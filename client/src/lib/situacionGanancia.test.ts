@@ -41,7 +41,7 @@ describe("situacionGanancia", () => {
       minutosGanadosSesion: 20,
       saldoAdelantoMin: 3,
     });
-    assert.equal(bolsa.minutosEnCola, 5);
+    assert.equal(bolsa.minutosEnCola, 0);
     assert.equal(bolsa.minutosAdelanto, 3);
     assert.equal(bolsa.minutosGanadosReto, 12);
     assert.equal(bolsa.retoNumero, 2);
@@ -98,17 +98,10 @@ describe("situacionGanancia", () => {
     assert.equal(cierre.bolsaSegundoRetoMin, 33);
   });
 
-  it("sumMinutosEnColaGanancia ignora cumplidas", () => {
+  it("sumMinutosEnColaGanancia ya no usa chips — reparto va a minutosCupo", () => {
     const subs = [
       st({ id: "a", texto: "A", enDesgloseCronometro: true, minutosGanadosAcum: 4 }),
-      st({
-        id: "b",
-        texto: "B",
-        enDesgloseCronometro: true,
-        resultadoSituacion: "cumplido",
-        minutosGanadosAcum: 9,
-      }),
     ];
-    assert.equal(sumMinutosEnColaGanancia(subs), 4);
+    assert.equal(sumMinutosEnColaGanancia(subs), 0);
   });
 });

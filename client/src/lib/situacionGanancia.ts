@@ -30,14 +30,34 @@ export function retoSituacionCorto(retoNumero: number): string {
   return `Reto ${retoNumero}`;
 }
 
-/** Minutos de bonificación repartidos en filas pendientes del cronómetro. */
+/** Minutos repartidos en cupo de filas pendientes (ya no en chips separados). */
 export function sumMinutosEnColaGanancia(subTareas: SubTarea[]): number {
-  return subTareas
-    .filter(
-      st =>
-        st.enDesgloseCronometro && (st.resultadoSituacion ?? "pendiente") === "pendiente"
-    )
-    .reduce((a, st) => a + (st.minutosGanadosAcum ?? 0), 0);
+  return 0;
+}
+
+export function describeRepartoGananciaEnCola(
+  antes: SubTarea[],
+  despues: SubTarea[],
+  afterSubTareaId: string
+): string | null {
+  const cronOrder = (subTareas: SubTarea[]) =>
+    subTareas.filter(st => st.enDesgloseCronometro);
+  const order = cronOrder(antes);
+  const afterIdx = order.findIndex(st => st.id === afterSubTareaId);
+  if (afterIdx < 0) return null;
+  const partes: string[] = [];
+  for (const st of order.slice(afterIdx + 1)) {
+    const prev = antes.find(s => s.id === st.id);
+    const next = despues.find(s => s.id === st.id);
+    if (!prev || !next) continue;
+    const delta = (next.minutosCupo ?? 0) - (prev.minutosCupo ?? 0);
+    if (delta > 0) {
+      const label = next.texto.length > 22 ? `${next.texto.slice(0, 22)}…` : next.texto;
+      partes.push(`${label} +${delta}′`);
+    }
+  }
+  if (partes.length === 0) return null;
+  return partes.join(" · ");
 }
 
 export function computeSituacionBolsaGanancia(

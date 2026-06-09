@@ -636,6 +636,8 @@ export interface Vehicle {
   tipoDescanso?: "intercepcion" | "microcarga" | "reset_profundo" | "punto_cero";
   microPasos?: { hidratacion: boolean; respiracion: boolean; pantallaZero: boolean };
   etapasPuntoCero?: { etapa1: boolean; etapa2: boolean; etapa3: boolean; etapa4: boolean };
+  /** Orquestación v4: fases activa/pasiva, modo día/noche, colores persistidos. */
+  puntoCero?: import("./puntoCeroTypes").PuntoCeroSession;
   primerAccionAt?: number;
   etiquetaSalida?: "recuperado" | "parcial" | "fragmentado";
   notaSalida?: string;
@@ -1321,7 +1323,7 @@ export async function deleteVehicle(userId: string, vehicleId: string): Promise<
 export async function updateVehicle(
   userId: string,
   vehicleId: string,
-  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentoOrigen" | "segmentoId" | "segmentoMontadoId" | "segmentoMontadoNombre" | "segmentosCruzados" | "cruceEntropiaVozAt" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted" | "desglosadorPausa" | "interrupcionActiva" | "excluirDeHistorial" | "vehiculoPadreDesglosadorId">>
+  updates: Partial<Pick<Vehicle, "titulo" | "criterioFin" | "criterioDetalle" | "ejes" | "tipoFlota" | "aperturaAt" | "cierreAt" | "duracionFinal" | "parentesisRecarga" | "bonoTemple" | "cierreManual" | "energiaOscura" | "justificacion" | "subTareas" | "subVehiculos" | "autoVerdad" | "status" | "tipoReloj" | "cantidadObjetivo" | "resultadoPorUnidad" | "mejorTiempoPorUnidad" | "segmentoOrigen" | "segmentoId" | "segmentoMontadoId" | "segmentoMontadoNombre" | "segmentosCruzados" | "cruceEntropiaVozAt" | "rendimientoConsciente" | "recordSugerido" | "tiempoElegido" | "datoConfiable" | "intensidadEnergetica" | "intensidadEnergeticaFin" | "tipoDescanso" | "microPasos" | "etapasPuntoCero" | "puntoCero" | "primerAccionAt" | "etiquetaSalida" | "notaSalida" | "situacionCupoAnchor" | "situacionCronometro" | "desglosadorBloqueDepthPsGranted" | "desglosadorPausa" | "interrupcionActiva" | "excluirDeHistorial" | "vehiculoPadreDesglosadorId">>
 ): Promise<void> {
   const updateLocally = () => {
     const vehicles = getLocalVehicles().map(v =>

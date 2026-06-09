@@ -241,6 +241,7 @@ import {
   computeSituacionProyeccionFinMs,
   situacionGananciaVsContratoMin,
   sumMinutosCronometroPendientes,
+  sumBonusPreviewEnColaPendiente,
   totalBudgetMinFromCronometro,
 } from "@/lib/situacionCupoDistrib";
 import {
@@ -253,9 +254,16 @@ import {
   situacionMinutosHastaObjetivoHora,
   situacionObjetivoHoraToContratoMs,
   sumMinutosRealesCronometro,
+  describeRepartoGananciaEnCola,
 } from "@/lib/situacionGanancia";
-import { SituacionBolsaGananciaPanel } from "@/components/SituacionBolsaGanancia";
 import { countCasaHechas, groupCasaByTexto, type CasaTextoCount } from "@/lib/situacionCasa";
+import type { ModoPuntoCero, PuntoCeroSession } from "@/lib/puntoCeroTypes";
+import {
+  etapasConColoresCompletos,
+  initPuntoCeroSession,
+  parsePuntoCeroDuracionMin,
+  todosColoresConfirmados,
+} from "@/engines/PuntoCeroEngine";
 import {
   computeDesglosadorSessionDepthPS,
   depthAwardForHour,
@@ -346,6 +354,12 @@ import {
   getCruceGraciaState,
 } from "@/lib/segmentCrossEntropyEngine";
 import {
+  assertCanOpenVehicle,
+  formatOperationalSlotsBlockMessage,
+  isDesglosadorCrossSegmentExempt,
+  launchKindFromFlota,
+} from "@/lib/vehicleOperationalSlots";
+import {
   computeDisciplinaDia,
   computeDisciplinaCompare,
   describeSegmentoDisciplina,
@@ -375,6 +389,7 @@ import {
   subTareaFromImanItem,
 } from "@/lib/imanPensamientos";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
+import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
 import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, computeAnilloEstado, computeTimelineClockArcs, computeTimelineDayStats, formatMinutosJornada, nowToHalfDayLap } from "@/engines/ConcienciaEngine";
@@ -1156,6 +1171,7 @@ export default function Planeacion() {
   const [duracionDescansoH, setDuracionDescansoH] = useState("");
   const [duracionDescansoM, setDuracionDescansoM] = useState("");
   const [tipoDescanso, setTipoDescanso] = useState<"intercepcion" | "microcarga" | "reset_profundo" | "punto_cero" | null>(null);
+  const [modoPuntoCero, setModoPuntoCero] = useState<ModoPuntoCero>("dia");
   const [showHistorialCompleto, setShowHistorialCompleto] = useState(false);
   const [goldenFlash, setGoldenFlash] = useState(false);
   const [recordBanner, setRecordBanner] = useState<{ mejora: number; titulo: string } | null>(null);
@@ -1857,7 +1873,13 @@ export default function Planeacion() {
     if (prevSegId && currentSegId && prevSegId !== currentSegId && user && planilla) {
       cruceWarnedRef.current.clear();
       const vehiculosCruzando = vehicles.filter(
-        v => v.status === "activo" && !v.autoVerdad && v.tipoFlota !== "descanso" && v.segmentoId && v.segmentoId !== currentSegId
+        v =>
+          v.status === "activo" &&
+          !v.autoVerdad &&
+          v.tipoFlota !== "descanso" &&
+          !isDesglosadorCrossSegmentExempt(v) &&
+          v.segmentoId &&
+          v.segmentoId !== currentSegId
       );
       vehiculosCruzando.forEach(v => {
         const nuevoConteo = (v.segmentosCruzados || 0) + 1;
@@ -1867,7 +1889,7 @@ export default function Planeacion() {
       if (vehiculosCruzando.length > 0) {
         setVehicles([...vehicles]);
         toast.warning("Abre otro vehículo", {
-          description: `${vehiculosCruzando.length} sesión(es) del segmento anterior. Tienes 8 min de gracia; luego cierre automático por entropía-atención.`,
+          description: `${vehiculosCruzando.length} sesión(es) del segmento anterior. Tienes 8 min de gracia; luego cierre automático por entropía-atención. El desglosador en foco puede continuar.`,
           style: { backgroundColor: PIZARRA, border: `1px solid ${NARANJA}`, color: NARANJA },
           duration: 7000,
         });
@@ -2486,6 +2508,18 @@ export default function Planeacion() {
       return;
     }
     if (!tipoFlotaSeleccionado) return;
+    const slotsCheck = assertCanOpenVehicle(
+      vehiclesRef.current,
+      launchKindFromFlota(tipoFlotaSeleccionado)
+    );
+    if (!slotsCheck.allowed) {
+      toast.error("Límite de misiones", {
+        description: formatOperationalSlotsBlockMessage(slotsCheck),
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5500,
+      });
+      return;
+    }
     setSaving(true);
     setCierreEnergiaPending(null);
     setCierreEnergiaSeleccion(null);
@@ -2608,6 +2642,10 @@ export default function Planeacion() {
         tipoDescanso: tipoFlotaSeleccionado === "descanso" ? (tipoDescanso || "microcarga") : undefined,
         microPasos: tipoFlotaSeleccionado === "descanso" && tipoDescanso !== "punto_cero" ? { hidratacion: false, respiracion: false, pantallaZero: false } : undefined,
         etapasPuntoCero: tipoFlotaSeleccionado === "descanso" && tipoDescanso === "punto_cero" ? { etapa1: false, etapa2: false, etapa3: false, etapa4: false } : undefined,
+        puntoCero:
+          tipoFlotaSeleccionado === "descanso" && tipoDescanso === "punto_cero"
+            ? initPuntoCeroSession(modoPuntoCero, parsePuntoCeroDuracionMin(detalle), Date.now())
+            : undefined,
         });
       } catch (addErr) {
         console.error("[handleFlotaSave] addVehicle:", addErr);
@@ -2690,6 +2728,10 @@ export default function Planeacion() {
         tipoDescanso: tipoFlotaSeleccionado === "descanso" ? (tipoDescanso || "microcarga") : undefined,
         microPasos: tipoFlotaSeleccionado === "descanso" && tipoDescanso !== "punto_cero" ? { hidratacion: false, respiracion: false, pantallaZero: false } : undefined,
         etapasPuntoCero: tipoFlotaSeleccionado === "descanso" && tipoDescanso === "punto_cero" ? { etapa1: false, etapa2: false, etapa3: false, etapa4: false } : undefined,
+        puntoCero:
+          tipoFlotaSeleccionado === "descanso" && tipoDescanso === "punto_cero"
+            ? initPuntoCeroSession(modoPuntoCero, parsePuntoCeroDuracionMin(detalle), Date.now())
+            : undefined,
       };
       optimisticVehiclesRef.current = [...optimisticVehiclesRef.current.filter(v => v.id !== newVehicleId), optimisticVehicle];
       vehiclesRef.current = [optimisticVehicle, ...vehiclesRef.current.filter(v => v.id !== newVehicleId)];
@@ -3109,6 +3151,15 @@ export default function Planeacion() {
 
   const handleQuickSaveAndNew = async (tipoTermino: TipoTerminoRapido, detalle?: string) => {
     if (!user || !titulo.trim()) return;
+    const slotsCheck = assertCanOpenVehicle(vehiclesRef.current, "quick_save");
+    if (!slotsCheck.allowed) {
+      toast.error("Límite de misiones", {
+        description: formatOperationalSlotsBlockMessage(slotsCheck),
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5500,
+      });
+      return;
+    }
     setSaving(true);
     setCierreEnergiaPending(null);
     setCierreEnergiaSeleccion(null);
@@ -3288,15 +3339,13 @@ export default function Planeacion() {
   const GOLD_PC = "#D4AF37";
   const handleEtapaPuntoCeroToggle = (vehicleId: string, etapa: "etapa1" | "etapa2" | "etapa3" | "etapa4") => {
     if (!user) return;
+    if (etapa === "etapa4") return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) return;
     const ep = vehicle.etapasPuntoCero || { etapa1: false, etapa2: false, etapa3: false, etapa4: false };
     if (ep[etapa]) return;
     if (etapa === "etapa2" && !ep.etapa1) return;
     if (etapa === "etapa3" && !ep.etapa2) return;
-    if (etapa === "etapa4" && !ep.etapa3) return;
-    // Note: etapa4 color-confirmation (7 arcoíris) is UI-only local state (coloresConfirmados),
-    // intentionally session-local and not persisted. Handler enforces etapa3 prerequisite only.
     const isFirstEtapa = !ep.etapa1 && !ep.etapa2 && !ep.etapa3 && !ep.etapa4;
     const now = Date.now();
     const updatedEp = { ...ep, [etapa]: true };
@@ -3306,6 +3355,40 @@ export default function Planeacion() {
     void safeAwardPS(1, `Etapa Punto Cero (${etapa}): ${vehicle.titulo}`);
     const ETAPA_LABELS: Record<string, string> = { etapa1: "Tensión y quietud", etapa2: "Identificación del Pensamiento", etapa3: "Ritmo y apnea", etapa4: "Alimento de Colores" };
     toast.success(`+1 PS · ${ETAPA_LABELS[etapa]}`, { description: "Etapa Punto Cero completada", style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD_PC}`, color: GOLD_PC }, duration: 2500 });
+  };
+
+  const handlePuntoCeroSessionUpdate = (vehicleId: string, session: PuntoCeroSession) => {
+    if (!user) return;
+    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, puntoCero: session } : v)));
+    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, puntoCero: session } : v));
+    updateVehicle(user.uid, vehicleId, { puntoCero: session }).catch(() => {});
+  };
+
+  const handlePuntoCeroColorConfirm = (vehicleId: string, idx: number, session: PuntoCeroSession) => {
+    if (!user) return;
+    const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return;
+    const ep = vehicle.etapasPuntoCero || { etapa1: false, etapa2: false, etapa3: false, etapa4: false };
+    const updatedEp = etapasConColoresCompletos(ep, session.coloresConfirmados);
+    const coronaLista = todosColoresConfirmados(session.coloresConfirmados);
+    const patch = { puntoCero: session, etapasPuntoCero: updatedEp };
+    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...patch } : v)));
+    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...patch } : v));
+    updateVehicle(user.uid, vehicleId, patch).catch(() => {});
+    if (coronaLista && !ep.etapa4) {
+      void safeAwardPS(1, `Etapa Punto Cero (colores): ${vehicle.titulo}`);
+      toast.success("+1 PS · Alimento de Colores", {
+        description: "Corona sellada — iniciando ancla del alivio",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD_PC}`, color: GOLD_PC },
+        duration: 2800,
+      });
+    }
+  };
+
+  const handlePuntoCeroAutoClose = (vehicleId: string) => {
+    const v = vehiclesRef.current.find(x => x.id === vehicleId) || vehicles.find(x => x.id === vehicleId);
+    if (!v || v.status !== "activo" || v.puntoCero?.autoCierreDisparado) return;
+    void handleDescansoClose(vehicleId, "cumplido", "recuperado", "", "fluido");
   };
 
   const handleDescansoClose = async (vehicleId: string, closingStatus: "cumplido" | "archivado", etiqueta: "recuperado" | "parcial" | "fragmentado", nota: string, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => {
@@ -3852,6 +3935,17 @@ export default function Planeacion() {
       toast.error("Ya hay una interrupción activa", {
         description: "Ciérrala arriba antes de lanzar otra.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+      });
+      return;
+    }
+    const slotsCheck = assertCanOpenVehicle(vehiclesRef.current, "interrupcion", {
+      parentDesglosadorId: vehicleId,
+    });
+    if (!slotsCheck.allowed) {
+      toast.error("Límite de misiones", {
+        description: formatOperationalSlotsBlockMessage(slotsCheck),
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5500,
       });
       return;
     }
@@ -5091,6 +5185,7 @@ export default function Planeacion() {
       now,
       bloqueInicio
     );
+    const repartoColaDesc = describeRepartoGananciaEnCola(list, subTareas, subTareaId);
     const pasoNumero = await registrarPasoDesdeSubIman(user.uid, targetSub);
     if (pasoNumero != null) {
       subTareas = subTareaConPasoEjecutado(subTareas, subTareaId, pasoNumero);
@@ -5137,14 +5232,14 @@ export default function Planeacion() {
           duration: 2800,
         });
       } else if (minutosGanados > 0) {
-        const focusId = resolveFocusSubTareaId(subTareas, vehicle.situacionCupoAnchor);
-        const desc =
-          focusId && subTareaId !== focusId
-            ? `${minutosGanados} min al foco`
-            : `${minutosGanados} min repartidos`;
-        toast.success(`+4 PS · ${desc}`, {
-          style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
-          duration: 2200,
+        toast.success(`+4 PS · +${minutosGanados} min a tus próximas filas`, {
+          description:
+            repartoColaDesc ??
+            (saldoAdelantoMin > 0
+              ? `${saldoAdelantoMin} min adelantando la meta`
+              : "Tiempo sumado al cupo de la cola"),
+          style: { backgroundColor: PIZARRA, border: `1px solid ${VERDE}`, color: VERDE },
+          duration: 3400,
         });
       } else {
         toast.success("+4 PS · Cumplido (cronómetro)", {
@@ -7600,7 +7695,7 @@ export default function Planeacion() {
               <div ref={flotaActivosRef} className="scroll-mt-4">
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length} defaultOpen>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreRutaPatron(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onAddSubTareaUrgenteACola={handleAddSubTareaUrgenteACola} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onCerrarSituacionDesglosadorDeGolpe={handleCerrarSituacionDesglosadorDeGolpe} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorCierreDeGolpe={handleDesglosadorCierreDeGolpe} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onDesglosadorAddSub={handleDesglosadorAddSub} onDesglosadorActivatePendingSub={handleDesglosadorActivatePendingSub} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreRutaPatron(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onAddSubTareaUrgenteACola={handleAddSubTareaUrgenteACola} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onCerrarSituacionDesglosadorDeGolpe={handleCerrarSituacionDesglosadorDeGolpe} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorCierreDeGolpe={handleDesglosadorCierreDeGolpe} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onDesglosadorAddSub={handleDesglosadorAddSub} onDesglosadorActivatePendingSub={handleDesglosadorActivatePendingSub} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onPuntoCeroSessionUpdate={handlePuntoCeroSessionUpdate} onPuntoCeroColorConfirm={handlePuntoCeroColorConfirm} onPuntoCeroAutoClose={handlePuntoCeroAutoClose} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
                 ))}
               </AccordionSection>
               </div>
@@ -8290,6 +8385,44 @@ export default function Planeacion() {
                             </div>
                             {tipoActivo && (
                               <div className="p-3 rounded-xl border space-y-2" style={{ backgroundColor: `${colorActivo}08`, borderColor: `${colorActivo}30` }}>
+                                {tipoActivo === "punto_cero" && (
+                                  <div className="space-y-2 pb-2 border-b" style={{ borderColor: `${colorActivo}25` }}>
+                                    <label className="text-[9px] uppercase tracking-wider block" style={{ color: colorActivo }}>Modo Punto Cero</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setModoPuntoCero("dia")}
+                                        className="py-2 px-2 rounded-lg border text-[8px] font-black uppercase tracking-wide transition-all"
+                                        style={{
+                                          backgroundColor: modoPuntoCero === "dia" ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.03)",
+                                          borderColor: modoPuntoCero === "dia" ? "#fbbf24" : "rgba(255,255,255,0.1)",
+                                          color: modoPuntoCero === "dia" ? "#fbbf24" : "#64748b",
+                                        }}
+                                        data-testid="button-punto-cero-modo-dia"
+                                      >
+                                        Recarga operativa
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setModoPuntoCero("noche")}
+                                        className="py-2 px-2 rounded-lg border text-[8px] font-black uppercase tracking-wide transition-all"
+                                        style={{
+                                          backgroundColor: modoPuntoCero === "noche" ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
+                                          borderColor: modoPuntoCero === "noche" ? "#818cf8" : "rgba(255,255,255,0.1)",
+                                          color: modoPuntoCero === "noche" ? "#a5b4fc" : "#64748b",
+                                        }}
+                                        data-testid="button-punto-cero-modo-noche"
+                                      >
+                                        Apagón nocturno
+                                      </button>
+                                    </div>
+                                    <p className="text-[7px] text-slate-500 leading-snug">
+                                      {modoPuntoCero === "dia"
+                                        ? "Pausa de costura · fase activa + ancla theta · reactivación al cerrar."
+                                        : "Antes de dormir · delta profundo · susurros cada minuto · silencio final."}
+                                    </p>
+                                  </div>
+                                )}
                                 <label className="text-[9px] uppercase tracking-wider mb-1 block" style={{ color: colorActivo }}>Duración</label>
                                 <div className="flex items-center gap-2">
                                   <div className="flex items-center gap-1 flex-1">
@@ -8668,11 +8801,8 @@ export default function Planeacion() {
                       <span className="text-[9px] text-slate-500 uppercase">min ganados</span>
                     </div>
                     <div className="flex flex-wrap justify-center gap-3 text-[8px] text-slate-500">
-                      {summary.minutosEnCola > 0 && (
-                        <span>En cola: {summary.minutosEnCola} min</span>
-                      )}
                       {summary.minutosAdelanto > 0 && (
-                        <span>Adelanto: {summary.minutosAdelanto} min</span>
+                        <span>Adelanto en meta: {summary.minutosAdelanto} min</span>
                       )}
                       {summary.eficienciaPct != null && (
                         <span style={{ color: CYAN }}>Eficiencia {summary.eficienciaPct}%</span>
@@ -9024,7 +9154,9 @@ function VehicleCard({
   onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onSituacionCronometroReservar, onQuitarSituacionCupo, onCerrarSituacionDesgloseBloque, onCerrarSituacionDesglosadorDeGolpe, situacionBloquePsTotal, onVerSituacionBloquePs,
   onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose, onDesglosadorCierreDeGolpe, onDesglosadorDepthTick, onDesglosadorPausaInterrupcion, onResumeDesglosador, onDesglosadorReorderSubs, onDesglosadorAddSub, onDesglosadorActivatePendingSub,
   onReorderSubTareasCronometro,
-  onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle, onOpenCierreEnergia,
+  onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle,
+  onPuntoCeroSessionUpdate, onPuntoCeroColorConfirm, onPuntoCeroAutoClose,
+  onOpenCierreEnergia,
   onRutaBandCross, onBloqueCierre
 }: {
   vehicle: Vehicle; expanded: boolean; onToggle: () => void; onComplete?: () => void; onArchive?: () => void;
@@ -9065,6 +9197,9 @@ function VehicleCard({
   onDescansoClose?: (vehicleId: string, status: "cumplido" | "archivado", etiqueta: "recuperado" | "parcial" | "fragmentado", nota: string, intensidadEnergeticaFin?: "fluido" | "concentrado" | "limite") => void;
   onMicroPasoToggle?: (vehicleId: string, paso: "hidratacion" | "respiracion" | "pantallaZero") => void;
   onEtapaPuntoCeroToggle?: (vehicleId: string, etapa: "etapa1" | "etapa2" | "etapa3" | "etapa4") => void;
+  onPuntoCeroSessionUpdate?: (vehicleId: string, session: PuntoCeroSession) => void;
+  onPuntoCeroColorConfirm?: (vehicleId: string, idx: number, session: PuntoCeroSession) => void;
+  onPuntoCeroAutoClose?: (vehicleId: string) => void;
   onOpenCierreEnergia?: (payload: CierreEnergiaModalPayload) => void;
   onRutaBandCross?: (payload: { vehicleId: string; subId: string; subTitulo: string; banda: RutaBandaId }) => void;
   onBloqueCierre?: (payload: { vehicleId: string; sub: SubVehiculo; status: string }) => void;
@@ -9073,9 +9208,6 @@ function VehicleCard({
   const [timerExpired, setTimerExpired] = useState(false);
   const [debtDisplay, setDebtDisplay] = useState("");
   const [targetTimeLabel, setTargetTimeLabel] = useState("");
-  const [coloresConfirmados, setColoresConfirmados] = useState<boolean[]>(Array(7).fill(false));
-  const [colorInmersion, setColorInmersion] = useState<{ color: string; zona: string; idx: number } | null>(null);
-  const [inmersionCount, setInmersionCount] = useState(3);
   const [showDescansoReloj, setShowDescansoReloj] = useState(false);
   const [newSubTarea, setNewSubTarea] = useState("");
   const [cantidadRealizada, setCantidadRealizada] = useState("");
@@ -9892,6 +10024,10 @@ function VehicleCard({
   }, [vehicle.tipoFlota, situacionBloqueListo]);
 
   useEffect(() => {
+    if (situacionCronActivo) setSubTasksCollapsed(false);
+  }, [situacionCronActivo]);
+
+  useEffect(() => {
     if (situacionCronActivo) return;
     if (situacionBolsaSegundo > 0) {
       setSituacionRetoObjetivoHora(formatHHMM(Date.now() + situacionBolsaSegundo * 60000));
@@ -9911,24 +10047,6 @@ function VehicleCard({
   const showSituacionDetallesUi = !!(arquitectoUnlocked || situacionCanViewDetalles);
   const canAddSituacionDetalles = !!(arquitectoUnlocked || (situacionCanViewDetalles && situacionCronActivo));
   const effectivePotentialCP = potentialCPCumplido;
-
-  useEffect(() => {
-    if (!colorInmersion) return;
-    setInmersionCount(3);
-    const timer = setTimeout(() => {
-      setColoresConfirmados(prev => { const n = [...prev]; n[colorInmersion.idx] = true; return n; });
-      setColorInmersion(null);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [colorInmersion]);
-
-  useEffect(() => {
-    if (!colorInmersion) return;
-    const interval = setInterval(() => {
-      setInmersionCount(prev => Math.max(1, prev - 1));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [colorInmersion]);
 
   const resetExecSubForm = () => {
     setShowExecAddSub(false);
@@ -10082,60 +10200,6 @@ function VehicleCard({
 
   return (
     <motion.div layout className="rounded-xl border overflow-hidden" style={{ backgroundColor: "#0a0a0a", borderColor: `${statusColors[vehicle.status]}30` }}>
-
-      <AnimatePresence>
-        {colorInmersion && (
-          <motion.div
-            key="color-inmersion"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0, transition: { duration: 0.8 } }}
-            transition={{ duration: 0.25 }}
-            onClick={() => {
-              setColoresConfirmados(prev => { const n = [...prev]; n[colorInmersion.idx] = true; return n; });
-              setColorInmersion(null);
-            }}
-            className="fixed inset-0 flex flex-col items-center justify-center"
-            style={{ zIndex: 9999, backgroundColor: `${colorInmersion.color}E0`, cursor: "pointer" }}
-            data-testid={`overlay-inmersion-${vehicle.id}`}
-          >
-            <motion.div
-              initial={{ scale: 0.7, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 1.1, opacity: 0 }}
-              transition={{ duration: 0.3, ease: "easeOut" }}
-              className="flex flex-col items-center gap-6 select-none"
-            >
-              <div className="w-32 h-32 rounded-full" style={{ backgroundColor: colorInmersion.color, boxShadow: `0 0 60px ${colorInmersion.color}, 0 0 120px ${colorInmersion.color}80` }} />
-              <p className="text-5xl font-black uppercase tracking-widest text-white" style={{ textShadow: "0 2px 20px rgba(0,0,0,0.6)", fontFamily: "Playfair Display, serif" }}>{colorInmersion.zona.toUpperCase()}</p>
-              <p className="text-sm text-white/60 uppercase tracking-[0.25em]">Inhálalo · Introdúcelo a su zona</p>
-              <motion.p
-                key={inmersionCount}
-                initial={{ opacity: 0, scale: 1.4 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3, ease: "easeOut" }}
-                className="text-4xl font-black text-white/80 tabular-nums"
-                style={{ textShadow: "0 2px 16px rgba(0,0,0,0.5)", fontFamily: "Playfair Display, serif" }}
-                data-testid={`inmersion-countdown-${vehicle.id}`}
-              >
-                {inmersionCount}
-              </motion.p>
-              <div className="w-48 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.2)" }} data-testid={`inmersion-progress-track-${vehicle.id}`}>
-                <motion.div
-                  key={colorInmersion.idx + "-" + colorInmersion.zona}
-                  initial={{ width: "0%" }}
-                  animate={{ width: "100%" }}
-                  transition={{ duration: 3, ease: "linear" }}
-                  className="h-full rounded-full"
-                  style={{ backgroundColor: "rgba(255,255,255,0.85)" }}
-                  data-testid={`inmersion-progress-bar-${vehicle.id}`}
-                />
-              </div>
-              <p className="text-xs text-white/30">Toca para continuar</p>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <button onClick={onToggle} className="w-full p-3 text-left" data-testid={`card-vehicle-${vehicle.id}`}>
         <div className="flex items-center justify-between mb-1">
@@ -11022,37 +11086,10 @@ function VehicleCard({
                       </button>
                     )}
                   </div>
+                  {!situacionCronActivo && (
                   <p className="text-[7px] text-slate-600 leading-snug mb-2 px-0.5 border-l-2 pl-2" style={{ borderColor: "rgba(139,92,246,0.4)" }}>
                     El espacio de enfoque es limitado — sella aquí solo lo que vas a sostener con tiempo. El resto ciérralo sin reloj. Meta horaria sellada: el tiempo se reparte en partes iguales; si fijas minutos en una fila, el resto se redistribuye.
                   </p>
-                  {situacionPuedeEncolarEnReto && (
-                    <div
-                      className="mb-2 p-2.5 rounded-xl border space-y-2"
-                      style={{ backgroundColor: "rgba(0,200,81,0.06)", borderColor: "rgba(0,200,81,0.28)" }}
-                      data-testid={`situacion-encolar-reto-${vehicle.id}`}
-                    >
-                      <p className="text-[8px] font-black uppercase tracking-wider" style={{ color: VERDE }}>
-                        Entrar al espacio de enfoque
-                      </p>
-                      <p className="text-[7px] text-slate-500 leading-snug">
-                        Selladas para el bloque · {situacionLibreSeleccion.size} tarea{situacionLibreSeleccion.size !== 1 ? "s" : ""} · la meta no se mueve
-                      </p>
-                      <button
-                        type="button"
-                        disabled={situacionLibreSeleccion.size === 0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onMoveSubTareasToCronometro?.(vehicle.id, [...situacionLibreSeleccion]);
-                          setSituacionLibreSeleccion(new Set());
-                        }}
-                        className="w-full py-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 disabled:opacity-40"
-                        style={{ backgroundColor: "rgba(0,200,81,0.12)", color: VERDE, border: "1px solid rgba(0,200,81,0.35)" }}
-                        data-testid={`situacion-anadir-cola-${vehicle.id}`}
-                      >
-                        <Plus size={12} />
-                        Sellar en enfoque (con tiempo)
-                      </button>
-                    </div>
                   )}
                   {!situacionCronActivo && onComplete && onArchive && (
                     <div className="grid grid-cols-2 gap-2 mb-2" data-testid={`situacion-cerrar-vehiculo-${vehicle.id}`}>
@@ -11114,6 +11151,55 @@ function VehicleCard({
                       </p>
                     </div>
                   )}
+                  {vehicle.situacionCronometro?.activo === true && (() => {
+                    void situacionCupoUiTick;
+                    const sc = vehicle.situacionCronometro!;
+                    const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? Date.now();
+                    const contratoMs = situacionContratoFinMs(sc);
+                    const nowTick = Date.now();
+                    const proyMs = computeSituacionProyeccionFinMs(vehicle.subTareas || [], {
+                      bloqueInicioAt: bloqueInicio,
+                      anchor: vehicle.situacionCupoAnchor,
+                      now: nowTick,
+                      saldoAdelantoMin: sc.saldoAdelantoMin,
+                    });
+                    const gananciaMin = situacionGananciaVsContratoMin(contratoMs, proyMs);
+                    const bonusEnCola = sumBonusPreviewEnColaPendiente(
+                      vehicle.subTareas || [],
+                      vehicle.situacionCupoAnchor,
+                      nowTick
+                    );
+                    const fmtHora = (ms: number | null) =>
+                      ms != null
+                        ? new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                        : "—";
+                    return (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 mb-2" data-testid={`situacion-reto-relojes-${vehicle.id}`}>
+                          <div className="p-2 rounded-lg border text-center" style={{ backgroundColor: "rgba(212,175,55,0.08)", borderColor: "rgba(212,175,55,0.28)" }}>
+                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: GOLD }}>Meta</p>
+                            <p className="text-sm font-black font-mono mt-0.5" style={{ color: GOLD }}>{fmtHora(contratoMs)}</p>
+                          </div>
+                          <div className="p-2 rounded-lg border text-center" style={{
+                            backgroundColor: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? "rgba(0,200,81,0.08)" : "rgba(148,163,184,0.06)",
+                            borderColor: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? "rgba(0,200,81,0.28)" : "rgba(148,163,184,0.2)",
+                          }}>
+                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : PLATA }}>Proyección</p>
+                            <p className="text-sm font-black font-mono mt-0.5" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : PLATA }}>{fmtHora(proyMs)}</p>
+                            {bonusEnCola > 0 ? (
+                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>+{bonusEnCola} min repartidos en cola</p>
+                            ) : gananciaMin != null && gananciaMin > 0 ? (
+                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>↓ {gananciaMin} min vs meta</p>
+                            ) : gananciaMin != null && gananciaMin < 0 ? (
+                              <p className="text-[7px] font-bold mt-0.5 text-red-400">↑ {Math.abs(gananciaMin)} min perdiendo</p>
+                            ) : (
+                              <p className="text-[7px] text-slate-500 mt-0.5">en tiempo</p>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                   {(() => {
                     void situacionCupoUiTick;
                     const anchor = vehicle.situacionCupoAnchor;
@@ -11157,59 +11243,6 @@ function VehicleCard({
                       Ver PS del bloque (+{situacionBloquePsTotal} PS)
                     </button>
                   )}
-                  {situacionCronActivo && onCerrarSituacionDesglosadorDeGolpe && (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); onCerrarSituacionDesglosadorDeGolpe(vehicle.id); }}
-                      className="w-full py-2.5 mb-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5"
-                      style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.35)" }}
-                      data-testid={`situacion-cerrar-de-golpe-${vehicle.id}`}
-                    >
-                      <Square size={11} />
-                      Cerrar desglosador de golpe
-                    </button>
-                  )}
-                  {vehicle.situacionCronometro?.activo === true && (() => {
-                    void situacionCupoUiTick;
-                    const sc = vehicle.situacionCronometro!;
-                    const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? Date.now();
-                    const contratoMs = situacionContratoFinMs(sc);
-                    const proyMs = computeSituacionProyeccionFinMs(vehicle.subTareas || [], {
-                      bloqueInicioAt: bloqueInicio,
-                      anchor: vehicle.situacionCupoAnchor,
-                      now: Date.now(),
-                      saldoAdelantoMin: sc.saldoAdelantoMin,
-                    });
-                    const gananciaMin = situacionGananciaVsContratoMin(contratoMs, proyMs);
-                    const fmtHora = (ms: number | null) =>
-                      ms != null
-                        ? new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                        : "—";
-                    return (
-                      <>
-                        <div className="grid grid-cols-2 gap-2 mb-2" data-testid={`situacion-reto-relojes-${vehicle.id}`}>
-                          <div className="p-2 rounded-lg border text-center" style={{ backgroundColor: "rgba(212,175,55,0.08)", borderColor: "rgba(212,175,55,0.28)" }}>
-                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: GOLD }}>Meta</p>
-                            <p className="text-sm font-black font-mono mt-0.5" style={{ color: GOLD }}>{fmtHora(contratoMs)}</p>
-                          </div>
-                          <div className="p-2 rounded-lg border text-center" style={{
-                            backgroundColor: gananciaMin != null && gananciaMin > 0 ? "rgba(0,200,81,0.08)" : "rgba(148,163,184,0.06)",
-                            borderColor: gananciaMin != null && gananciaMin > 0 ? "rgba(0,200,81,0.28)" : "rgba(148,163,184,0.2)",
-                          }}>
-                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: gananciaMin != null && gananciaMin > 0 ? VERDE : PLATA }}>Proyección</p>
-                            <p className="text-sm font-black font-mono mt-0.5" style={{ color: gananciaMin != null && gananciaMin > 0 ? VERDE : PLATA }}>{fmtHora(proyMs)}</p>
-                            {gananciaMin != null && gananciaMin > 0 ? (
-                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>↓ {gananciaMin} min ganando</p>
-                            ) : gananciaMin != null && gananciaMin < 0 ? (
-                              <p className="text-[7px] font-bold mt-0.5 text-red-400">↑ {Math.abs(gananciaMin)} min perdiendo</p>
-                            ) : (
-                              <p className="text-[7px] text-slate-500 mt-0.5">en tiempo</p>
-                            )}
-                          </div>
-                        </div>
-                      </>
-                    );
-                  })()}
                   {subTasksCollapsed && (vehicle.subTareas || []).length > 0 && (
                     <button
                       type="button"
@@ -11256,18 +11289,16 @@ function VehicleCard({
                                   })
                                 : [];
                             const horarioById = new Map(horariosCron.map(h => [h.subTareaId, h]));
-                            return (
+                            const renderLibre = subsLibre.length > 0 ? (
                               <>
-                                {subsLibre.length > 0 && (
-                                  <div className="px-0.5 mb-1 space-y-0.5">
-                                    <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: PLATA }}>
-                                      Resueltas aparte
-                                    </p>
-                                    <p className="text-[6px] text-slate-600 leading-snug">
-                                      Izq. sellar en enfoque (con tiempo) · Der. cerrar sin reloj (+2 PS)
-                                    </p>
-                                  </div>
-                                )}
+                                <div className="px-0.5 mb-1 space-y-0.5">
+                                  <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: PLATA }}>
+                                    Resueltas aparte
+                                  </p>
+                                  <p className="text-[6px] text-slate-600 leading-snug">
+                                    Izq. sellar en enfoque (con tiempo) · Der. cerrar sin reloj (+2 PS)
+                                  </p>
+                                </div>
                                 {subsLibre.map((st, stIdx) => {
                             const casaItems = (st.detalles || []).filter(d => d.casa);
                             const detallesEnergia = (st.detalles || []).filter(d => !d.casa);
@@ -11408,6 +11439,10 @@ function VehicleCard({
                               </div>
                             );
                           })}
+                              </>
+                            ) : null;
+                            const renderCron = subsCron.length > 0 ? (
+                              <>
                                 {subsCron.length > 0 && (
                                   <div className="flex items-center justify-between px-0.5 mt-2 gap-2 flex-wrap">
                                     <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: "#c4b5fd" }}>
@@ -11456,9 +11491,14 @@ function VehicleCard({
                                     horario?.finLabel ??
                                     (st.cerradaAt != null ? formatHHMM(st.cerradaAt) : null);
                                   const enFoco = horario?.enFoco ?? (pend && vehicle.situacionCupoAnchor?.subTareaId === st.id);
-                                  const bonusAcum = st.minutosGanadosAcum ?? 0;
+                                  const cupoBase = st.minutosCupo ?? 0;
+                                  const cupoEfectivo = horario?.minutosCupo ?? cupoBase;
+                                  const bonusCola =
+                                    pend && !enFoco && situacionCronActivo && cupoEfectivo > cupoBase
+                                      ? cupoEfectivo - cupoBase
+                                      : 0;
                                   return (
-                                    <div key={st.id} className="rounded-lg overflow-hidden" style={{ backgroundColor: bad ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.02)", border: bad ? "1px solid rgba(239,68,68,0.2)" : undefined }}>
+                                    <div key={st.id} className="rounded-lg overflow-hidden" style={{ backgroundColor: bad ? "rgba(239,68,68,0.06)" : bonusCola > 0 ? "rgba(0,200,81,0.04)" : "rgba(255,255,255,0.02)", border: bad ? "1px solid rgba(239,68,68,0.2)" : bonusCola > 0 ? "1px solid rgba(0,200,81,0.18)" : undefined }}>
                                       <div className="flex flex-col gap-1 p-1.5">
                                         <div className="flex items-center gap-2 flex-wrap">
                                           {pend && desglosadorReorderMode && vehicle.situacionCronometro?.activo && onReorderSubTareasCronometro && pIdx >= 0 && (
@@ -11527,6 +11567,16 @@ function VehicleCard({
                                               Min
                                               {st.cupoFijo && <Lock size={8} style={{ color: GOLD }} title="Minutos fijados manualmente" />}
                                             </span>
+                                            {bonusCola > 0 ? (
+                                              <span
+                                                className="w-11 px-1 py-0.5 rounded text-[9px] text-center font-mono font-black inline-block"
+                                                style={{ backgroundColor: "rgba(0,200,81,0.15)", color: VERDE, border: "1px solid rgba(0,200,81,0.45)" }}
+                                                title={`${cupoBase} min base + ${bonusCola} min ganados en vivo`}
+                                                data-testid={`input-subtarea-cupo-cron-${st.id}`}
+                                              >
+                                                {cupoEfectivo}
+                                              </span>
+                                            ) : (
                                             <input
                                               type="number"
                                               min={0}
@@ -11547,23 +11597,21 @@ function VehicleCard({
                                               title={st.cupoFijo ? "Fijado: el sobrante se reparte entre las demás filas" : "Fija minutos; el resto se reparte automáticamente"}
                                               data-testid={`input-subtarea-cupo-cron-${st.id}`}
                                             />
+                                            )}
+                                            {bonusCola > 0 && (
+                                              <span className="text-[7px] font-black uppercase tracking-wide" style={{ color: VERDE }}>
+                                                +{bonusCola} ganados
+                                              </span>
+                                            )}
                                             {finLabel && (
                                               <span
                                                 className="text-[7px] font-mono font-bold"
-                                                style={{ color: enFoco ? GOLD : "rgba(148,163,184,0.85)" }}
+                                                style={{ color: enFoco ? GOLD : bonusCola > 0 ? VERDE : pend ? VERDE : "rgba(148,163,184,0.85)" }}
                                                 data-testid={`situacion-cron-objetivo-${st.id}`}
                                                 title="Hora objetivo de fin de esta fila"
                                               >
                                                 → {finLabel}
-                                              </span>
-                                            )}
-                                            {bonusAcum > 0 && (
-                                              <span
-                                                className="text-[7px] font-black px-1 py-0.5 rounded"
-                                                style={{ backgroundColor: "rgba(0,200,81,0.15)", color: "#00C851" }}
-                                                data-testid={`situacion-cron-bonus-${st.id}`}
-                                              >
-                                                +{bonusAcum} min
+                                                {pend && !enFoco && cupoEfectivo > 0 ? ` · ${cupoEfectivo}′` : ""}
                                               </span>
                                             )}
                                             {onExtendSituacionCupo && (
@@ -11684,12 +11732,68 @@ function VehicleCard({
                                   );
                                 })}
                               </>
+                            ) : null;
+                            return (
+                              <>
+                                {situacionCronActivo ? (
+                                  <>
+                                    {renderCron}
+                                    {renderLibre}
+                                  </>
+                                ) : (
+                                  <>
+                                    {renderLibre}
+                                    {renderCron}
+                                  </>
+                                )}
+                              </>
                             );
                           })()}
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  {situacionPuedeEncolarEnReto && (
+                    <div
+                      className="mt-2 mb-2 p-2.5 rounded-xl border space-y-2"
+                      style={{ backgroundColor: "rgba(0,200,81,0.06)", borderColor: "rgba(0,200,81,0.28)" }}
+                      data-testid={`situacion-encolar-reto-${vehicle.id}`}
+                    >
+                      <p className="text-[8px] font-black uppercase tracking-wider" style={{ color: VERDE }}>
+                        Añadir al espacio de enfoque
+                      </p>
+                      <p className="text-[7px] text-slate-500 leading-snug">
+                        Selladas para el bloque · {situacionLibreSeleccion.size} tarea{situacionLibreSeleccion.size !== 1 ? "s" : ""} · la meta no se mueve
+                      </p>
+                      <button
+                        type="button"
+                        disabled={situacionLibreSeleccion.size === 0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onMoveSubTareasToCronometro?.(vehicle.id, [...situacionLibreSeleccion]);
+                          setSituacionLibreSeleccion(new Set());
+                        }}
+                        className="w-full py-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 disabled:opacity-40"
+                        style={{ backgroundColor: "rgba(0,200,81,0.12)", color: VERDE, border: "1px solid rgba(0,200,81,0.35)" }}
+                        data-testid={`situacion-anadir-cola-${vehicle.id}`}
+                      >
+                        <Plus size={12} />
+                        Sellar en enfoque (con tiempo)
+                      </button>
+                    </div>
+                  )}
+                  {situacionCronActivo && onCerrarSituacionDesglosadorDeGolpe && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onCerrarSituacionDesglosadorDeGolpe(vehicle.id); }}
+                      className="w-full py-2.5 mb-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5"
+                      style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.35)" }}
+                      data-testid={`situacion-cerrar-de-golpe-${vehicle.id}`}
+                    >
+                      <Square size={11} />
+                      Cerrar desglosador de golpe
+                    </button>
+                  )}
                   <div className="flex gap-2 mt-2">
                     <input value={newSubTarea} onChange={(e) => setNewSubTarea(e.target.value)} onKeyDown={(e) => {
                       if (e.key !== "Enter" || !newSubTarea.trim()) return;
@@ -11759,112 +11863,18 @@ function VehicleCard({
                 const esPuntoCero = vehicle.tipoDescanso === "punto_cero";
 
                 if (esPuntoCero) {
-                  const ep = vehicle.etapasPuntoCero || { etapa1: false, etapa2: false, etapa3: false, etapa4: false };
-                  const epCompletados = [ep.etapa1, ep.etapa2, ep.etapa3, ep.etapa4].filter(Boolean).length;
-                  const ARCOIRIS = [
-                    { color: "#FF3131", zona: "Raíz" },
-                    { color: "#FF8C00", zona: "Sacro" },
-                    { color: "#FFD700", zona: "Plexo Solar" },
-                    { color: "#22C55E", zona: "Corazón" },
-                    { color: "#3B82F6", zona: "Garganta" },
-                    { color: "#6366F1", zona: "Tercer Ojo" },
-                    { color: "#8B5CF6", zona: "Corona" },
-                  ];
-                  const etapasCfg = [
-                    { key: "etapa1" as const, num: 1, label: "Tensión y quietud del cuerpo", instruccion: "Antes de la quietud: tensá el cuerpo por zonas en este orden — empezá por la cabeza; seguí bajando por el torso y las piernas hasta que el penúltimo foco sean los pies y el último las manos. Soltá todo y sentí el alivio agradable. Recién entonces quedate en quietud física total.", Icon: Circle },
-                    { key: "etapa2" as const, num: 2, label: "Identificación del Pensamiento", instruccion: "¿Qué estoy pensando? Lo identifico → apago ese movimiento mental.", Icon: Brain },
-                    { key: "etapa3" as const, num: 3, label: "Ritmo, polos y apnea", instruccion: "Primero: tomá conciencia del ritmo de tu respiración tal como está, sin corregirla. Después: jugá con polos opuestos (inhalá lleno / exhalá vacío, o el par que uses en tu práctica). Al final: retené la respiración unos segundos a tu medida y mantené sin aire con calma.", Icon: Wind },
-                    { key: "etapa4" as const, num: 4, label: "Alimento de Colores", instruccion: "Toca cada color para inhalarlo e introducirlo a su zona.", Icon: Sparkles },
-                  ];
-                  const todosColoresConfirmados = coloresConfirmados.every(Boolean);
                   return (
-                    <div className="space-y-2" data-testid={`descanso-msg-${vehicle.id}`}>
-                      <div className="p-3 rounded-xl border" style={{ backgroundColor: `${flotaColor}08`, borderColor: `${flotaColor}30` }}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <Circle size={14} style={{ color: flotaColor }} />
-                          <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: flotaColor }}>PUNTO CERO</span>
-                          <span className="ml-auto text-[8px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${flotaColor}15`, color: flotaColor }}>{epCompletados}/4 PS</span>
-                          <button onClick={() => setShowDescansoReloj(v => !v)} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full border transition-all" style={{ backgroundColor: showDescansoReloj ? `${flotaColor}20` : "transparent", borderColor: showDescansoReloj ? flotaColor : "rgba(255,255,255,0.15)", color: showDescansoReloj ? flotaColor : "#64748b" }} data-testid={`toggle-reloj-descanso-${vehicle.id}`} title={showDescansoReloj ? "Ocultar reloj" : "Ver reloj"}>
-                            <Clock size={10} />
-                          </button>
-                        </div>
-                        <p className="text-[9px] text-slate-500 italic">Polo Neutro{showDescansoReloj ? " · Reloj activo" : " · Reloj oculto"}</p>
-                        {eficienciaSec !== null && (
-                          <p className="text-[8px] mt-1" style={{ color: flotaColor }}>⚡ Primera etapa: {eficienciaSec < 60 ? `${eficienciaSec}s` : `${Math.round(eficienciaSec / 60)}m`} desde apertura</p>
-                        )}
-                      </div>
-                      {showMicroPasos && (
-                        <div className="space-y-1.5">
-                          {etapasCfg.map(({ key, num, label, instruccion, Icon: EtapaIcon }) => {
-                            const checked = ep[key];
-                            const isColorEtapa = key === "etapa4";
-                            const colorCount = coloresConfirmados.filter(Boolean).length;
-                            const prevRequired = key === "etapa2" ? !ep.etapa1 : key === "etapa3" ? !ep.etapa2 : key === "etapa4" ? (!ep.etapa3 || !todosColoresConfirmados) : false;
-                            const isLocked = !checked && prevRequired;
-                            return (
-                              <div key={key}>
-                                <button
-                                  onClick={() => {
-                                    if (checked || isLocked) return;
-                                    onEtapaPuntoCeroToggle?.(vehicle.id, key);
-                                  }}
-                                  disabled={checked || isLocked}
-                                  className="w-full flex items-start gap-3 p-2.5 rounded-xl border transition-all text-left"
-                                  style={{ backgroundColor: checked ? `${flotaColor}10` : "rgba(255,255,255,0.03)", borderColor: checked ? flotaColor : (isLocked ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)"), cursor: (checked || isLocked) ? "default" : "pointer", opacity: isLocked ? 0.4 : 1 }}
-                                  data-testid={`etapa-pc-${key}-${vehicle.id}`}
-                                >
-                                  <div className="w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5" style={{ borderColor: checked ? flotaColor : "rgba(255,255,255,0.2)", backgroundColor: checked ? `${flotaColor}20` : "transparent" }}>
-                                    {checked ? <Check size={9} style={{ color: flotaColor }} /> : <EtapaIcon size={9} style={{ color: isLocked ? "#334155" : "#64748b" }} />}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-[9px] font-bold" style={{ color: checked ? flotaColor : "#64748b" }}>{label}</p>
-                                    <p className="text-[8px] text-slate-600 mt-0.5">{instruccion}</p>
-                                  </div>
-                                  {checked
-                                    ? <span className="text-[8px] font-bold flex-shrink-0" style={{ color: flotaColor }}>+1 PS</span>
-                                    : isColorEtapa && ep.etapa3
-                                      ? <span className="text-[8px] flex-shrink-0" style={{ color: todosColoresConfirmados ? flotaColor : "#64748b" }}>{colorCount}/7</span>
-                                      : <span className="text-[8px] text-slate-600 flex-shrink-0">activar</span>
-                                  }
-                                </button>
-                                {isColorEtapa && !checked && ep.etapa3 && (
-                                  <div className="grid grid-cols-4 gap-2 mt-2 px-1">
-                                    {ARCOIRIS.map(({ color, zona }, idx) => {
-                                      const confirmado = coloresConfirmados[idx];
-                                      return (
-                                        <button
-                                          key={zona}
-                                          onClick={e => { e.stopPropagation(); if (!confirmado) setColorInmersion({ color, zona, idx }); }}
-                                          disabled={confirmado}
-                                          className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl border transition-all"
-                                          style={{ backgroundColor: confirmado ? `${color}25` : `${color}12`, borderColor: confirmado ? color : `${color}35`, cursor: confirmado ? "default" : "pointer", boxShadow: confirmado ? `0 0 10px ${color}50` : `0 0 4px ${color}20` }}
-                                          data-testid={`color-pc-${idx}-${vehicle.id}`}
-                                        >
-                                          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: confirmado ? color : `${color}40`, boxShadow: confirmado ? `0 0 8px ${color}` : "none" }}>
-                                            {confirmado && <Check size={10} color="#fff" />}
-                                          </div>
-                                          <span className="text-[7px] font-bold text-center leading-tight" style={{ color: confirmado ? color : `${color}90` }}>{zona}</span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                                {isColorEtapa && checked && (
-                                  <div className="flex gap-1 flex-wrap mt-1.5 px-1">
-                                    {ARCOIRIS.map(({ color, zona }) => (
-                                      <span key={zona} className="text-[7px] px-1.5 py-0.5 rounded-full font-bold" style={{ backgroundColor: `${color}20`, color, border: `1px solid ${color}40` }}>✓ {zona}</span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                      {!showMicroPasos && (
-                        <p className="text-[8px] text-center text-slate-600">Las etapas aparecerán en unos segundos...</p>
-                      )}
-                    </div>
+                    <PuntoCeroPanel
+                      vehicle={vehicle}
+                      flotaColor={flotaColor}
+                      showMicroPasos={showMicroPasos}
+                      showDescansoReloj={showDescansoReloj}
+                      onToggleReloj={() => setShowDescansoReloj(v => !v)}
+                      onEtapaToggle={(id, etapa) => onEtapaPuntoCeroToggle?.(id, etapa)}
+                      onColorConfirm={(id, idx, session) => onPuntoCeroColorConfirm?.(id, idx, session)}
+                      onSessionPersist={(id, session) => onPuntoCeroSessionUpdate?.(id, session)}
+                      onAutoClose={id => onPuntoCeroAutoClose?.(id)}
+                    />
                   );
                 }
 

@@ -15,6 +15,7 @@ import {
   situacionRelojDebeMostrarse,
   situacionTargetMsReloj,
   remainingCronometroBudgetMin,
+  sumBonusPreviewEnColaPendiente,
   sumMinutosCronometroPendientes,
 } from "./situacionCupoDistrib.ts";
 
@@ -133,7 +134,7 @@ describe("computeSituacionCronometroHorarios", () => {
     assert.equal(horarios[0]!.enFoco, true);
   });
 
-  it("preview adelanta cursor cuando la fila foco va ganando tiempo", () => {
+  it("preview suma minutosCupo en filas posteriores mientras el foco va ganando", () => {
     const subs = [st("a", 15), st("b", 10), st("c", 10)];
     const anchorAt = base;
     const now = base + 5 * 60000;
@@ -149,7 +150,17 @@ describe("computeSituacionCronometroHorarios", () => {
       now,
       previewTiempoGanado: true,
     });
-    assert.ok(conPreview[1]!.finMs <= sinPreview[1]!.finMs);
+    const durSinB = sinPreview[1]!.finMs - sinPreview[1]!.inicioMs;
+    const durConB = conPreview[1]!.finMs - conPreview[1]!.inicioMs;
+    assert.equal(durSinB, 10 * 60000);
+    assert.equal(durConB, 15 * 60000);
+  });
+
+  it("sumBonusPreviewEnColaPendiente cuenta minutos virtuales repartidos", () => {
+    const subs = [st("a", 15), st("b", 10), st("c", 10)];
+    const now = base + 5 * 60000;
+    const bonus = sumBonusPreviewEnColaPendiente(subs, { subTareaId: "a", startedAt: base }, now);
+    assert.equal(bonus, 10);
   });
 });
 
@@ -160,7 +171,7 @@ describe("contrato vs proyección", () => {
     assert.equal(situacionGananciaVsContratoMin(contrato, proy), 8);
   });
 
-  it("computeSituacionProyeccionFinMs acorta con tiempo ganado en foco", () => {
+  it("computeSituacionProyeccionFinMs incluye cupo extra en preview en vivo", () => {
     const base = 1_700_000_000_000;
     const subs = [st("a", 15), st("b", 10)];
     const now = base + 8 * 60000;
@@ -171,7 +182,7 @@ describe("contrato vs proyección", () => {
       saldoAdelantoMin: 0,
     });
     assert.ok(proy != null);
-    assert.ok(proy < base + 25 * 60000);
+    assert.ok(proy! > base + 15 * 60000);
   });
 });
 
@@ -192,7 +203,7 @@ describe("situacionRelojDebeMostrarse", () => {
 describe("aplicarTiempoGanadoAlCumplir", () => {
   const base = 1_700_000_000_000;
 
-  it("reparte minutos ganados como chips en cola flexibles", () => {
+  it("reparte minutos ganados en minutosCupo de filas posteriores flexibles", () => {
     const subs = [st("a", 15), st("b", 10), st("c", 10, true)];
     const now = base + 10 * 60000;
     const { subTareas: out, minutosGanados } = aplicarTiempoGanadoAlCumplir(
@@ -204,8 +215,8 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     );
     assert.equal(minutosGanados, 5);
     const b = out.find(s => s.id === "b")!;
-    assert.equal(b.minutosCupo, 10);
-    assert.equal(b.minutosGanadosAcum, 5);
+    assert.equal(b.minutosCupo, 15);
+    assert.equal(b.minutosGanadosAcum, undefined);
     const c = out.find(s => s.id === "c")!;
     assert.equal(c.minutosCupo, 10);
     assert.equal(c.minutosGanadosAcum, undefined);

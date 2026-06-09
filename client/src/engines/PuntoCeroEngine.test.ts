@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  confirmColor,
+  faseDuracionesMin,
+  initPuntoCeroSession,
+  shouldEnterPasiva,
+  shouldComplete,
+  tickPuntoCero,
+  todosColoresConfirmados,
+} from "./PuntoCeroEngine.ts";
+
+describe("PuntoCeroEngine", () => {
+  it("faseDuracionesMin reparte 1/3 activa y 2/3 pasiva", () => {
+    const d15 = faseDuracionesMin(15);
+    assert.equal(d15.activaMin + d15.pasivaMin, 15);
+    assert.equal(d15.activaMin, 5);
+
+    const d20 = faseDuracionesMin(20);
+    assert.equal(d20.activaMin + d20.pasivaMin, 20);
+  });
+
+  it("shouldEnterPasiva al completar 7 colores antes del min activo", () => {
+    const base = 1_700_000_000_000;
+    let s = initPuntoCeroSession("dia", 15, base);
+    for (let i = 0; i < 7; i++) s = confirmColor(s, i);
+    assert.equal(shouldEnterPasiva(s, base + 2 * 60000, s.coloresConfirmados), true);
+  });
+
+  it("shouldEnterPasiva al agotar minutos activos sin colores", () => {
+    const base = 1_700_000_000_000;
+    const s = initPuntoCeroSession("dia", 15, base);
+    assert.equal(shouldEnterPasiva(s, base + 5 * 60000, s.coloresConfirmados), true);
+  });
+
+  it("tickPuntoCero transiciona a pasiva y luego completada", () => {
+    const base = 1_700_000_000_000;
+    let s = initPuntoCeroSession("noche", 15, base);
+    for (let i = 0; i < 7; i++) s = confirmColor(s, i);
+    const t1 = tickPuntoCero(s, base + 60_000);
+    assert.equal(t1.session.fase, "pasiva");
+    assert.ok(t1.events.some(e => e.type === "enter_pasiva"));
+
+    const t2 = tickPuntoCero(t1.session, base + 15 * 60000);
+    assert.equal(t2.session.fase, "completada");
+    assert.ok(t2.events.some(e => e.type === "auto_close_due"));
+  });
+
+  it("shouldComplete al llegar duracionTotalMin", () => {
+    const base = 1_700_000_000_000;
+    const s = initPuntoCeroSession("dia", 20, base);
+    assert.equal(shouldComplete(s, base + 19 * 60000), false);
+    assert.equal(shouldComplete(s, base + 20 * 60000), true);
+  });
+
+  it("todosColoresConfirmados requiere los 7", () => {
+    const cols = [true, true, true, true, true, true, false];
+    assert.equal(todosColoresConfirmados(cols), false);
+    assert.equal(todosColoresConfirmados([...cols.slice(0, 6), true]), true);
+  });
+});

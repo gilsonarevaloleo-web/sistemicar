@@ -63,6 +63,21 @@ describe("segmentCrossEntropyEngine", () => {
     ).toBe(false);
   });
 
+  it("excluye desglosador en foco del cruce de segmento", () => {
+    const active = seg({ id: "b", estado: "activo", horaInicio: "10:00" });
+    const desg = vehicle({
+      id: "d1",
+      segmentoId: "a",
+      tipoReloj: "desglosador",
+      tipoFlota: "tiempo",
+      subVehiculos: [{ id: "s1", titulo: "Turno", status: "activo" }],
+    });
+    expect(isVehicleFromPreviousSegment(desg, active, dayStart)).toBe(false);
+    const { start } = segmentWindowMs("10:00", "12:00", dayStart);
+    const grace = getCruceGraciaState(desg, active, start + CRUCE_GRACE_MIN * 60000, dayStart);
+    expect(grace.phase).toBe("none");
+  });
+
   it("gracia activa antes de 8 min y expirada después", () => {
     const { start } = segmentWindowMs("10:00", "12:00", dayStart);
     const active = seg({ id: "b", estado: "activo", horaInicio: "10:00" });
