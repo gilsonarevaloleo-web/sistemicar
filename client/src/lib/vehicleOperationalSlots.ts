@@ -10,9 +10,11 @@ export interface OperationalSlotsCheck {
   blockingVehicles?: Vehicle[];
 }
 
-/** Activos conscientes que consumen slot operativo. */
+/** Activos conscientes que consumen slot operativo (descanso no cuenta: recarga libre). */
 export function getOperationalActives(vehicles: Vehicle[]): Vehicle[] {
-  return vehicles.filter(v => v.status === "activo" && !v.autoVerdad);
+  return vehicles.filter(
+    v => v.status === "activo" && !v.autoVerdad && v.tipoFlota !== "descanso"
+  );
 }
 
 /** Desglosador con trabajo en curso (durabilidad / cruce de segmentos). */
@@ -36,9 +38,8 @@ function blockResult(
 }
 
 /**
- * Tope de 2 misiones operativas:
- * - Descanso como 2.º slot solo junto a desglosador en foco.
- * - Interrupción: padre pausado + hijo = 2 slots (máx. antes de lanzar: 1 activo = el padre).
+ * Tope de 2 misiones operativas (descanso exento — usable en cualquier momento).
+ * Interrupción: padre pausado + hijo = 2 slots (máx. antes de lanzar: 1 activo = el padre).
  */
 export function assertCanOpenVehicle(
   vehicles: Vehicle[],
@@ -60,18 +61,6 @@ export function assertCanOpenVehicle(
   }
 
   if (kind === "descanso") {
-    if (actives.length >= MAX_OPERATIONAL_SLOTS) {
-      return blockResult(
-        "Tienes 2 misiones abiertas. Cierra una antes de abrir descanso.",
-        actives
-      );
-    }
-    if (actives.length === 1 && !isDesglosadorEnFoco(actives[0]!)) {
-      return blockResult(
-        "Descanso como 2.º slot solo junto a un desglosador en foco.",
-        actives
-      );
-    }
     return { allowed: true };
   }
 

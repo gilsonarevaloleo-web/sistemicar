@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { Shield, Users, CheckCircle, Crown, Zap, Eye, EyeOff, RefreshCw, DollarSign, AlertTriangle, Database, ArrowRight, FlaskConical, Star, Trash2, Brain, Dna, X, Sprout } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
-import { findAccountsWithData, migrateDataToNewUid, subscribeToPrincipiosMaestros, addPrincipioMaestro, deletePrincipioMaestro, PrincipioMaestro, subscribeToEnergyLogs, EnergyLog, subscribeToVehicles, Vehicle, subscribeToGenomeLaws, saveGenomeLaw, updateGenomeLawStatus, deleteGenomeLaw, GenomeLaw, findUserByEmail, getAllProspectos } from "@/lib/persistence";
+import { findAccountsWithData, migrateDataToNewUid, subscribeToPrincipiosMaestros, addPrincipioMaestro, deletePrincipioMaestro, PrincipioMaestro, subscribeToEnergyLogs, EnergyLog, subscribeToVehicles, Vehicle, subscribeToGenomeLaws, saveGenomeLaw, updateGenomeLawStatus, deleteGenomeLaw, GenomeLaw, getAllProspectos } from "@/lib/persistence";
 import { useAuthContext } from "@/App";
 import { isOwner } from "@/lib/owner";
 import { auth, getUserEmail } from "@/lib/firebase";
@@ -47,6 +47,20 @@ interface AccountData {
   rank: string;
   lastUpdated: Date | null;
 }
+
+type AdminUserLookup = {
+  found: boolean;
+  adminReady: boolean;
+  uid?: string;
+  email?: string;
+  emailVerified?: boolean;
+  displayName?: string | null;
+  providers?: string[];
+  rank?: string;
+  totalCP?: number;
+  activeModules?: string[];
+  subscriptionPlan?: string | null;
+};
 
 export default function AdminGilson() {
   const { user } = useAuthContext();
@@ -101,7 +115,7 @@ export default function AdminGilson() {
   const [moduleSource, setModuleSource] = useState<"yape" | "paypal" | "manual">("yape");
   const [moduleNote, setModuleNote] = useState("");
   const [moduleSaving, setModuleSaving] = useState(false);
-  const [moduleSearchResult, setModuleSearchResult] = useState<{ uid: string; email: string; rank: string; totalCP: number } | null>(null);
+  const [moduleSearchResult, setModuleSearchResult] = useState<AdminUserLookup | null>(null);
   const [moduleSearching, setModuleSearching] = useState(false);
   const [sellerSales, setSellerSales] = useState<Array<{
     id: string;
@@ -195,6 +209,26 @@ export default function AdminGilson() {
   const getAdminHeaders = async (): Promise<Record<string, string>> => {
     const idToken = auth?.currentUser ? await getIdToken(auth.currentUser, false).catch(() => "") : "";
     return idToken ? { Authorization: `Bearer ${idToken}` } : {};
+  };
+
+  const lookupUserAdmin = async (targetEmail: string): Promise<AdminUserLookup | null> => {
+    const headers = await getAdminHeaders();
+    if (!headers.Authorization) {
+      toast.error("Inicia sesión con tu cuenta Gilson (Google) para buscar usuarios en Firebase Auth.");
+      return null;
+    }
+    const res = await fetch(
+      `/api/admin/users/lookup?email=${encodeURIComponent(targetEmail.trim())}`,
+      { headers }
+    );
+    const data = (await res.json()) as AdminUserLookup & { error?: string };
+    if (res.status === 404) {
+      return { found: false, adminReady: data.adminReady ?? false };
+    }
+    if (!res.ok) {
+      throw new Error(data.error || "Error buscando usuario");
+    }
+    return data;
   };
 
   const loadCreditDeliveries = async () => {
@@ -1132,16 +1166,25 @@ export default function AdminGilson() {
                     setCreditSearching(true);
                     setCreditSearchResult(null);
                     try {
-                      const result = await findUserByEmail(creditEmail.trim());
-                      if (result) {
-                        setCreditSearchResult(result);
+                      const result = await lookupUserAdmin(creditEmail.trim());
+                      if (result?.found && result.uid) {
+                        setCreditSearchResult({
+                          uid: result.uid,
+                          email: result.email ?? creditEmail.trim(),
+                          rank: result.rank ?? "iniciado",
+                          totalCP: result.totalCP ?? 0,
+                        });
                         setShowCreditFallback(false);
-                        toast.success("Usuario encontrado");
+                        toast.success("Usuario encontrado en Firebase Auth");
                       } else {
                         setShowCreditFallback(true);
-                        toast.info("Usuario no encontrado — puedes asignar créditos directamente por email");
+                        toast.info(
+                          result?.adminReady === false
+                            ? "No encontrado. Además: FIREBASE_SERVICE_ACCOUNT_JSON no está en el servidor — activación limitada."
+                            : "No hay cuenta con ese correo en Firebase Auth. Debe iniciar sesión con Google usando ese email exacto."
+                        );
                       }
-                    } catch (e) {
+                    } catch {
                       toast.error("Error buscando usuario");
                     }
                     setCreditSearching(false);
@@ -1390,7 +1433,7 @@ export default function AdminGilson() {
             <div className="p-4 rounded-xl bg-sky-500/10 border border-sky-500/20">
               <h3 className="text-sky-400 font-bold mb-3">Activar Planificación (Yape / manual)</h3>
               <p className="text-xs text-slate-400 mb-4">
-                Activa módulos en Firebase para el email exacto del comprador. Debe haber iniciado sesión al menos una vez.
+                Activa módulos en Firebase Auth + Firestore. El comprador debe haber iniciado sesión con Google usando el mismo correo que pagó por Yape.
               </p>
               <div className="flex flex-wrap gap-2 mb-3">
                 {(["yape", "paypal", "manual"] as const).map((src) => (
@@ -1441,12 +1484,17 @@ export default function AdminGilson() {
                     setModuleSearching(true);
                     setModuleSearchResult(null);
                     try {
-                      const result = await findUserByEmail(moduleEmail.trim());
-                      if (result) {
+                      const result = await lookupUserAdmin(moduleEmail.trim());
+                      if (result?.found && result.uid) {
                         setModuleSearchResult(result);
-                        toast.success("Usuario encontrado en Firebase");
+                        toast.success("Usuario encontrado en Firebase Auth");
                       } else {
-                        toast.info("No encontrado — puede activar igual si el email es correcto");
+                        setModuleSearchResult(null);
+                        toast.info(
+                          result?.adminReady === false
+                            ? "No encontrado. Configura FIREBASE_SERVICE_ACCOUNT_JSON en el servidor para activar módulos."
+                            : "No hay cuenta con ese correo en Firebase Auth. Debe iniciar sesión con Google al menos una vez."
+                        );
                       }
                     } catch {
                       toast.error("Error buscando usuario");
@@ -1460,10 +1508,24 @@ export default function AdminGilson() {
                   {moduleSearching ? "..." : "Buscar"}
                 </button>
               </div>
-              {moduleSearchResult && (
-                <p className="text-xs text-slate-400 mb-3">
-                  {moduleSearchResult.email} · {moduleSearchResult.rank} · CP {moduleSearchResult.totalCP}
-                </p>
+              {moduleSearchResult?.found && moduleSearchResult.uid && (
+                <div className="text-xs text-slate-400 mb-3 space-y-1">
+                  <p>
+                    {moduleSearchResult.email} · uid {moduleSearchResult.uid.slice(0, 8)}… ·{" "}
+                    {moduleSearchResult.rank} · CP {moduleSearchResult.totalCP ?? 0}
+                  </p>
+                  {moduleSearchResult.providers?.length ? (
+                    <p>Login: {moduleSearchResult.providers.join(", ")}</p>
+                  ) : null}
+                  {moduleSearchResult.activeModules?.length ? (
+                    <p>Módulos: {moduleSearchResult.activeModules.join(", ")}</p>
+                  ) : null}
+                  {moduleSearchResult.adminReady === false && (
+                    <p className="text-amber-400">
+                      Servidor sin FIREBASE_SERVICE_ACCOUNT_JSON — la activación puede fallar.
+                    </p>
+                  )}
+                </div>
               )}
               <button
                 type="button"

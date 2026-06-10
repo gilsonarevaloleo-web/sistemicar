@@ -1,6 +1,7 @@
 import { deliverPuertaVoice, enqueueMissedPuertaVoice, isAppInBackground } from "./backgroundAttentionAlerts";
 import { buildPuertaVozPhrase } from "./puertaAtencionVoice";
-import { SegmentoV5 } from "./persistence";
+import { CRUCE_GRACE_MIN, CRUCE_WARNING_MIN, getCruceGraceEndMs } from "./segmentCrossEntropyEngine";
+import type { SegmentoV5, Vehicle } from "./persistence";
 import {
   getPuertaWindowMs,
   getVozDisparoMs,
@@ -71,6 +72,49 @@ function showScheduledNotification(opts: {
       });
     }
   }
+}
+
+export function scheduleCrossEntropyNotifications(segmentos: SegmentoV5[], vehicles: Vehicle[]): void {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+  const dayStart = getLimaDayStartMs();
+  const activeSeg = segmentos.find(s => s.estado === "activo");
+  if (!activeSeg) return;
+
+  const segmentStartMs = segmentClockMs(activeSeg.horaInicio, dayStart);
+  const warningMs = segmentStartMs + CRUCE_WARNING_MIN * 60000;
+  const graceEndMs = getCruceGraceEndMs(activeSeg.horaInicio, dayStart);
+  const crossing = vehicles.filter(
+    v =>
+      v.status === "activo" &&
+      !v.autoVerdad &&
+      v.tipoFlota !== "descanso" &&
+      v.segmentoId &&
+      v.segmentoId !== activeSeg.id
+  );
+
+  const msUntilWarning = warningMs - Date.now();
+  scheduleAt(msUntilWarning, () => {
+    showScheduledNotification({
+      title: `Cruce de segmento: ${activeSeg.nombre}`,
+      body:
+        crossing.length > 0
+          ? `${crossing.length} vehículo(s) del segmento anterior. Cierra y abre otro en ~${CRUCE_GRACE_MIN - CRUCE_WARNING_MIN} min.`
+          : "Si arrastras vehículos del segmento anterior, ciérralos y abre otro en esta zona.",
+      tag: `cruce-warn-${activeSeg.id}`,
+      voicePhrase: `Segmento ${activeSeg.nombre}. Cierra vehículos del bloque anterior y abre otro en esta zona.`,
+    });
+  });
+
+  const msUntilGraceEnd = graceEndMs - Date.now();
+  scheduleAt(msUntilGraceEnd, () => {
+    showScheduledNotification({
+      title: `Cierre automático: ${activeSeg.nombre}`,
+      body: "Gracia agotada. Los vehículos del segmento anterior se archivan por entropía-atención.",
+      tag: `cruce-close-${activeSeg.id}`,
+      voicePhrase: "Cierre por entropía-atención. Ordena tu jornada, operador.",
+    });
+  });
 }
 
 export function scheduleSegmentNotifications(segmentos: SegmentoV5[]): void {

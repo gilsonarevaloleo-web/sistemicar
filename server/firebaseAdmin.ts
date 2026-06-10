@@ -197,3 +197,78 @@ export async function activateModulesForEmail(email: string, planId: string): Pr
   }
   return activateModulesForUserById(uid, planId);
 }
+
+export type AdminUserLookupResult = {
+  found: boolean;
+  adminReady: boolean;
+  uid?: string;
+  email?: string;
+  emailVerified?: boolean;
+  displayName?: string | null;
+  providers?: string[];
+  rank?: string;
+  totalCP?: number;
+  activeModules?: string[];
+  subscriptionPlan?: string | null;
+};
+
+/** Busca usuario en Firebase Auth (fuente de verdad) + progresión si Admin SDK está listo. */
+export async function adminLookupUserByEmail(email: string): Promise<AdminUserLookupResult> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return { found: false, adminReady: isFirebaseAdminReady() };
+
+  const adminReady = isFirebaseAdminReady();
+  const adminApp = getAdminApp();
+
+  let uid: string | null = null;
+  let authEmail = normalized;
+  let emailVerified: boolean | undefined;
+  let displayName: string | null | undefined;
+  let providers: string[] | undefined;
+
+  if (adminApp) {
+    try {
+      const user = await getAuth(adminApp).getUserByEmail(normalized);
+      uid = user.uid;
+      authEmail = (user.email ?? normalized).toLowerCase();
+      emailVerified = user.emailVerified;
+      displayName = user.displayName ?? null;
+      providers = user.providerData.map(p => p.providerId);
+    } catch {
+      return { found: false, adminReady };
+    }
+  } else {
+    uid = await lookupUidByEmail(normalized);
+    if (!uid) return { found: false, adminReady };
+  }
+
+  let rank = "iniciado";
+  let totalCP = 0;
+  let activeModules: string[] | undefined;
+  let subscriptionPlan: string | null | undefined;
+
+  if (adminApp && uid) {
+    const db = getFirestore(adminApp);
+    const prog = await getLatestProgressionRef(db, uid);
+    if (prog) {
+      rank = (prog.data.rank as string) || "iniciado";
+      totalCP = (prog.data.totalCP as number) || (prog.data.points as number) || 0;
+      activeModules = prog.data.activeModules as string[] | undefined;
+      subscriptionPlan = (prog.data.subscriptionPlan as string) || null;
+    }
+  }
+
+  return {
+    found: true,
+    adminReady,
+    uid,
+    email: authEmail,
+    emailVerified,
+    displayName,
+    providers,
+    rank,
+    totalCP,
+    activeModules,
+    subscriptionPlan,
+  };
+}

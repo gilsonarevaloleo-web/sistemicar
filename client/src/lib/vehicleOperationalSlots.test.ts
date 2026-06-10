@@ -56,7 +56,7 @@ describe("vehicleOperationalSlots", () => {
     assert.equal(check.allowed, false);
   });
 
-  it("permite descanso junto a desglosador en foco", () => {
+  it("permite descanso con cualquier misión activa", () => {
     const desg = v({
       id: "d1",
       titulo: "Costura",
@@ -64,13 +64,28 @@ describe("vehicleOperationalSlots", () => {
       tipoFlota: "tiempo",
       subVehiculos: [{ id: "s1", titulo: "Turno", status: "activo" }],
     });
-    const check = assertCanOpenVehicle([desg], "descanso");
-    assert.equal(check.allowed, true);
+    assert.equal(assertCanOpenVehicle([desg], "descanso").allowed, true);
+
+    const sit = v({ id: "s1", titulo: "Situación", tipoFlota: "situacion" });
+    assert.equal(assertCanOpenVehicle([sit], "descanso").allowed, true);
   });
 
-  it("rechaza descanso si el único activo no es desglosador en foco", () => {
-    const sit = v({ id: "s1", titulo: "Situación", tipoFlota: "situacion" });
-    const check = assertCanOpenVehicle([sit], "descanso");
+  it("permite descanso aunque haya 2 misiones operativas abiertas", () => {
+    const list = [
+      v({ id: "a", titulo: "A", tipoFlota: "tiempo" }),
+      v({ id: "b", titulo: "B", tipoFlota: "situacion" }),
+    ];
+    assert.equal(assertCanOpenVehicle(list, "descanso").allowed, true);
+  });
+
+  it("descanso activo no consume slot operativo", () => {
+    const list = [
+      v({ id: "a", titulo: "A", tipoFlota: "tiempo" }),
+      v({ id: "b", titulo: "B", tipoFlota: "situacion" }),
+      v({ id: "c", titulo: "Escuchar", tipoFlota: "descanso" }),
+    ];
+    assert.equal(getOperationalActives(list).length, 2);
+    const check = assertCanOpenVehicle(list, "flota_general");
     assert.equal(check.allowed, false);
   });
 

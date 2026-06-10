@@ -156,7 +156,10 @@ export function PuntoCeroPanel({
   const audioEnabled = vehicle.status === "activo" && !!session;
   const puntoCeroAudio = usePuntoCeroAudio(audioEnabled, session?.modo, fase);
 
-  usePuntoCeroOrchestrator(session, vehicle.status === "activo" && !!session && !enCompletada, {
+  const orchestratorActive =
+    vehicle.status === "activo" && !!session && session.fase !== "completada";
+
+  usePuntoCeroOrchestrator(session, orchestratorActive, {
     onSessionUpdate: handleSessionUpdate,
     onAutoClose: () => onAutoClose(vehicle.id),
     onEnterPasiva: () => {
@@ -174,6 +177,12 @@ export function PuntoCeroPanel({
       });
     },
   });
+
+  useEffect(() => {
+    if (!enCompletada || vehicle.status !== "activo") return;
+    const t = window.setTimeout(() => onAutoClose(vehicle.id), 2500);
+    return () => clearTimeout(t);
+  }, [enCompletada, vehicle.status, vehicle.id, onAutoClose]);
 
   useEffect(() => {
     if (vehicle.status !== "activo" || vehicle.tipoDescanso !== "punto_cero" || session) return;
@@ -257,9 +266,25 @@ export function PuntoCeroPanel({
               </p>
             )}
             {enCompletada && (
-              <p className="text-[10px] font-bold" style={{ color: flotaColor }}>
-                Punto Cero completado
-              </p>
+              <div className="space-y-5 pt-2">
+                <p className="text-[10px] font-bold" style={{ color: flotaColor }}>
+                  Punto Cero completado
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onAutoClose(vehicle.id)}
+                  className="w-full min-h-[3rem] px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-[0.2em] border-2 transition-transform active:scale-[0.98]"
+                  style={{
+                    backgroundColor: `${flotaColor}22`,
+                    borderColor: flotaColor,
+                    color: flotaColor,
+                    boxShadow: `0 0 24px ${flotaColor}30`,
+                  }}
+                  data-testid={`punto-cero-cerrar-${vehicle.id}`}
+                >
+                  Cerrar y retomar
+                </button>
+              </div>
             )}
           </div>
         </div>

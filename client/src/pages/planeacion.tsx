@@ -190,9 +190,14 @@ import {
 } from "@/components/RutaSeguimientoPicker";
 import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis, recoverSpeechQueue } from "@/lib/speechQueue";
 import {
-  deliverSegmentEntropiaAlert,
   flushMissedPuertaVoiceOnVisible,
 } from "@/lib/backgroundAttentionAlerts";
+import {
+  SEGMENT_ATTENTION_TICK_EVENT,
+  SEGMENT_DAY_ROLLOVER_EVENT,
+  clearCruceWarnedIds,
+  runSegmentAttentionTickNow,
+} from "@/lib/segmentAttentionCycle";
 import {
   isTikSoundEnabled,
   setTikSoundEnabled,
@@ -334,12 +339,8 @@ import {
   getLimaDayStartMs,
 } from "@/lib/segmentTime";
 import {
-  applyDayRolloverEntropia,
-  applySegmentAttentionTick,
   classifyPuertaTiming,
-  collectVozPuertaEvents,
   isWithinPuertaWindow,
-  type SegmentAttentionEvent,
 } from "@/lib/segmentAttentionEngine";
 import {
   atencionBadgeLabel,
@@ -347,10 +348,7 @@ import {
   computeAtencionPanoramicaDia,
   describeSegmentoAtencion,
 } from "@/lib/atencionPanoramicaEngine";
-import { speakEntropiaAtencionCruce, speakPuertaSegmento } from "@/lib/puertaAtencionVoice";
 import {
-  applyOriginSegmentCruceEntropia,
-  evaluateSegmentCrossEntropy,
   getCruceGraciaState,
 } from "@/lib/segmentCrossEntropyEngine";
 import {
@@ -1807,7 +1805,7 @@ export default function Planeacion() {
       if (flushed > 0) {
         console.log(`[Voz] Reproduciendo ${flushed} aviso(s) de segundo plano`);
       }
-      checkPuertaAtencionRef.current?.();
+      runSegmentAttentionTickNow();
     };
     window.addEventListener("pointerdown", warm);
     document.addEventListener("visibilitychange", onVisible);
@@ -1866,12 +1864,11 @@ export default function Planeacion() {
   }, [segmentoActivo, user]);
 
   const prevSegmentoIdRef = useRef<string | null>(null);
-  const cruceWarnedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const currentSegId = segmentoActivo?.id || null;
     const prevSegId = prevSegmentoIdRef.current;
     if (prevSegId && currentSegId && prevSegId !== currentSegId && user && planilla) {
-      cruceWarnedRef.current.clear();
+      clearCruceWarnedIds();
       const vehiculosCruzando = vehicles.filter(
         v =>
           v.status === "activo" &&
@@ -1899,201 +1896,22 @@ export default function Planeacion() {
   }, [segmentoActivo?.id, user]);
 
   useEffect(() => {
-    if (!user || !planilla) return;
-
-    const checkPuertaAtencion = () => {
-      const nowMs = Date.now();
-      const fechaHoy = getJournalDateString();
-
-      if (planilla.fecha !== fechaHoy) {
-        const { segmentos: rolled, events, changed } = applyDayRolloverEntropia(planilla.segmentos, nowMs);
-        if (changed) {
-          const finalized: Planilla = { ...planilla, segmentos: rolled };
-          savePlanilla(user.uid, finalized);
-          toast.error("Jornada cerrada", {
-            description: "Segmentos activos pasaron a entropía al cambiar el día (máx. 24 h por segmento).",
-            style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
-            duration: 6000,
-          });
-          for (const ev of events) {
-            if (ev.type === "day_rollover_entropia") {
-              toast.error(`ENTROPÍA: ${ev.nombre}`, {
-                description: "0 PS. No cerraste a tiempo. El sistema no perdona la omisión.",
-                style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
-                duration: 6000,
-              });
-              deliverSegmentEntropiaAlert({
-                nombre: ev.nombre,
-                reason: "past_end",
-                voicePhrase: `Entropía en ${ev.nombre}. Jornada cerrada sin cierre consciente.`,
-              });
-            }
-          }
-        }
-        setPlanillaFecha(fechaHoy);
-        return;
-      }
-
-      // Segmentos usan reloj HH:mm anclado a medianoche (Lima), no al inicio de jornada 05:00.
-      const dayStart = getLimaDayStartMs(nowMs);
-      const { segmentos: nextSegmentos, events, changed } = applySegmentAttentionTick(
-        planilla.segmentos,
-        nowMs,
-        dayStart
-      );
-
-      let segmentosAfterVoz = nextSegmentos;
-      const vozEvents = collectVozPuertaEvents(nextSegmentos, nowMs, dayStart);
-      if (vozEvents.length > 0) {
-        let vozChanged = false;
-        segmentosAfterVoz = nextSegmentos.map(seg => {
-          const ve = vozEvents.find(v => v.segId === seg.id);
-          if (!ve) return seg;
-          vozChanged = true;
-          speakPuertaSegmento({ nombre: ve.nombre, ordinal: ve.ordinal, total: ve.total });
-          return { ...seg, vozDisparadaAt: nowMs };
-        });
-        if (vozChanged) {
-          const updatedVoz = { ...planilla, segmentos: segmentosAfterVoz };
-          savePlanilla(user.uid, updatedVoz);
-          setPlanilla(updatedVoz);
-        }
-      }
-
-      for (const ev of events as SegmentAttentionEvent[]) {
-        if (ev.type === "auto_apertura") {
-          toast.error(`ENTROPÍA: ${ev.nombre}`, {
-            description: "Puerta abierta por el sistema. −2 PS. Cierra la puerta para recuperar +2 PS.",
-            style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
-            duration: 6000,
-          });
-          deliverSegmentEntropiaAlert({ nombre: ev.nombre, reason: "missed_puerta" });
-          setActiveSegmento(user.uid, ev.segId);
-          void deductSovereigntyPoints(user.uid, 2, "Puerta sistema (entropía): " + ev.nombre)
-            .then(() => setDailyPS(getDailyPointsLocalSync(user.uid).total))
-            .catch(e => console.error("[auto_apertura] deductPS", e));
-        } else if (ev.type === "entropia") {
-          const desc =
-            ev.reason === "past_end"
-              ? "No cerraste a tiempo. El sistema no perdona la omisión."
-              : ev.reason === "cruce_sin_cierre"
-                ? "Vehículo del segmento anterior sin cierre consciente. Abre otro vehículo por zona."
-                : "Ventana de segmento perdida sin puerta consciente.";
-          toast.error(`ENTROPÍA: ${ev.nombre}`, {
-            description: desc,
-            style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
-            duration: 6000,
-          });
-          deliverSegmentEntropiaAlert({ nombre: ev.nombre, reason: ev.reason });
-        }
-      }
-
-      let planillaForCruce = changed ? { ...planilla, segmentos: segmentosAfterVoz } : planilla;
-      const { events: cruceEvents, vehicleVozPatches } = evaluateSegmentCrossEntropy({
-        vehicles: vehiclesRef.current,
-        segmentos: planillaForCruce.segmentos,
-        nowMs,
-        dayStartMs: dayStart,
-        warnedVehicleIds: cruceWarnedRef.current,
-      });
-
-      for (const patch of vehicleVozPatches) {
-        const v = vehiclesRef.current.find(x => x.id === patch.vehicleId);
-        if (!v) continue;
-        v.cruceEntropiaVozAt = patch.cruceEntropiaVozAt;
-        void updateVehicle(user.uid, patch.vehicleId, { cruceEntropiaVozAt: patch.cruceEntropiaVozAt }).catch(() => {});
-      }
-      if (vehicleVozPatches.length > 0) {
-        setVehicles([...vehiclesRef.current]);
-        saveLocalVehicles(vehiclesRef.current);
-      }
-
-      for (const ev of cruceEvents) {
-        if (ev.type === "warning") {
-          toast.warning(`Cierra y abre otro vehículo: ${ev.titulo}`, {
-            description: `Sesión de «${ev.originNombre}» en «${ev.activeSegNombre}». Cierre automático en ~${ev.minutesLeft} min.`,
-            style: { backgroundColor: PIZARRA, border: `1px solid ${NARANJA}`, color: NARANJA },
-            duration: 6000,
-          });
-        } else if (ev.type === "voz") {
-          speakEntropiaAtencionCruce();
-        } else if (ev.type === "segment_entropia") {
-          const { segmentos: rolled, event, changed: cruceChanged } = applyOriginSegmentCruceEntropia(
-            planillaForCruce.segmentos,
-            ev.segId,
-            nowMs
-          );
-          if (cruceChanged && event) {
-            planillaForCruce = { ...planillaForCruce, segmentos: rolled };
-            toast.error(`ENTROPÍA: ${event.nombre}`, {
-              description: "Cruce sin cierre consciente. 0 PS. Abre otro vehículo en cada segmento.",
-              style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
-              duration: 6000,
-            });
-            deliverSegmentEntropiaAlert({
-              nombre: event.nombre,
-              reason: "cruce_sin_cierre",
-            });
-          }
-        }
-      }
-
-      const autoCloseIds = cruceEvents.filter(e => e.type === "auto_close").map(e => e.vehicleId);
-      if (autoCloseIds.length > 0) {
-        void (async () => {
-          for (const vehicleId of autoCloseIds) {
-            const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
-            if (!vehicle || vehicle.status !== "activo") continue;
-            notifyVehicleClosed(vehicleId);
-            const cierreAt = Date.now();
-            const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || cierreAt;
-            const duracionFinal = Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
-            const patch = {
-              status: "archivado" as const,
-              cierreAt,
-              duracionFinal,
-              cierreManual: false,
-              interrupcionActiva: false,
-              desglosadorPausa: undefined,
-              situacionCronometro: null as const,
-              situacionCupoAnchor: null as const,
-            };
-            setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...patch } : v)));
-            vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...patch } : v));
-            saveLocalVehicles(vehiclesRef.current);
-            try {
-              await updateVehicle(user.uid, vehicleId, patch);
-              await updateVehicleStatus(user.uid, vehicleId, "archivado");
-            } catch (e) {
-              console.warn("[cruceEntropiaClose]", vehicleId, e);
-            }
-            toast.error(`Cierre por entropía-atención: ${vehicle.titulo}`, {
-              description: "Vehículo del segmento anterior archivado. Abre otro vehículo para esta zona.",
-              style: { backgroundColor: "#1a0000", border: `2px solid ${BLOOD}`, color: BLOOD },
-              duration: 6000,
-            });
-          }
-        })();
-      }
-
-      const planillaChanged = changed || planillaForCruce !== planilla;
-      if (planillaChanged) {
-        savePlanilla(user.uid, planillaForCruce);
-        setPlanilla(planillaForCruce);
-      }
-      setSegmentTick(t => t + 1);
+    const onTick = () => setSegmentTick(t => t + 1);
+    const onDayRollover = (e: Event) => {
+      const fecha = (e as CustomEvent<{ fecha: string }>).detail?.fecha;
+      if (fecha) setPlanillaFecha(fecha);
     };
-
-    checkPuertaAtencionRef.current = checkPuertaAtencion;
-    const interval = setInterval(checkPuertaAtencion, 15_000);
-    const tickFast = setInterval(() => setSegmentTick(t => t + 1), 15_000);
-    checkPuertaAtencion();
+    window.addEventListener(SEGMENT_ATTENTION_TICK_EVENT, onTick);
+    window.addEventListener(SEGMENT_DAY_ROLLOVER_EVENT, onDayRollover);
+    checkPuertaAtencionRef.current = runSegmentAttentionTickNow;
     return () => {
-      checkPuertaAtencionRef.current = null;
-      clearInterval(interval);
-      clearInterval(tickFast);
+      window.removeEventListener(SEGMENT_ATTENTION_TICK_EVENT, onTick);
+      window.removeEventListener(SEGMENT_DAY_ROLLOVER_EVENT, onDayRollover);
+      if (checkPuertaAtencionRef.current === runSegmentAttentionTickNow) {
+        checkPuertaAtencionRef.current = null;
+      }
     };
-  }, [user, planilla]);
+  }, []);
 
   useEffect(() => {
     if (!user || !planilla) return;
@@ -3387,7 +3205,7 @@ export default function Planeacion() {
 
   const handlePuntoCeroAutoClose = (vehicleId: string) => {
     const v = vehiclesRef.current.find(x => x.id === vehicleId) || vehicles.find(x => x.id === vehicleId);
-    if (!v || v.status !== "activo" || v.puntoCero?.autoCierreDisparado) return;
+    if (!v || v.status !== "activo") return;
     void handleDescansoClose(vehicleId, "cumplido", "recuperado", "", "fluido");
   };
 

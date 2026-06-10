@@ -72,7 +72,7 @@ import {
   listEspejoDeliveries,
 } from "./espejoCreditDeliveries";
 import { deliverCorazonSabioIfNeeded, parseMpExternalRef } from "./mercadopagoEspejo";
-import { activateModulesForEmail, activateModulesForUserById } from "./firebaseAdmin";
+import { activateModulesForEmail, activateModulesForUserById, adminLookupUserByEmail, isFirebaseAdminReady } from "./firebaseAdmin";
 import { modulesGrantedByPlan } from "../shared/moduleAccess";
 import { recordSellerSale, listSellerSales, markSellerCommissionPaid } from "./sellerSales";
 
@@ -5159,6 +5159,29 @@ app.post("/api/admin/espejo/grant-credits", requireAdminToken, async (req, res) 
 });
 
 // ===== ADMIN: ACTIVAR MÓDULOS PLANIFICACIÓN (Yape / manual) =====
+app.get("/api/admin/users/lookup", requireAdminToken, async (req, res) => {
+  try {
+    const emailRaw = typeof req.query.email === "string" ? req.query.email : "";
+    if (!emailRaw.includes("@")) {
+      return res.status(400).json({ error: "Email válido requerido." });
+    }
+    const result = await adminLookupUserByEmail(emailRaw);
+    if (!result.found) {
+      return res.status(404).json({
+        found: false,
+        adminReady: result.adminReady,
+        error:
+          "No hay cuenta en Firebase Auth con ese correo. El usuario debe iniciar sesión con Google al menos una vez usando ese email exacto.",
+      });
+    }
+    res.json(result);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error buscando usuario.";
+    console.error("[admin/users/lookup]", error);
+    res.status(500).json({ error: message });
+  }
+});
+
 app.post("/api/admin/modules/grant", requireAdminToken, async (req, res) => {
   try {
     const { email, planId, source, note } = req.body || {};
@@ -5171,12 +5194,30 @@ app.post("/api/admin/modules/grant", requireAdminToken, async (req, res) => {
         error: "Plan no válido. Usa: planificacion_base, soberania_dia u operativo.",
       });
     }
-    const activated = await activateModulesForEmail(email.trim().toLowerCase(), pid);
-    if (!activated) {
+
+    if (!isFirebaseAdminReady()) {
+      return res.status(503).json({
+        error:
+          "FIREBASE_SERVICE_ACCOUNT_JSON no está configurado en el servidor. Sin eso no se puede activar módulos en Firestore.",
+        adminReady: false,
+      });
+    }
+
+    const lookup = await adminLookupUserByEmail(email.trim().toLowerCase());
+    if (!lookup.found || !lookup.uid) {
       return res.status(404).json({
         error:
-          "No se encontró usuario con ese correo en Firebase Auth. Que inicie sesión al menos una vez.",
+          "No se encontró usuario con ese correo en Firebase Auth. Debe iniciar sesión al menos una vez con Google usando ese email exacto.",
         pending: true,
+        adminReady: lookup.adminReady,
+      });
+    }
+
+    const activated = await activateModulesForUserById(lookup.uid, pid);
+    if (!activated) {
+      return res.status(500).json({
+        error: "Usuario encontrado pero no se pudo escribir la activación en Firestore.",
+        uid: lookup.uid,
       });
     }
     console.log(
@@ -5186,8 +5227,9 @@ app.post("/api/admin/modules/grant", requireAdminToken, async (req, res) => {
       success: true,
       activated: true,
       planId: pid,
+      uid: lookup.uid,
       modules: modulesGrantedByPlan(pid),
-      message: `Módulo ${pid} activado para ${email}.`,
+      message: `Módulo ${pid} activado para ${lookup.email ?? email}.`,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Error activando módulo.";
