@@ -10,34 +10,49 @@ const GOLD = "#D4AF37";
 const WHATSAPP = "51918260514";
 
 const PRODUCTOS = [
-  { id: "corazon-sabio", name: "Espejo ù Corazùn Sabio", price: 17, period: "pago ùnico", stack: "Entrada", comision: 5.1, color: "#E8567F" },
-  { id: "planificacion_base", name: "Planificaciùn Base", price: 19.99, period: "/mes", stack: "Obligatorio", comision: 6.0, color: GOLD },
-  { id: "soberania_dia", name: "Soberanùa del dùa", price: 29.99, period: "/mes", stack: "Estudiante", comision: 9.0, color: "#38BDF8" },
-  { id: "operativo", name: "Operativo", price: 39.99, period: "/mes", stack: "Producciùn", comision: 12.0, color: "#00C851" },
+  { id: "planificacion_base", name: "PlanificaciÛn Base", price: 19.99, period: "/mes", stack: "Pelda?o 1", comision: 6.0, color: GOLD },
+  { id: "operativo", name: "Operativo", price: 39.99, period: "/mes", stack: "Pelda?o 2 ? Conquista", comision: 12.0, color: "#00C851" },
+  { id: "soberania_dia", name: "SoberanÌa del dÌa", price: 29.99, period: "/mes", stack: "Pelda?o 3 ? Orden mental", comision: 9.0, color: "#38BDF8" },
 ];
 
 const STACKS = [
   {
-    title: "Estudiante / tiempo libre",
-    modules: "Base + Soberanùa del dùa",
-    total: 49.98,
-    comisionEjemplo: 15.0,
-    desc: "ProcrastinaciÛn, ideas sueltas, Im·n + desglosador, cerrar bloques sin calendario.",
-  },
-  {
-    title: "Producciùn",
+    title: "Conquista medible",
+    pelda?o: "Pelda?o 2 ? primer upsell",
     modules: "Base + Operativo",
     total: 59.98,
     comisionEjemplo: 18.0,
-    desc: "Unidades, ritmo, rùcord. Un dùa mal contabilizado al mes > suscripciùn.",
+    desc: "Unidades, ritmo, rÈcord. Familiariza con cerrar y medir.",
+  },
+  {
+    title: "Orden mental",
+    pelda?o: "Pelda?o 3 ? avanzado",
+    modules: "Base + SoberanÌa del dÌa",
+    total: 49.98,
+    comisionEjemplo: 15.0,
+    desc: "Im·n, desglosador situaciÛn, proyectos y pasos de fe.",
+  },
+  {
+    title: "Sistema completo",
+    pelda?o: "Pelda?os 2 + 3",
+    modules: "Base + Operativo + SoberanÌa",
+    total: 89.96,
+    comisionEjemplo: 27.0,
+    desc: "Mide producciÛn y ordena pensamientos.",
   },
 ];
 
+const EMBUDO_PREGUNTAS = [
+  { pelda?o: 1, pregunta: "?Tu dÌa cierra con estructura?", respuesta: "PlanificaciÛn Base." },
+  { pelda?o: 2, pregunta: "?Necesitas unidades, ritmo y rÈcord reales?", respuesta: "A?ade Operativo ? primer upsell." },
+  { pelda?o: 3, pregunta: "?Ideas sueltas, imprevistos y proyectos grandes?", respuesta: "A?ade SoberanÌa ? Im·n + situaciÛn + pasos de fe." },
+];
+
 const PREGUNTAS = [
-  "?Cierras bloques en tiempo libre o cuentas unidades en trabajo repetitivo?",
-  "?Has perdido dÌas creyendo que produjiste y al cerrar faltÛ mucho?",
-  "?Comparas con Notion? AquÌ pagas por ritmo y cierre ? no por listas.",
-  "?Por quÈ capturar en el Im·n si luego escribo en el desglosador? Porque sin aterrizaje el pensamiento se pierde; con nido + proyecto + paso al cumplir, no es duplicar ? es ordenar antes de ejecutar.",
+  "?Tu dÌa cierra con estructura, o necesitas medir unidades, o ordenar ideas sueltas? Eso define el pelda?o.",
+  "?Has perdido dÌas creyendo que produjiste? ? Demo desglosador tiempo + termo vs ayer (Operativo).",
+  "?Comparas con Notion? AquÌ pagas por ritmo, cierre y decisiones medidas ? no listas.",
+  "Operativo antes que SoberanÌa: primero conquista medible, despuÈs orden mental avanzado.",
 ];
 
 const IMAN_FLUJO = [
@@ -96,18 +111,39 @@ export default function VendedoresPlanificacion() {
             Kit vendedores
           </div>
           <h1 className="text-2xl md:text-3xl font-black mb-2" style={{ fontFamily: "Playfair Display, serif", color: GOLD }}>
-            Planificaciùn SISTEMICAR
+            PlanificaciÛn SISTEMICAR
           </h1>
           <p className="text-slate-400 text-sm max-w-md mx-auto">
-            No es un calendario. Vendes el mùdulo que evita lo que el cliente pierde.
+            Embudo por pelda?os: Base ? conquista medible ? orden mental. Solo PlanificaciÛn (Espejo es otro producto).
           </p>
         </div>
 
-        {/* Comisiùn */}
+        {/* Embudo pelda?os */}
+        <section className="p-4 rounded-xl border mb-6 border-white/10 bg-card/30">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">?En quÈ pelda?o est· el cliente?</h2>
+          <div className="space-y-3">
+            {EMBUDO_PREGUNTAS.map((item) => (
+              <div key={item.pelda?o} className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black" style={{ backgroundColor: `${GOLD}20`, color: GOLD }}>
+                  {item.pelda?o}
+                </span>
+                <div>
+                  <p className="text-[11px] font-bold text-slate-300">{item.pregunta}</p>
+                  <p className="text-[10px] text-slate-500">{item.respuesta}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[9px] text-slate-600 mt-3 italic">
+            Operativo (pelda?o 2) antes que SoberanÌa (pelda?o 3): primero medir, despuÈs ordenar pensamientos.
+          </p>
+        </section>
+
+        {/* ComisiÛn */}
         <section className="p-4 rounded-xl border mb-6" style={{ borderColor: `${GOLD}30`, backgroundColor: `${GOLD}08` }}>
           <div className="flex items-center gap-2 mb-2">
             <DollarSign size={16} style={{ color: GOLD }} />
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">Comisiùn</h2>
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">ComisiÛn</h2>
           </div>
           <p className="text-sm text-white font-bold">{Math.round(SELLER_COMMISSION_RATE * 100)}% cada mes que el cliente pague</p>
           <p className="text-[11px] text-slate-500 mt-1">
@@ -117,15 +153,18 @@ export default function VendedoresPlanificacion() {
 
         {/* Stacks */}
         <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Stacks que recomiendas</h2>
-          <div className="grid md:grid-cols-2 gap-3">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Stacks por evoluciÛn</h2>
+          <div className="grid gap-3">
             {STACKS.map((s) => (
               <div key={s.title} className="p-4 rounded-xl border border-white/10 bg-card/40">
-                <h3 className="font-bold text-white text-sm mb-1">{s.title}</h3>
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <h3 className="font-bold text-white text-sm">{s.title}</h3>
+                  <span className="text-[9px] text-slate-500 uppercase">{s.pelda?o}</span>
+                </div>
                 <p className="text-[10px] text-slate-500 mb-2">{s.modules}</p>
                 <p className="text-lg font-black" style={{ color: GOLD }}>~${s.total.toFixed(2)}<span className="text-xs text-slate-500 font-normal">/mes</span></p>
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">{s.desc}</p>
-                <p className="text-[9px] text-emerald-400/80 mt-2">Comisiùn ~${s.comisionEjemplo.toFixed(2)}/mes mientras renueve</p>
+                <p className="text-[9px] text-emerald-400/80 mt-2">ComisiÛn ~${s.comisionEjemplo.toFixed(2)}/mes mientras renueve</p>
               </div>
             ))}
           </div>
@@ -141,7 +180,7 @@ export default function VendedoresPlanificacion() {
             El primer sistema que ordena pensamientos hacia proyectos, tiempo y pasos de fe.
           </p>
           <p className="text-[11px] text-slate-500 mb-4">
-            Stack Estudiante ? demo 2 min ? para mente acelerada, ideas sueltas e interrupciones
+            Pelda?o 3 (SoberanÌa) ? demo 2 min ? mente acelerada e interrupciones
           </p>
 
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Flujo en demo</p>
@@ -168,19 +207,19 @@ export default function VendedoresPlanificacion() {
           <ul className="space-y-1.5 mb-4">
             {IMAN_FRASES.map((f) => (
               <li key={f} className="text-[10px] text-slate-400 italic leading-relaxed pl-3 border-l-2 border-slate-600">
-                ?{f}?
+                "{f}"
               </li>
             ))}
           </ul>
 
           <p className="text-[9px] text-amber-500/80">
-            No digas que el Im·n reemplaza al desglosador ni que ?planifica solo?. El usuario cierra bloques y cumple subs.
+            No digas que el Im·n reemplaza al desglosador ni que "planifica solo". El usuario cierra bloques y cumple subs.
           </p>
         </section>
 
         {/* Productos */}
         <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Catùlogo</h2>
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Cat·logo PlanificaciÛn</h2>
           <div className="space-y-2">
             {PRODUCTOS.map((p) => (
               <div key={p.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-white/10">
@@ -202,7 +241,7 @@ export default function VendedoresPlanificacion() {
 
         {/* Guion */}
         <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Guion rùpido</h2>
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Guion r·pido</h2>
           <ul className="space-y-2">
             {PREGUNTAS.map((q, i) => (
               <li key={i} className="flex gap-2 text-[11px] text-slate-400">
@@ -216,7 +255,7 @@ export default function VendedoresPlanificacion() {
         {/* Link */}
         <section className="p-5 rounded-xl border mb-6" style={{ borderColor: `${GOLD}40` }}>
           <h2 className="text-sm font-bold text-white mb-2">Tu link de venta</h2>
-          <p className="text-[11px] text-slate-500 mb-3">Gilson te asigna un cùdigo. El cliente debe pagar desde este link:</p>
+          <p className="text-[11px] text-slate-500 mb-3">Gilson te asigna un cÛdigo. El cliente debe pagar desde este link:</p>
           <div className="flex gap-2 mb-3">
             <input
               value={demoCode}
@@ -241,27 +280,35 @@ export default function VendedoresPlanificacion() {
         {/* Acciones */}
         <div className="flex flex-col sm:flex-row gap-3">
           <a
+            href="/docs/EMBUDO_PLANIFICACION.md"
+            download
+            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-white/10 text-sm text-slate-300 hover:bg-white/5"
+          >
+            <Download size={16} />
+            Embudo PlanificaciÛn (MD)
+          </a>
+          <a
             href="/docs/KIT_VENDEDORES_PLANIFICACION.md"
             download
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-white/10 text-sm text-slate-300 hover:bg-white/5"
           >
             <Download size={16} />
-            Descargar kit (MD)
+            Kit vendedores (MD)
           </a>
           <a
-            href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent("Hola Gilson, quiero ser vendedor de Planificaciùn SISTEMICAR.")}`}
+            href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent("Hola Gilson, quiero ser vendedor de PlanificaciÛn SISTEMICAR.")}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white"
             style={{ background: "#25D366" }}
           >
             <MessageCircle size={16} />
-            Solicitar cùdigo
+            Solicitar cÛdigo
           </a>
         </div>
 
         <p className="text-[9px] text-slate-600 text-center mt-8 italic">
-          No prometas mùdulos en camino (Alquimia, Radar, etc.) ni bundles ùtodo incluidoù.
+          Solo PlanificaciÛn en este kit. Espejo es otro producto. No prometas mÛdulos en camino.
         </p>
       </motion.div>
     </div>

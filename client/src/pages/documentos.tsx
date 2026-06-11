@@ -11,12 +11,21 @@ const DOCUMENTOS = [
   {
     id: "vendedores",
     titulo: "KIT VENDEDORES — PLANIFICACIÓN",
-    descripcion: "Playbook de beneficios, stacks, comisión 30% recurrente (mientras el cliente pague), links ref= y guion de venta.",
+    descripcion: "Playbook embudo peldaños, stacks Conquista/Orden/Sistema completo, comisión 30% y guion de venta.",
     archivo: "/vendedores-planificacion",
     icon: Users,
     color: EMERALD,
-    version: "v1.0",
+    version: "v1.3",
     isRoute: true
+  },
+  {
+    id: "embudo-planificacion",
+    titulo: "EMBUDO PLANIFICACIÓN",
+    descripcion: "Peldaños 1–3: Base, Operativo, Soberanía. Inventario de 17 valores vendibles y precio por necesidad.",
+    archivo: "/docs/EMBUDO_PLANIFICACION.md",
+    icon: Target,
+    color: GOLD,
+    version: "v1.0"
   },
   {
     titulo: "MÉTRICAS COGNITIVAS",

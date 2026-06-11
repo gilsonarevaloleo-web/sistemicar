@@ -38,7 +38,30 @@ interface Plan {
   forWho?: string;
   anchorCopy?: string;
   roiCopy?: string;
+  peldaño?: string;
+  funnelHint?: string;
 }
+
+const EMBUDO_PREGUNTAS = [
+  {
+    id: "base",
+    pregunta: "¿Tu día cierra con estructura?",
+    si: "Empieza con Planificación Base — anillo, segmentos, flota y PS.",
+    peldaño: 1,
+  },
+  {
+    id: "operativo",
+    pregunta: "¿Necesitas saber cuánto produces de verdad (unidades, ritmo, récord)?",
+    si: "Añade Operativo — primer upsell: conquista medible.",
+    peldaño: 2,
+  },
+  {
+    id: "soberania",
+    pregunta: "¿Ideas sueltas, imprevistos y poco avance en proyectos grandes?",
+    si: "Añade Soberanía del día — orden mental avanzado (Imán, situación, pasos de fe).",
+    peldaño: 3,
+  },
+];
 
 const espejoPlan: Plan = {
   id: "corazon-sabio",
@@ -66,72 +89,94 @@ const planificacionPlans: Plan[] = [
     name: "Planificación Base",
     price: 19.99,
     pricePEN: 74,
-    forWho: "Todos — obligatorio para add-ons",
-    anchorCopy: "La Flota y tus segmentos — el motor del día.",
-    roiCopy: "Organiza el día sin pagar por desglosadores premium.",
+    peldaño: "Peldaño 1 · Fundamento",
+    forWho: "Todos — obligatorio",
+    anchorCopy: "Cierra el día con conciencia: anillo, segmentos y flota.",
+    roiCopy: "Organiza la jornada con datos, no con culpa.",
     features: [
-      { name: "La Flota y segmentos del día", locked: false },
-      { name: "Vehículos tiempo, situación y descanso", locked: false },
-      { name: "Motor de 4 ejes", locked: false },
-      { name: "Suscripción mensual independiente", locked: false },
+      { name: "Anillo de conciencia + segmentos", locked: false, highlight: true },
+      { name: "La Flota + motor de 4 ejes", locked: false },
+      { name: "PS, disciplina y visión panorámica", locked: false },
+      { name: "Termodinámica y combustible (lectura)", locked: false },
     ],
     icon: Compass,
     color: GOLD,
     popular: true,
   },
   {
-    id: "soberania_dia",
-    name: "Soberanía del día",
-    price: 29.99,
-    pricePEN: 111,
-    forWho: "Estudiantes · procrastinación · ideas sueltas",
-    anchorCopy: "3 ideas, cierras bloque. Para mañana, noche e ideas — cuando nadie te obliga.",
-    roiCopy: "Cierra bloques en tiempo libre sin calendario rígido.",
-    features: [
-      { name: "Desglosador Situacional (bloques 3+3)", locked: false, highlight: true },
-      { name: "Hub Proyectos y peldaños", locked: false, highlight: true },
-      { name: "Para mañana, noche e ideas — sin calendario", locked: false },
-      { name: "Requiere Planificación Base", locked: false },
-    ],
-    icon: Layers,
-    color: "#38BDF8",
-    badge: "ESTRELLA",
-  },
-  {
     id: "operativo",
     name: "Operativo",
     price: 39.99,
     pricePEN: 148,
-    forWho: "Producción · unidades · trabajo repetitivo",
-    anchorCopy: "Unidades, ritmo, récord. Para producción repetitiva.",
-    roiCopy: "Si pierdes un día de producción al mes por mal ritmo, esto ya se pagó solo.",
+    peldaño: "Peldaño 2 · Conquista medible",
+    funnelHint: "Primer upsell recomendado",
+    forWho: "Unidades · ritmo · récord",
+    anchorCopy: "Desglosador tiempo: conquista objetivos medibles.",
+    roiCopy: "Si pierdes un día de producción al mes por mal ritmo, esto se paga solo.",
     features: [
       { name: "Desglosador Tiempo (unidades y ritmo)", locked: false, highlight: true },
-      { name: "Ciclos secuenciales de misión", locked: false },
-      { name: "Auto-regulación de tiempo heredado", locked: false },
+      { name: "Récord, bóveda y tiempo heredado", locked: false, highlight: true },
+      { name: "Ruta fluido → concentrado → límite + voz", locked: false },
+      { name: "Producción de decisiones medibles", locked: false },
       { name: "Requiere Planificación Base", locked: false },
     ],
     icon: Clock,
     color: "#00C851",
+    badge: "PRIMER PASO",
+  },
+  {
+    id: "soberania_dia",
+    name: "Soberanía del día",
+    price: 29.99,
+    pricePEN: 111,
+    peldaño: "Peldaño 3 · Orden mental",
+    funnelHint: "Nivel avanzado — ideal tras habituar cierre medible",
+    forWho: "Ideas sueltas · imprevistos · proyectos",
+    anchorCopy: "Imán + desglosador situacional + pasos en proyectos.",
+    roiCopy: "Ordena pensamientos hacia fe incremental — no solo listas.",
+    features: [
+      { name: "Imán de pensamientos (nidos y ruta S)", locked: false, highlight: true },
+      { name: "Desglosador Situacional (bloques 3+3)", locked: false, highlight: true },
+      { name: "Hub Proyectos y peldaños / pasos de fe", locked: false },
+      { name: "Bolsa de ganancia de tiempo", locked: false },
+      { name: "Requiere Planificación Base", locked: false },
+    ],
+    icon: Layers,
+    color: "#38BDF8",
+    badge: "AVANZADO",
   },
 ];
 
 const STACKS = [
   {
-    id: "estudiante",
-    title: "Estudiante / tiempo libre",
-    modules: "Base + Soberanía del día",
-    totalUsd: 49.98,
-    addOnId: "soberania_dia" as const,
-    color: "#38BDF8",
-  },
-  {
-    id: "produccion",
-    title: "Producción",
+    id: "conquista",
+    title: "Conquista medible",
+    subtitle: "Peldaño 2 — empieza aquí si quieres resultados medibles",
     modules: "Base + Operativo",
     totalUsd: 59.98,
     addOnId: "operativo" as const,
     color: "#00C851",
+    desc: "Unidades, ritmo, récord. Familiariza con cerrar y medir.",
+  },
+  {
+    id: "orden",
+    title: "Orden mental",
+    subtitle: "Peldaño 3 — imprevistos e ideas hacia proyectos",
+    modules: "Base + Soberanía del día",
+    totalUsd: 49.98,
+    addOnId: "soberania_dia" as const,
+    color: "#38BDF8",
+    desc: "Imán, desglosador situación, pasos de fe.",
+  },
+  {
+    id: "completo",
+    title: "Sistema completo",
+    subtitle: "Peldaños 2 + 3",
+    modules: "Base + Operativo + Soberanía",
+    totalUsd: 89.96,
+    addOnId: null,
+    color: GOLD,
+    desc: "Mides producción y ordenas pensamientos.",
   },
 ];
 
@@ -532,12 +577,35 @@ export default function Pagos() {
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Planificación · Mensual</h2>
           </div>
 
+          {/* Embudo — autodiagnóstico */}
+          <div className="mb-6 p-4 rounded-xl border border-white/10 bg-black/30">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 text-center">
+              ¿En qué peldaño estás?
+            </p>
+            <div className="space-y-3">
+              {EMBUDO_PREGUNTAS.map((item) => (
+                <div key={item.id} className="flex gap-3 items-start">
+                  <span
+                    className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black"
+                    style={{ backgroundColor: `${GOLD}20`, color: GOLD }}
+                  >
+                    {item.peldaño}
+                  </span>
+                  <div>
+                    <p className="text-[11px] font-bold text-slate-300">{item.pregunta}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">{item.si}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Stacks orientación */}
           <div className="mb-6">
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 text-center">
-              ¿Qué stack necesitas?
+              Stacks recomendados
             </p>
-            <div className="grid md:grid-cols-2 gap-3">
+            <div className="grid md:grid-cols-3 gap-3">
               {STACKS.map((stack) => (
                 <div
                   key={stack.id}
@@ -547,22 +615,32 @@ export default function Pagos() {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <h3 className="text-sm font-bold text-white">{stack.title}</h3>
-                      <p className="text-[10px] text-slate-500">{stack.modules}</p>
+                      <p className="text-[9px] text-slate-500 uppercase tracking-wide">{stack.subtitle}</p>
+                      <p className="text-[10px] text-slate-500 mt-1">{stack.modules}</p>
                     </div>
                     <span className="text-lg font-black flex-shrink-0" style={{ color: stack.color }}>
                       ~${stack.totalUsd.toFixed(2)}
                       <span className="text-[10px] font-normal text-slate-500">/mes</span>
                     </span>
                   </div>
-                  <p className="text-[9px] text-slate-600">Empieza por Base ($19.99), luego añade el add-on.</p>
-                  <button
-                    type="button"
-                    onClick={() => selectStack(stack.addOnId)}
-                    className="w-full py-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all hover:opacity-90"
-                    style={{ backgroundColor: `${stack.color}20`, color: stack.color, border: `1px solid ${stack.color}40` }}
-                  >
-                    Seleccionar este stack
-                  </button>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">{stack.desc}</p>
+                  {stack.addOnId ? (
+                    <>
+                      <p className="text-[9px] text-slate-600">Incluye Base ($19.99) + add-on.</p>
+                      <button
+                        type="button"
+                        onClick={() => selectStack(stack.addOnId!)}
+                        className="w-full py-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all hover:opacity-90"
+                        style={{ backgroundColor: `${stack.color}20`, color: stack.color, border: `1px solid ${stack.color}40` }}
+                      >
+                        Seleccionar add-on
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-[9px] text-slate-500 italic">
+                      Activa Base + Operativo + Soberanía (tres suscripciones).
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -616,6 +694,11 @@ export default function Pagos() {
                   </div>
                   <div className="min-w-0">
                     <h3 className="font-bold text-white text-lg">{plan.name}</h3>
+                    {plan.peldaño && (
+                      <p className="text-[9px] font-bold uppercase tracking-wider mt-0.5" style={{ color: plan.color }}>
+                        {plan.peldaño}
+                      </p>
+                    )}
                     {plan.forWho && (
                       <span
                         className="inline-block mt-1 text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
@@ -626,6 +709,12 @@ export default function Pagos() {
                     )}
                   </div>
                 </div>
+
+                {plan.funnelHint && (
+                  <p className="text-[9px] font-bold uppercase tracking-wide mb-2" style={{ color: plan.color }}>
+                    {plan.funnelHint}
+                  </p>
+                )}
 
                 {plan.anchorCopy && (
                   <p className="text-[11px] text-slate-400 italic mb-2 leading-relaxed">{plan.anchorCopy}</p>
