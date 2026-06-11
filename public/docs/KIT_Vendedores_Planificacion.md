@@ -1,16 +1,23 @@
 # Kit vendedores — Planificación SISTEMICAR
 
-**Versión:** 1.2 · **Actualizado:** junio 2026  
+**Versión:** 1.3 · **Actualizado:** junio 2026  
 **Audiencia:** vendedores afiliados, closers, partners de distribución  
-**Contacto operativo:** Gilson · WhatsApp +51 918 260 514
+**Contacto operativo:** Gilson · WhatsApp +51 918 260 514  
+**Documento maestro embudo:** `EMBUDO_PLANIFICACION.md`
 
 ---
 
 ## 1. Resumen en 30 segundos
 
-SISTEMICAR **no es un calendario ni una lista de tareas**. Es un **motor de cierre del día**: segmentos, flota de misiones, desglosadores con medición de ritmo y fricción mental, y comparativa día a día (termodinámica atencional).
+SISTEMICAR **Planificación** no es un calendario ni una lista de tareas. Es un **motor de cierre del día** con embudo de maduración:
 
-Tú vendes **suscripciones mensuales** (y opcionalmente la entrada Espejo). Tu comisión es **30% recurrente**: cobras cada mes que el cliente siga pagando. Si el cliente cancela o deja de pagar, **deja de generarse comisión**.
+1. **Base** — estructura, anillo, segmentos, PS  
+2. **Operativo** — conquista medible (unidades, ritmo, récord) — **primer upsell**  
+3. **Soberanía** — orden mental avanzado (Imán, situación, proyectos)
+
+**Espejo es otro producto** (otro mundo). Este kit es solo Planificación.
+
+Tú vendes suscripciones mensuales. Comisión **30% recurrente** mientras el cliente pague.
 
 ---
 
@@ -27,23 +34,25 @@ Tú vendes **suscripciones mensuales** (y opcionalmente la entrada Espejo). Tu co
 
 ### Ejemplo mensual recurrente
 
-Cliente con stack **Estudiante** (Base + Soberanía del día ? **$49.98/mes**):
+Cliente con stack **Conquista medible** (Base + Operativo ? **$59.98/mes**):
 
-- Comisión tuya **cada mes activo:** ~**$15.00**
-- 10 clientes activos 12 meses: ~**$1,800/año** solo en ese stack (si todos renuevan)
+- Comisión tuya **cada mes activo:** ~**$18.00**
 
-Cliente con stack **Producción** (Base + Operativo ? **$59.98/mes**):
+Cliente con stack **Orden mental** (Base + Soberanía ? **$49.98/mes**):
 
-- Comisión mensual: ~**$18.00**
+- Comisión mensual: ~**$15.00**
+
+Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**):
+
+- Comisión mensual: ~**$27.00**
 
 ### Tabla por producto (30% mensual)
 
 | Producto | Precio | Tu comisión / mes* |
 |----------|--------|-------------------|
 | Planificación Base | $19.99/mes | ~$6.00 |
-| Soberanía del día | $29.99/mes | ~$9.00 |
-| Operativo | $39.99/mes | ~$12.00 |
-| Espejo · Corazón Sabio | $17 (único) | ~$5.10 (una vez) |
+| Operativo (peldaño 2) | $39.99/mes | ~$12.00 |
+| Soberanía del día (peldaño 3) | $29.99/mes | ~$9.00 |
 
 \* Redondeo a 2 decimales. Suma si el cliente tiene varios add-ons activos (cada suscripción genera su propia comisión).
 
@@ -51,53 +60,107 @@ Cliente con stack **Producción** (Base + Operativo ? **$59.98/mes**):
 
 ---
 
-## 3. Catálogo y stacks que recomiendas
+## 3. Embudo Planificación (peldaños × necesidad × precio)
 
-### 3.1 Planificación Base (obligatorio)
+| Peldaño | Módulo | Precio add-on | Necesidad | Identidad del usuario |
+|---------|--------|---------------|-----------|------------------------|
+| 1 | Planificación Base | $19.99/mes (obligatorio) | "Mi día no cierra" | Ordeno mi jornada |
+| 2 | Operativo | +$39.99/mes | "No sé cuánto produje de verdad" | Mido lo que conquisto |
+| 3 | Soberanía del día | +$29.99/mes | "Ideas sueltas, imprevistos, proyectos" | Ordeno pensamientos hacia fe |
+
+**Regla de venta:** recomienda **Operativo antes que Soberanía**. Conquista medible familiariza con el método; orden mental es el nivel avanzado.
+
+### Preguntas de autodiagnóstico (copy `/pagos`)
+
+1. ¿Tu día cierra con estructura? ? Base  
+2. ¿Necesitas unidades, ritmo y récord reales? ? + Operativo  
+3. ¿Ideas sueltas, imprevistos y poco avance en proyectos? ? + Soberanía  
+
+### Stacks recomendados
+
+| Stack | Módulos | Total/mes | Comisión ~ |
+|-------|---------|-----------|------------|
+| Conquista medible | Base + Operativo | $59.98 | $18 |
+| Orden mental | Base + Soberanía | $49.98 | $15 |
+| Sistema completo | Base + Operativo + Soberanía | $89.96 | $27 |
+
+---
+
+## 4. Catálogo por peldaño
+
+### 4.1 Planificación Base — Peldaño 1 (obligatorio)
 
 **Para quién:** cualquier persona que quiera ordenar el día con método, no con apps genéricas.
 
 **Incluye:**
 
-- Segmentos del día (mañana, tarde, noche…) y monitor de omisión/entropía
-- **La Flota**: misiones express y profundas
-- Motor de **4 ejes** (enfoque, conflicto, pasos, alcance) con niveles de profundidad automática
-- Vehículos de tiempo, situación y descanso (estructura base)
-- Puntos de Soberanía (PS) y progreso por módulo
+- **Anillo de conciencia** — reloj del día (conquista vs entropía)
+- Segmentos del día y monitor de omisión/entropía
+- **La Flota** + motor de **4 ejes**
+- **Puntos de Soberanía (PS)** + economía de cierre
+- **Disciplina** — vehículos conscientes en segmento
+- **Visión panorámica** — entrenamiento amplitud/foco
+- **Termodinámica atencional** y **combustible de conciencia** (lectura)
+- Vehículos tiempo, situación, descanso (estructura)
 
-**No incluye (sin add-on):** desglosador situacional premium, desglosador tiempo de producción, hub proyectos completo.
+**No incluye (sin add-on):** desglosador tiempo premium, desglosador situacional premium, hub proyectos, Imán completo.
 
-**Frase de venta:** *“Organiza el día y cierra segmentos con datos, no con culpa.”*
+**Frase de venta:** *"Organiza el día y cierra segmentos con datos, no con culpa."*
 
 ---
 
-### 3.2 Soberanía del día (add-on · stack Estudiante)
+### 4.2 Operativo — Peldaño 2 (primer upsell · Conquista medible)
 
-**Para quién:** estudiantes, procrastinación, ideas sueltas, tiempo libre sin jefe que marque horarios.
+**Para quién:** costura, taller, delivery, estudio con unidades, trabajo repetitivo medible.
 
-**Dolor que resuelve:** *“Tengo el día libre y al final no cerré nada importante.”*
+**Dolor que resuelve:** *"Creí que produje mucho y al cerrar faltó; no sé mi ritmo real."*
 
 **Incluye:**
 
-- **Desglosador situacional** (bloques 3+3, cupos, cronómetro por subtarea)
-- **Hub Proyectos** y peldaños (escalera de avance)
-- **Imán de pensamientos** (captura, nidos por proyecto, devolución ruta S)
-- Bolsa de ganancia de tiempo
-- Ideal para “para mañana”, noche, ideas — **sin calendario rígido**
+- **Desglosador tiempo** (unidades, pitido, ritmo en vivo)
+- **Récord / bóveda** + tiempo heredado
+- Ruta fluido ? concentrado ? límite (voz guía)
+- **Producción de decisiones medibles**
+- Termodinámica v2 al máximo con subs de tiempo
 
 **Requiere:** Planificación Base.
 
-**Frase de venta:** *“Tres ideas, un bloque cerrado. Mañana ya sabes qué ganaste.”*
+**Frase de venta:** *"Si pierdes un día de producción al mes por mal ritmo, esto se paga solo."*
 
-**Stack Estudiante:** Base + Soberanía ? **$49.98/mes** ? ~**$15/mes** para ti.
+**Stack Conquista medible:** Base + Operativo ? **$59.98/mes** ? ~**$18/mes** para ti.
+
+**Demo 5 min:** desglosador tiempo ? 2–3 subs ? panel termodinámica vs ayer.
 
 ---
 
-### 3.2.1 Imán de pensamientos (por qué vale la pena “escribir dos veces”)
+### 4.3 Soberanía del día — Peldaño 3 (Orden mental · avanzado)
 
-**Nombre en app:** Imán de pensamientos (evolución de “reservas tácticas” — mismo almacén, mejor metáfora).
+**Para quién:** ideas sueltas, imprevistos, tiempo libre, proyectos largos.
 
-**Para quién:** mente acelerada, ideas sueltas, interrupciones, “tengo que hacer algo con esto pero no ahora”.
+**Dolor que resuelve:** *"Tengo el día libre y al final no cerré nada importante."*
+
+**Incluye:**
+
+- **Imán de pensamientos** (captura, nidos, ruta S)
+- **Desglosador situacional** (bloques 3+3, cupos, cronómetro)
+- **Hub Proyectos** y peldaños (pasos de fe)
+- Bolsa de ganancia de tiempo
+
+**Requiere:** Planificación Base.
+
+**Frase de venta:** *"Tres ideas, un bloque cerrado. Pasos numerados hacia sueños más grandes."*
+
+**Stack Orden mental:** Base + Soberanía ? **$49.98/mes** ? ~**$15/mes** para ti.
+
+**Ideal cuando:** el cliente ya cierra bloques o tiene Operativo y pide imprevistos/proyectos.
+
+---
+
+### 4.3.1 Imán de pensamientos (dentro de Soberanía)
+
+**Nombre en app:** Imán de pensamientos (evolución de "reservas tácticas" — mismo almacén, mejor metáfora).
+
+**Para quién:** mente acelerada, ideas sueltas, interrupciones, "tengo que hacer algo con esto pero no ahora".
 
 **Qué es (en una línea):**  
 El **primer sistema que ordena pensamientos** hacia proyectos, tiempo y pasos de fe — no solo los guarda.
@@ -115,128 +178,92 @@ Mente ? Imán (captura + nido/proyecto)
 
 | Objeción | Respuesta de venta |
 |----------|-------------------|
-| “¿Por qué escribo dos veces: aquí y donde resuelvo?” | Sin nido/proyecto, sí es fricción. Con Imán + proyecto, **la primera escritura es aterrizaje con destino**; la segunda es ejecución medida en tiempo. |
-| “Prefiero anotar directo donde trabajo” | Directo = foco bajo si no acotas tiempo. El desglosador + cronómetro **sube el foco ~60%**; sin ese paso la mente no se sostiene en la tarea. |
-| “Es otra bandeja de notas” | No. Es **imán de ordenamiento**: cada pensamiento va a un nido (proyecto o inbox), ruta S/E/M, y puede volver al desglosador sin perderse. |
+| "¿Por qué escribo dos veces: aquí y donde resuelvo?" | Sin nido/proyecto, sí es fricción. Con Imán + proyecto, **la primera escritura es aterrizaje con destino**; la segunda es ejecución medida en tiempo. |
+| "Prefiero anotar directo donde trabajo" | Directo = foco bajo si no acotas tiempo. El desglosador + cronómetro **sube el foco ~60%**; sin ese paso la mente no se sostiene en la tarea. |
+| "Es otra bandeja de notas" | No. Es **imán de ordenamiento**: cada pensamiento va a un nido (proyecto o inbox), ruta S/E/M, y puede volver al desglosador sin perderse. |
 
 **Por qué sube el valor con el tiempo (insight de uso real):**
 
-1. **Proyecto como ancla de fe** — Al cumplir, el pensamiento puede contar como **paso numerado** hacia un sueño más grande. Ahí sí vale la pena capturar antes de ejecutar: no es duplicar, es **invertir** en claridad + evidencia de avance.
-2. **Foco medido** — Pasar del Imán al desglosador con cupo obliga a nombrar, acotar y ejecutar en ventana. La mente deja de vaguear.
+1. **Proyecto como ancla de fe** — Al cumplir, el pensamiento puede contar como **paso numerado** hacia un sueño más grande.
+2. **Foco medido** — Pasar del Imán al desglosador con cupo obliga a nombrar, acotar y ejecutar en ventana.
 3. **Orden sin perder nada** — Devolver al Imán (ruta S) no borra: **retoma con Abrir nido** cuando haya tiempo.
 
 **Frases listas para copiar:**
 
-- *“No es escribir dos veces al vacío: es capturar con nido y cerrar con paso en tu proyecto.”*
-- *“El Imán ordena; el desglosador enfoca; el proyecto te da fe para soñar más grande.”*
-- *“Prácticamente el primer sistema que ordena pensamientos hacia acción medida.”*
+- *"No es escribir dos veces al vacío: es capturar con nido y cerrar con paso en tu proyecto."*
+- *"El Imán ordena; el desglosador enfoca; el proyecto te da fe para soñar más grande."*
+- *"Prácticamente el primer sistema que ordena pensamientos hacia acción medida."*
 
-**Qué NO decir:** que el Imán reemplaza al desglosador o que “planifica solo”. El usuario cierra bloques y cumple subs.
-
----
-
-### 3.3 Operativo (add-on · stack Producción)
-
-**Para quién:** costura, taller, delivery, estudio con unidades, trabajo repetitivo medible.
-
-**Dolor que resuelve:** *“Creí que produje mucho y al cerrar faltó; no sé mi ritmo real.”*
-
-**Incluye:**
-
-- **Desglosador tiempo** (unidades, pitido por unidad, ritmo y récord)
-- Ruta de enfoque: fluido ? concentrado ? límite (voz guía en el contador)
-- Ciclos secuenciales de misión
-- Historial de rendimiento y auto-regulación de tiempo heredado
-- **Termodinámica atencional v2:** dominio fluido, fricción, resistencia del día (comparativa vs ayer)
-
-**Requiere:** Planificación Base.
-
-**Frase de venta:** *“Si pierdes un día de producción al mes por mal ritmo, esto se paga solo.”*
-
-**Stack Producción:** Base + Operativo ? **$59.98/mes** ? ~**$18/mes** para ti.
+**Qué NO decir:** que el Imán reemplaza al desglosador o que "planifica solo". El usuario cierra bloques y cumple subs.
 
 ---
 
-### 3.4 Espejo · Corazón Sabio (entrada al ecosistema)
+## 5. Espejo (referencia breve — otro producto)
 
-**Para quién:** quien aún no confía en pagar planificación; necesita diagnóstico primero.
-
-**Incluye:** Doctor IA, interfaz de dolor, patrón de boicot, créditos de diagnóstico.
-
-**Rol en el embudo:** puerta de entrada ? luego upsell a Planificación Base.
-
-**Comisión:** 30% del pago único (~$5.10), no recurrente.
+Espejo · Corazón Sabio ($17 único) es **diagnóstico emocional**, no Planificación. Comisión ~$5.10 una vez. No mezclar en el embudo de peldaños de Planificación.
 
 ---
 
-## 4. Matriz de beneficios (lo que seduces)
+## 6. Matriz de beneficios (lo que seduces)
 
 Usa **dolor ? resultado ? prueba en la app**, no lista de funciones técnicas.
 
-| Persona | Dolor típico | Resultado prometido | Qué mostrar en demo (5 min) |
-|---------|--------------|---------------------|-----------------------------|
-| Estudiante / tiempo libre | Día “se fue” sin bloques cerrados | Bloques 3+3 cerrados + PS del día | Segmento ? desglosador situación ? cerrar 1 bloque |
-| Mente acelerada / ideas sueltas | Pensamientos que se pierden o duplican trabajo | Imán con nido ? desglosador ? paso en proyecto | Imán (captura) ? Abrir nido ? 1 sub en cronómetro ? cumplido |
-| Emprendedor / proyectos | Muchas ideas, poco avance visible | Peldaños conquistados + oleada activa | Hub proyectos ? vínculo a segmento |
-| Producción / costura | Unidades sin ritmo; autoengaño al cerrar | Unidades + récord + termo vs ayer | Desglosador tiempo ? 2–3 subs ? panel termodinámica |
-| Persona con Espejo | Sabe que se sabotea pero no cómo medirlo | Diagnóstico + plan con flota | Espejo ? luego “tu día necesita segmentos” |
+| Persona | Dolor | Peldaño | Demo |
+|---------|-------|---------|------|
+| Día sin estructura | "Se me va el día" | 1 Base | Segmento ? flota ? cierre |
+| Producción / unidades | Autoengaño al cerrar | 2 Operativo | Desglosador tiempo ? termo |
+| Mente acelerada | Ideas que se pierden | 3 Soberanía | Imán ? nido ? cronómetro |
+| Proyectos largos | Poco avance visible | 3 Soberanía | Hub ? paso #N al cumplir |
 
 ### Beneficios transversales (todos los planes con Base)
 
-1. **Cierre consciente del día** — no solo “tareas hechas”, sino segmentos y vehículos con estado cumplido/archivado.
-2. **Profundidad real** — 4 ejes con detección automática de nivel (omisión ? reto); premia el esfuerzo de pensar antes de actuar.
-3. **Economía de hábito** — PS diarios; el cerebro recibe recompensa por cerrar, no por abrir apps.
-4. **Datos vs percepción** — termodinámica compara hoy vs ayer (dominio fluido, fricción, subs completados en desglosador).
-5. **No es Notion/Todoist** — vendes **ritmo, cierre y medición de fricción**, no listas infinitas.
+1. **Cierre consciente del día** — segmentos y vehículos con estado cumplido/archivado.
+2. **Profundidad real** — 4 ejes con detección automática de nivel.
+3. **Economía de hábito** — PS diarios; recompensa por cerrar.
+4. **Datos vs percepción** — termodinámica compara hoy vs ayer.
+5. **No es Notion/Todoist** — ritmo, cierre y fricción medida.
 
 ### Beneficios exclusivos por add-on
 
 | Add-on | Beneficio clave |
 |--------|-----------------|
-| Soberanía del día | Cierra bloques en tiempo libre sin calendario corporativo |
-| Imán de pensamientos | Ordena capturas hacia nidos/proyectos; ruta S devuelve sin perder hilo |
-| Proyectos (vía Soberanía) | Escalera de peldaños y claridad/oleada hacia un norte |
-| Operativo | Ritmo por unidad + récord + ruta fluido/concentrado/límite con voz |
+| Operativo (peldaño 2) | Unidades + récord + decisiones medibles |
+| Soberanía (peldaño 3) | Imán + situación + proyectos/pasos de fe |
 
 ---
 
-## 5. Diferenciación (objeciones frecuentes)
+## 7. Diferenciación (objeciones frecuentes)
 
-**“¿Por qué no uso Notion / Google Calendar?”**  
-Porque aquí pagas por **cierre medido y ritmo**, no por almacenar notas. El sistema pregunta si cumpliste, archivaste con reflexión, y cuánta fricción mental tuviste — no si “pusiste un checkbox”.
+**"¿Por qué no uso Notion / Google Calendar?"**  
+Porque aquí pagas por **cierre medido y ritmo**, no por almacenar notas.
 
-**“¿Es muy complicado?”**  
-Hay **Express** (nombre + tipo de fin en 30 segundos) y **Profundo** (7 pasos cuando la misión importa). El desglosador es para quien ya trabaja en bloques.
+**"¿Es muy complicado?"**  
+Hay **Express** (30 segundos) y **Profundo** (7 pasos). Los desglosadores son para quien ya cierra bloques.
 
-**“¿Por qué capturar en el Imán si luego escribo en el desglosador?”**  
-Porque sin aterrizaje el pensamiento se pierde o te saca del foco. Con **nido + proyecto + paso al cumplir**, la captura no es duplicar: es ordenar antes de ejecutar. El desglosador con cronómetro es lo que **sostiene el foco (~60%)**; el Imán es lo que **no deja que la idea se evapore**.
+**"¿Por qué capturar en el Imán si luego escribo en el desglosador?"**  
+Con **nido + proyecto + paso al cumplir**, la captura ordena antes de ejecutar. El cronómetro **sostiene el foco (~60%)**.
 
-**“¿Y si no renuevo?”**  
-El cliente pierde acceso al módulo; tú dejas de ganar comisión ese mes. Tu incentivo alineado con **retener** al usuario (onboarding y primer cierre en 48 h).
+**"¿Y si no renuevo?"**  
+El cliente pierde acceso; tú dejas de ganar comisión ese mes.
 
-**“¿Incluye todo SISTEMICAR?”**  
-**No.** No vendas Alquimia, Radar, Depósito, bundles “todo incluido” ni módulos “en camino”. Solo lo del catálogo de pagos.
+**"¿Incluye todo SISTEMICAR?"**  
+**No.** Solo Planificación según catálogo de `/pagos`.
 
 ---
 
-## 6. Guion de venta (3 preguntas + cierre)
+## 8. Guion de venta (embudo)
 
-1. **¿Cierras bloques en tiempo libre o cuentas unidades en trabajo repetitivo?**  
-   - Tiempo libre ? Stack Estudiante (Soberanía del día).  
-   - Unidades/ritmo ? Stack Producción (Operativo).
-
-2. **¿Has perdido días creyendo que produjiste y al cerrar faltó mucho?**  
-   - Sí ? Desglosador tiempo + termodinámica. Demo de subs y comparativa vs ayer.
-
-3. **¿Comparas con Notion?**  
-   - Aquí pagas por **ritmo y cierre**, no por listas. Mostrar un desglosador cerrado con PS.
+1. **¿Tu día cierra con estructura?** ? Base.  
+2. **¿Necesitas unidades y ritmo reales?** ? Operativo (primer upsell). Demo desglosador tiempo.  
+3. **¿Ideas sueltas e imprevistos?** ? Soberanía (avanzado). Demo Imán ? bloque situacional.  
+4. **¿Comparas con Notion?** ? Ritmo, cierre y decisiones medidas — no listas.
 
 **Cierre:**  
-*“Empieza con Base si quieres probar el día; si ya sabes que procrastinas o produces por unidades, el stack completo te sale menos que dos cafés a la semana y te paga comisión recurrente solo si te quedas — yo gano cuando tú realmente usas el sistema.”*
+*"Empieza con Base; si produces por unidades, el peldaño 2 se paga solo. Cuando domines el cierre medible, el peldaño 3 ordena tus pensamientos hacia proyectos."*
 
 ---
 
-## 7. Flujo operativo del vendedor
+## 9. Flujo operativo del vendedor
 
 1. Solicita tu código a Gilson (WhatsApp).
 2. Comparte: `https://[tu-dominio]/pagos?ref=TU-CODIGO`
@@ -248,44 +275,43 @@ El cliente pierde acceso al módulo; tú dejas de ganar comisión ese mes. Tu incen
 
 ---
 
-## 8. Qué NO prometer (lista roja)
+## 10. Qué NO prometer (lista roja)
 
 - Módulos en desarrollo (Alquimia, Umbral, Radar, Mentor, etc.)
-- “Todo incluido” o precios que no aparecen en `/pagos`
+- "Todo incluido" o precios que no aparecen en `/pagos`
 - Que la app planifica por ti sin que el usuario cierre vehículos/subs
-- Resultados garantizados (“bajarás procrastinación 80%”) — vende **medición y método**
-- Comisión infinita si el cliente cancela — **si deja de pagar, se corta el 30%**
+- Resultados garantizados — vende **medición y método**
+- Comisión infinita si el cliente cancela
 
 ---
 
-## 9. Inventario interno (estado producto · jun 2026)
-
-Para no sobreprometer en demos:
+## 11. Inventario interno (estado producto · jun 2026)
 
 | Área | Estado | Comentario vendedor |
 |------|--------|---------------------|
-| Segmentos + Flota + 4 ejes | Producción | Core estable |
-| Desglosador situación + proyectos + Imán | Producción | Stack Estudiante; demo Imán ? nido ? cronómetro |
-| Desglosador tiempo + ruta voz | Producción | Stack Producción |
-| Termodinámica v2 (resistencia, dominio fluido) | Producción | Mejor tras sync de subs |
-| Claridad mental / oleada en proyectos | En despliegue | Mencionar solo si el cliente ya lo ve en su cuenta |
+| Segmentos + Flota + 4 ejes | Producción | Core estable — peldaño 1 |
+| Desglosador tiempo + récord | Producción | Peldaño 2 — vender primero |
+| Desglosador situación + Imán + proyectos | Producción | Peldaño 3 — avanzado |
+| Termodinámica v2 | Producción | Mejor tras sync de subs |
+| Claridad mental / oleada en proyectos | En despliegue | Solo si el cliente ya lo ve |
 | Pagos recurrentes MP + ref vendedor | Producción | Verificar dominio de producción |
 
 ---
 
-## 10. Elevator pitch (copiar/pegar)
+## 12. Elevator pitch (copiar/pegar)
 
-> **SISTEMICAR Planificación** es el motor de tu día: divides el tiempo en segmentos, lanzas misiones en la Flota y cierras bloques con desglosadores que miden ritmo y fricción mental — no es otra lista. Para estudiantes, **Soberanía del día**; para producción, **Operativo** con unidades y récord. Tú ganas **30% cada mes** que tu referido siga pagando; si cancela, se corta. ¿Cierras bloques o cuentas unidades? Te digo el stack en un minuto.
+> **Planificación SISTEMICAR** cierra tu día en tres peldaños: Base (anillo, segmentos, PS), Operativo (unidades y récord — primer upsell), Soberanía (Imán, imprevistos y pasos en proyectos). No es una lista — es maduración medida. ¿Tu día cierra, mides unidades, o ordenas ideas sueltas? Te digo el peldaño en un minuto.
 
 ---
 
-## 11. Documentos relacionados
+## 13. Documentos relacionados
 
 | Documento | Uso |
 |-----------|-----|
+| `EMBUDO_PLANIFICACION.md` | **Fuente de verdad** — valores, peldaños, precio |
 | `ESPECIFICACION_planificacion.md` | Detalle técnico (equipo dev) |
 | `TERMODINAMICA_ATENCIONAL_V2.md` | Lenguaje de dominio fluido / fricción |
-| `/pagos` | Precios oficiales |
+| `/pagos` | Precios oficiales + autodiagnóstico |
 | `/vendedores-planificacion` | Kit visual en app |
 
 ---
