@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Copy, Users, DollarSign, Download, MessageCircle, CheckCircle } from "lucide-react";
+import { ArrowLeft, Copy, Users, DollarSign, Download, MessageCircle, CheckCircle, Magnet } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { SELLER_COMMISSION_RATE } from "@shared/sellerCommissions";
@@ -22,7 +22,7 @@ const STACKS = [
     modules: "Base + Soberanùa del dùa",
     total: 49.98,
     comisionEjemplo: 15.0,
-    desc: "Procrastinaciùn, ideas sueltas, cerrar bloques sin calendario.",
+    desc: "ProcrastinaciÛn, ideas sueltas, Im·n + desglosador, cerrar bloques sin calendario.",
   },
   {
     title: "Producciùn",
@@ -34,9 +34,38 @@ const STACKS = [
 ];
 
 const PREGUNTAS = [
-  "ùCierras bloques en tiempo libre o cuentas unidades en trabajo repetitivo?",
-  "ùHas perdido dùas creyendo que produjiste y al cerrar faltù mucho?",
-  "ùComparas con Notion? Aquù pagas por ritmo y cierre ù no por listas.",
+  "?Cierras bloques en tiempo libre o cuentas unidades en trabajo repetitivo?",
+  "?Has perdido dÌas creyendo que produjiste y al cerrar faltÛ mucho?",
+  "?Comparas con Notion? AquÌ pagas por ritmo y cierre ? no por listas.",
+  "?Por quÈ capturar en el Im·n si luego escribo en el desglosador? Porque sin aterrizaje el pensamiento se pierde; con nido + proyecto + paso al cumplir, no es duplicar ? es ordenar antes de ejecutar.",
+];
+
+const IMAN_FLUJO = [
+  "Mente ? Im·n (captura + nido/proyecto)",
+  "Desglosador situacional (foco ~60% con cronÛmetro)",
+  "[no alcanza el bloque] ? Im·n otra vez (ruta S)",
+  "Cumplido ? paso ejecutado en proyecto",
+];
+
+const IMAN_OBJECIONES: { q: string; a: string }[] = [
+  {
+    q: "?Por quÈ escribo dos veces: aquÌ y donde resuelvo?",
+    a: "Con Im·n + proyecto, la primera escritura es aterrizaje con destino; la segunda es ejecuciÛn medida en tiempo.",
+  },
+  {
+    q: "Prefiero anotar directo donde trabajo",
+    a: "Directo = foco bajo si no acotas tiempo. Desglosador + cronÛmetro sube el foco ~60%.",
+  },
+  {
+    q: "Es otra bandeja de notas",
+    a: "Es im·n de ordenamiento: nido (proyecto o inbox), ruta S/E/M, y vuelve al desglosador sin perderse.",
+  },
+];
+
+const IMAN_FRASES = [
+  "No es escribir dos veces al vacÌo: es capturar con nido y cerrar con paso en tu proyecto.",
+  "El Im·n ordena; el desglosador enfoca; el proyecto te da fe para so?ar m·s grande.",
+  "Pr·cticamente el primer sistema que ordena pensamientos hacia acciÛn medida.",
 ];
 
 export default function VendedoresPlanificacion() {
@@ -100,6 +129,53 @@ export default function VendedoresPlanificacion() {
               </div>
             ))}
           </div>
+        </section>
+
+        {/* Im·n de pensamientos */}
+        <section className="mb-8 p-4 rounded-xl border border-slate-500/25 bg-slate-900/40">
+          <div className="flex items-center gap-2 mb-2">
+            <Magnet size={16} className="text-slate-300" />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">Im·n de pensamientos</h2>
+          </div>
+          <p className="text-sm text-white font-semibold mb-1">
+            El primer sistema que ordena pensamientos hacia proyectos, tiempo y pasos de fe.
+          </p>
+          <p className="text-[11px] text-slate-500 mb-4">
+            Stack Estudiante ? demo 2 min ? para mente acelerada, ideas sueltas e interrupciones
+          </p>
+
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Flujo en demo</p>
+          <ol className="space-y-1.5 mb-5">
+            {IMAN_FLUJO.map((step, i) => (
+              <li key={i} className="flex gap-2 text-[11px] text-slate-400">
+                <span className="font-mono text-slate-600 flex-shrink-0">{i + 1}.</span>
+                {step}
+              </li>
+            ))}
+          </ol>
+
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Objeciones frecuentes</p>
+          <div className="space-y-2 mb-5">
+            {IMAN_OBJECIONES.map((o) => (
+              <div key={o.q} className="p-3 rounded-lg border border-white/5 bg-black/30">
+                <p className="text-[11px] font-bold text-slate-300 mb-1">{o.q}</p>
+                <p className="text-[10px] text-slate-500 leading-relaxed">{o.a}</p>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Frases listas</p>
+          <ul className="space-y-1.5 mb-4">
+            {IMAN_FRASES.map((f) => (
+              <li key={f} className="text-[10px] text-slate-400 italic leading-relaxed pl-3 border-l-2 border-slate-600">
+                ?{f}?
+              </li>
+            ))}
+          </ul>
+
+          <p className="text-[9px] text-amber-500/80">
+            No digas que el Im·n reemplaza al desglosador ni que ?planifica solo?. El usuario cierra bloques y cumple subs.
+          </p>
         </section>
 
         {/* Productos */}
