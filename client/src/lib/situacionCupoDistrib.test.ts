@@ -64,14 +64,16 @@ describe("redistribuirMinutosSituacionCronometro", () => {
 });
 
 describe("remainingCronometroBudgetMin", () => {
-  it("suma minutos hasta contrato y adelanto", () => {
+  it("no achica presupuesto por debajo del cupo pendiente acumulado", () => {
     const now = 1_000_000;
     const sc = {
       activo: true,
       horaFinContratoMs: now + 25 * 60000,
       saldoAdelantoMin: 4,
     };
-    assert.equal(remainingCronometroBudgetMin(sc, now), 29);
+    const subs = [st("a", 10), st("b", 20), st("c", 10)];
+    assert.equal(remainingCronometroBudgetMin(sc, subs, now), 40);
+    assert.equal(remainingCronometroBudgetMin(sc, undefined, now), 25);
   });
 });
 
@@ -203,8 +205,8 @@ describe("situacionRelojDebeMostrarse", () => {
 describe("aplicarTiempoGanadoAlCumplir", () => {
   const base = 1_700_000_000_000;
 
-  it("reparte minutos ganados en minutosCupo de filas posteriores flexibles", () => {
-    const subs = [st("a", 15), st("b", 10), st("c", 10, true)];
+  it("reparte minutos ganados en cola proporcional al cupo objetivo", () => {
+    const subs = [st("a", 15), st("b", 10), st("c", 30, true)];
     const now = base + 10 * 60000;
     const { subTareas: out, minutosGanados } = aplicarTiempoGanadoAlCumplir(
       subs,
@@ -216,10 +218,7 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     assert.equal(minutosGanados, 5);
     const b = out.find(s => s.id === "b")!;
     assert.equal(b.minutosCupo, 15);
-    assert.equal(b.minutosGanadosAcum, undefined);
-    const c = out.find(s => s.id === "c")!;
-    assert.equal(c.minutosCupo, 10);
-    assert.equal(c.minutosGanadosAcum, undefined);
+    assert.equal(out.find(s => s.id === "c")!.minutosCupo, 30);
   });
 
   it("tarea no foco transfiere minutos ganados al foco", () => {
@@ -237,7 +236,7 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     assert.equal(out.find(s => s.id === "c")!.resultadoSituacion, "cumplido");
   });
 
-  it("sin cola flexible acumula saldo adelanto", () => {
+  it("sin cola flexible transfiere ganancia al foco activo", () => {
     const subs = [st("a", 15), st("b", 10, true)];
     const now = base + 5 * 60000;
     const { subTareas: out, minutosGanados, saldoAdelantoMin } = aplicarTiempoGanadoAlCumplir(
@@ -248,9 +247,9 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
       base
     );
     assert.equal(minutosGanados, 10);
-    assert.equal(saldoAdelantoMin, 10);
-    assert.equal(out.find(s => s.id === "b")!.minutosCupo, 10);
-    assert.equal(sumMinutosCronometroPendientes(out), 10);
+    assert.equal(saldoAdelantoMin, 0);
+    assert.equal(out.find(s => s.id === "b")!.minutosCupo, 20);
+    assert.equal(sumMinutosCronometroPendientes(out), 20);
   });
 });
 

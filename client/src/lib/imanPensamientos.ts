@@ -1,5 +1,5 @@
 import type { ProyectoEtiqueta } from "./claridadDireccion";
-import type { SubTarea } from "./persistence";
+import type { SubTarea, Vehicle } from "./persistence";
 import { registrarPasoEjecutadoEnProyecto } from "./proyectos";
 import { markImanReservaEjecutada, type SituacionReservaItem } from "./situacionReserva";
 
@@ -131,4 +131,68 @@ export async function registrarPasoDesdeSubIman(
 
 export function subTareaConPasoEjecutado(subTareas: SubTarea[], subTareaId: string, pasoNumero: number): SubTarea[] {
   return subTareas.map(st => (st.id === subTareaId ? { ...st, pasoEjecutadoNumero: pasoNumero } : st));
+}
+
+/** Proyecto más frecuente entre subtareas (nido dominante del bloque). */
+export function dominanteProyectoIdEnSubs(subs: SubTarea[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const st of subs) {
+    const id = st.proyectoId?.trim();
+    if (!id) continue;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  let best: string | undefined;
+  let bestN = 0;
+  for (const [id, n] of counts) {
+    if (n > bestN) {
+      bestN = n;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/** Cascada: nido del bloque → cola cron → vehículo → segmento vinculado. */
+export function resolveProyectoIdEnfoqueSituacion(
+  vehicle: Pick<Vehicle, "proyectoId" | "subTareas" | "situacionCronometro">,
+  segmentoProyectoId?: string
+): string | undefined {
+  const enfoque = vehicle.situacionCronometro?.proyectoEnfoqueId?.trim();
+  if (enfoque) return enfoque;
+
+  const cronSubs = (vehicle.subTareas ?? []).filter(st => st.enDesgloseCronometro);
+  const fromCron = dominanteProyectoIdEnSubs(cronSubs);
+  if (fromCron) return fromCron;
+
+  const fromAll = dominanteProyectoIdEnSubs(vehicle.subTareas ?? []);
+  if (fromAll) return fromAll;
+
+  if (vehicle.proyectoId?.trim()) return vehicle.proyectoId.trim();
+  if (segmentoProyectoId?.trim()) return segmentoProyectoId.trim();
+  return undefined;
+}
+
+export function aplicarProyectoHeredadoASub(
+  sub: SubTarea,
+  proyectoId: string | undefined
+): SubTarea {
+  if (!proyectoId?.trim() || sub.proyectoId?.trim()) return sub;
+  return { ...sub, proyectoId: proyectoId.trim() };
+}
+
+/** Metadatos de proyecto para volcar una sub al Imán (reserva ruta S). */
+export function proyectoMetaParaReservaDesdeSub(
+  sub: Pick<SubTarea, "proyectoId">,
+  vehicle: Pick<Vehicle, "proyectoId" | "subTareas" | "situacionCronometro">,
+  segmentoProyectoId: string | undefined,
+  proyectos: Array<{ id: string; titulo: string; etiqueta: ProyectoEtiqueta }>
+): Pick<SituacionReservaItem, "proyectoId" | "proyectoTitulo" | "proyectoEtiqueta"> {
+  const id =
+    sub.proyectoId?.trim() ?? resolveProyectoIdEnfoqueSituacion(vehicle, segmentoProyectoId);
+  if (!id) return {};
+  const proy = proyectos.find(p => p.id === id);
+  return {
+    proyectoId: id,
+    ...(proy ? { proyectoTitulo: proy.titulo, proyectoEtiqueta: proy.etiqueta } : {}),
+  };
 }

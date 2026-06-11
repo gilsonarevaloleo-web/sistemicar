@@ -39,12 +39,11 @@ export function situacionTargetMsReloj(
   const sc = vehicle.situacionCronometro;
   const aperturaMs = vehicle.aperturaAt ?? now;
   const anchor = vehicle.situacionCupoAnchor;
-  const adelantoMs = (sc?.saldoAdelantoMin ?? 0) * 60000;
 
   if (anchor?.subTareaId) {
     const sub = subs.find(s => s.id === anchor.subTareaId);
     if (sub && situacionFilaEnFocoPendiente(sub) && (sub.minutosCupo ?? 0) > 0) {
-      return anchor.startedAt + sub.minutosCupo! * 60000 - adelantoMs;
+      return anchor.startedAt + sub.minutosCupo! * 60000;
     }
   }
 
@@ -52,19 +51,18 @@ export function situacionTargetMsReloj(
     const firstPending = filasCronometroOrdenadas(subs).find(situacionFilaCronometroPendiente);
     if (firstPending && (firstPending.minutosCupo ?? 0) > 0) {
       const start = sc.bloqueInicioAt ?? aperturaMs;
-      return start + firstPending.minutosCupo! * 60000 - adelantoMs;
+      return start + firstPending.minutosCupo! * 60000;
     }
     const proy = computeSituacionProyeccionFinMs(subs, {
       bloqueInicioAt: sc.bloqueInicioAt ?? aperturaMs,
       anchor,
       now,
-      saldoAdelantoMin: sc.saldoAdelantoMin,
     });
-    if (proy != null) return proy - adelantoMs;
+    if (proy != null) return proy;
     const contrato = sc.horaFinContratoMs ?? sc.horaFinMs;
-    if (contrato != null) return contrato - adelantoMs;
+    if (contrato != null) return contrato;
     const sum = sumMinutosCronometroPendientes(subs);
-    if (sum > 0) return (sc.bloqueInicioAt ?? aperturaMs) + sum * 60000 - adelantoMs;
+    if (sum > 0) return (sc.bloqueInicioAt ?? aperturaMs) + sum * 60000;
   }
 
   return null;
@@ -140,14 +138,14 @@ function repartirProporcional(weights: number[], total: number, minPerSlot = 1):
   return alloc;
 }
 
-/** Reparte minutos ganados directamente en minutosCupo de filas pendientes posteriores. */
+/** Reparte minutos ganados en minutosCupo de filas pendientes posteriores (peso = cupo objetivo). */
 export function repartirMinutosGanadosACupo(
   subTareas: SubTarea[],
   minutosGanados: number,
   afterSubTareaId?: string,
   opts?: { includeCupoFijo?: boolean }
-): SubTarea[] {
-  if (minutosGanados <= 0) return subTareas;
+): { subTareas: SubTarea[]; minutosRepartidos: number } {
+  if (minutosGanados <= 0) return { subTareas, minutosRepartidos: 0 };
   const cronOrder = filasCronometroOrdenadas(subTareas);
   const afterIdx = afterSubTareaId ? cronOrder.findIndex(st => st.id === afterSubTareaId) : -1;
 
@@ -162,21 +160,23 @@ export function repartirMinutosGanadosACupo(
       if (!opts?.includeCupoFijo && isCupoFijo(st)) return false;
       return true;
     });
-  if (pendingTargets.length === 0) return subTareas;
+  if (pendingTargets.length === 0) return { subTareas, minutosRepartidos: 0 };
 
   const bonus = repartirProporcional(
-    pendingTargets.map(() => 1),
+    pendingTargets.map(({ st }) => Math.max(1, st.minutosCupo ?? 1)),
     minutosGanados,
     0
   );
+  const minutosRepartidos = bonus.reduce((a, b) => a + b, 0);
   const next = [...subTareas];
   pendingTargets.forEach(({ st, i }, k) => {
+    if (bonus[k]! <= 0) return;
     next[i] = {
       ...st,
       minutosCupo: (st.minutosCupo ?? 0) + bonus[k]!,
     };
   });
-  return next;
+  return { subTareas: next, minutosRepartidos };
 }
 
 /** @deprecated Usar repartirMinutosGanadosACupo — conservado como alias interno. */
@@ -187,7 +187,7 @@ function repartirMinutosGanadosAcum(
   opts?: { includeCupoFijo?: boolean }
 ): SubTarea[] {
   const excludeId = excludeSubTareaIds[0];
-  return repartirMinutosGanadosACupo(subTareas, minutosGanados, excludeId, opts);
+  return repartirMinutosGanadosACupo(subTareas, minutosGanados, excludeId, opts).subTareas;
 }
 
 function transferirMinutosAlFoco(
@@ -340,7 +340,7 @@ function aplicarPreviewTiempoGanado(
   const elapsedMin = Math.floor(Math.max(0, now - anchor.startedAt) / 60000);
   const minutosVirtualesGanados = Math.max(0, cupoMin - elapsedMin);
   if (minutosVirtualesGanados <= 0) return subTareas;
-  return repartirMinutosGanadosACupo(subTareas, minutosVirtualesGanados, anchor.subTareaId);
+  return repartirMinutosGanadosACupo(subTareas, minutosVirtualesGanados, anchor.subTareaId).subTareas;
 }
 
 /** Suma minutos de preview repartidos en filas pendientes posteriores al foco. */
@@ -450,16 +450,50 @@ export function computeSituacionCronometroHorarios(
     });
   }
 
-  const adelantoMs = (opts.saldoAdelantoMin ?? 0) * 60000;
-  if (adelantoMs > 0) {
-    return out.map(h => ({
-      ...h,
-      finMs: h.finMs - adelantoMs,
-      finLabel: formatHHMM(h.finMs - adelantoMs),
-    }));
+  return out;
+}
+
+/** Reparte ganancia: foco → cola proporcional al cupo; fuera de foco → todo al foco activo. */
+function repartirGananciaDopamina(
+  subTareas: SubTarea[],
+  minutosGanados: number,
+  closedSubTareaId: string,
+  anchor: { subTareaId: string; startedAt: number } | null | undefined
+): SubTarea[] {
+  if (minutosGanados <= 0) return subTareas;
+
+  const eraFoco = anchor?.subTareaId === closedSubTareaId;
+  if (eraFoco) {
+    const { subTareas: conCola, minutosRepartidos } = repartirMinutosGanadosACupo(
+      subTareas,
+      minutosGanados,
+      closedSubTareaId
+    );
+    const restante = minutosGanados - minutosRepartidos;
+    if (restante <= 0) return conCola;
+    const focusId = resolveFocusSubTareaId(conCola, anchor);
+    if (focusId) return transferirMinutosAlFoco(conCola, focusId, restante);
+    return conCola;
   }
 
-  return out;
+  const focusId = resolveFocusSubTareaId(subTareas, anchor);
+  if (focusId) return transferirMinutosAlFoco(subTareas, focusId, minutosGanados);
+  return repartirMinutosGanadosACupo(subTareas, minutosGanados, closedSubTareaId).subTareas;
+}
+
+/** Minutos ganados en vivo en la fila foco (aún no cerrada). */
+export function minutosGanadosEnVivoFoco(
+  subTareas: SubTarea[],
+  anchor: { subTareaId: string; startedAt: number } | null | undefined,
+  now: number = Date.now()
+): number {
+  if (!anchor?.subTareaId) return 0;
+  const focal = subTareas.find(st => st.id === anchor.subTareaId);
+  if (!focal || !situacionFilaCronometroPendiente(focal)) return 0;
+  const cupoMin = focal.minutosCupo ?? 0;
+  if (cupoMin <= 0) return 0;
+  const elapsedMin = Math.ceil(Math.max(0, now - anchor.startedAt) / 60000);
+  return Math.max(0, cupoMin - elapsedMin);
 }
 
 function calcMinutosGanadosCierre(
@@ -490,7 +524,7 @@ function calcMinutosGanadosCierre(
 }
 
 /**
- * Al marcar cumplido: registra duración real y reparte minutos ganados en minutosCupo de la cola.
+ * Al marcar cumplido: registra duración real y reparte minutos ganados (meta sellada intacta).
  */
 export function aplicarTiempoGanadoAlCumplir(
   subTareas: SubTarea[],
@@ -525,28 +559,11 @@ export function aplicarTiempoGanadoAlCumplir(
       : st
   );
 
-  let saldoAdelantoMin = 0;
   if (minutosGanados > 0) {
-    const eraFoco = anchor?.subTareaId === subTareaId;
-    if (eraFoco) {
-      const before = JSON.stringify(next);
-      next = repartirMinutosGanadosACupo(next, minutosGanados, subTareaId);
-      if (JSON.stringify(next) === before) {
-        saldoAdelantoMin = minutosGanados;
-      }
-    } else {
-      const focusId = resolveFocusSubTareaId(subTareas, anchor);
-      const before = JSON.stringify(next);
-      if (focusId) {
-        next = transferirMinutosAlFoco(next, focusId, minutosGanados);
-      }
-      if (JSON.stringify(next) === before) {
-        saldoAdelantoMin = minutosGanados;
-      }
-    }
+    next = repartirGananciaDopamina(next, minutosGanados, subTareaId, anchor);
   }
 
-  return { subTareas: next, minutosGanados, saldoAdelantoMin };
+  return { subTareas: next, minutosGanados, saldoAdelantoMin: 0 };
 }
 
 /**
@@ -683,17 +700,18 @@ export function totalBudgetMinFromCronometro(
   return Math.max(1, sumMinutosCronometroPendientes(subTareas));
 }
 
-/** Minutos restantes hasta la meta sellada (+ adelanto acumulado) para repartir cupos sin mover el objetivo. */
+/** Presupuesto para repartir cupos: nunca achica por ganancias ya en filas. */
 export function remainingCronometroBudgetMin(
   sc: Vehicle["situacionCronometro"],
+  subTareas?: SubTarea[],
   nowMs: number = Date.now()
 ): number | null {
   if (!sc?.activo) return null;
   const contratoMs = situacionContratoFinMs(sc);
   if (contratoMs == null) return null;
   const wallMin = Math.round((contratoMs - nowMs) / 60000);
-  const adelanto = sc.saldoAdelantoMin ?? 0;
-  return Math.max(1, wallMin + adelanto);
+  const cupoPendiente = subTareas ? sumMinutosCronometroPendientes(subTareas) : 0;
+  return Math.max(1, Math.max(wallMin, cupoPendiente));
 }
 
 export function resolveFocusSubTareaId(
@@ -706,4 +724,19 @@ export function resolveFocusSubTareaId(
   }
   const first = filasCronometroOrdenadas(subTareas).find(situacionFilaCronometroPendiente);
   return first?.id ?? null;
+}
+
+/** Migra saldoAdelanto legacy a cupo del foco (ya no reduce la meta). */
+export function absorberSaldoAdelantoEnFoco(
+  subTareas: SubTarea[],
+  saldoAdelantoMin: number,
+  anchor?: { subTareaId: string; startedAt: number } | null
+): { subTareas: SubTarea[]; saldoRestante: number } {
+  if (saldoAdelantoMin <= 0) return { subTareas, saldoRestante: 0 };
+  const focusId = resolveFocusSubTareaId(subTareas, anchor);
+  if (!focusId) return { subTareas, saldoRestante: saldoAdelantoMin };
+  return {
+    subTareas: transferirMinutosAlFoco(subTareas, focusId, saldoAdelantoMin),
+    saldoRestante: 0,
+  };
 }

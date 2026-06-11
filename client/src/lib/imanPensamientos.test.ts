@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 import {
   NIDO_INBOX_ID,
   agruparImanPorNido,
+  dominanteProyectoIdEnSubs,
   imanItemsParaDesglosador,
   nidoKeyFromReserva,
+  resolveProyectoIdEnfoqueSituacion,
   subTareaConPasoEjecutado,
   subTareaFromImanItem,
 } from "./imanPensamientos";
@@ -73,5 +75,20 @@ describe("imanPensamientos", () => {
     const next = subTareaConPasoEjecutado(subs, "b", 7);
     assert.equal(next[0].pasoEjecutadoNumero, undefined);
     assert.equal(next[1].pasoEjecutadoNumero, 7);
+  });
+
+  it("resolveProyectoIdEnfoqueSituacion usa cascada nido bloque → cron → vehículo", () => {
+    const vehicle = {
+      proyectoId: "veh_proy",
+      subTareas: [
+        { id: "a", texto: "A", completada: false, creadaAt: 1, enDesgloseCronometro: true, proyectoId: "p_cron" },
+        { id: "b", texto: "B", completada: false, creadaAt: 2, enDesgloseCronometro: true, proyectoId: "p_cron" },
+      ],
+      situacionCronometro: { activo: true, proyectoEnfoqueId: "p_bloque" },
+    };
+    assert.equal(resolveProyectoIdEnfoqueSituacion(vehicle), "p_bloque");
+    assert.equal(dominanteProyectoIdEnSubs(vehicle.subTareas!), "p_cron");
+    const sinBloque = { ...vehicle, situacionCronometro: { activo: true } };
+    assert.equal(resolveProyectoIdEnfoqueSituacion(sinBloque), "p_cron");
   });
 });

@@ -7,7 +7,7 @@ import {
 } from "@/engines/PuntoCeroEngine";
 import {
   mensajeReactivacionDia,
-  speakPleasant,
+  speakPuntoCeroGuide,
   stopPleasantVoice,
   susurroNocheTexto,
 } from "@/lib/puntoCeroVoice";
@@ -49,14 +49,14 @@ export function usePuntoCeroOrchestrator(
       }
       if (ev.type === "whisper_due" && next.modo === "noche") {
         const texto = susurroNocheTexto(next.faseInicioAt, now);
-        speakPleasant(texto, { rate: 0.78, volume: 0.45 });
+        speakPuntoCeroGuide(texto, { profile: "night" });
         cbRef.current.onSessionUpdate(markWhisperDelivered(next, now));
       }
       if (ev.type === "enter_completada" && !completadaAnnouncedRef.current) {
         completadaAnnouncedRef.current = true;
         const msg = mensajeCompletado(next.modo);
         if (next.modo === "dia") {
-          speakPleasant(mensajeReactivacionDia(), { rate: 0.9, pitch: 1.05, volume: 0.6 });
+          speakPuntoCeroGuide(mensajeReactivacionDia(), { profile: "reactivation" });
         } else {
           stopPleasantVoice();
         }

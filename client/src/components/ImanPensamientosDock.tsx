@@ -27,8 +27,6 @@ type Props = {
     proyectoId?: string
   ) => void | Promise<void>;
   onAbrirNido: (nidoId: string) => void | Promise<void>;
-  onToCronometro: (reservaId: string) => void | Promise<void>;
-  onToListaLibre: (reservaId: string) => void | Promise<void>;
   onDelete: (reservaId: string) => void | Promise<void>;
   onRutaChange: (reservaId: string, ruta: ReservaTacticaRuta) => void | Promise<void>;
   colors: {
@@ -45,8 +43,6 @@ export default function ImanPensamientosDock({
   defaultProyectoId = "",
   onQuickAdd,
   onAbrirNido,
-  onToCronometro,
-  onToListaLibre,
   onDelete,
   onRutaChange,
   colors,
@@ -144,7 +140,7 @@ export default function ImanPensamientosDock({
             <div className="border-t px-3 pb-3 pt-2 space-y-2" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
               <p className="text-[7px] text-slate-500 leading-relaxed">{IMAN_PENSAMIENTOS_TAGLINE}</p>
               <p className="text-[7px] text-slate-600 leading-relaxed">
-                Captura sin cambiar de vehículo. S = situación · E = ejecución · M = tener en cuenta. Sin PS al guardar.
+                S = situación · E = ejecución · M = tener en cuenta. Abre el nido para ejecutar en el vehículo situacional.
               </p>
 
               <select
@@ -308,32 +304,6 @@ export default function ImanPensamientosDock({
                                   ))}
                                 </div>
                                 <div className="flex flex-wrap gap-1 pl-5">
-                                  <button
-                                    type="button"
-                                    onClick={() => void onToCronometro(item.id)}
-                                    className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase"
-                                    style={{
-                                      backgroundColor: "rgba(212,175,55,0.12)",
-                                      color: colors.gold,
-                                      border: "1px solid rgba(212,175,55,0.35)",
-                                    }}
-                                    data-testid={`iman-to-cron-${item.id}`}
-                                  >
-                                    → Cronómetro
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void onToListaLibre(item.id)}
-                                    className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase"
-                                    style={{
-                                      backgroundColor: "rgba(0,255,195,0.08)",
-                                      color: colors.cyan,
-                                      border: "1px solid rgba(0,255,195,0.25)",
-                                    }}
-                                    data-testid={`iman-to-libre-${item.id}`}
-                                  >
-                                    → Lista libre
-                                  </button>
                                   <button
                                     type="button"
                                     onClick={() => void onDelete(item.id)}

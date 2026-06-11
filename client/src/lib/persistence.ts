@@ -664,6 +664,8 @@ export interface Vehicle {
     minutosGanadosSesion?: number;
     /** Bolsa para abrir el siguiente reto tras «Recibir cierre del bloque». */
     bolsaSegundoRetoMin?: number;
+    /** Proyecto/nido con el que se abrió el bloque de enfoque (herencia para subs inline y reservas). */
+    proyectoEnfoqueId?: string;
   } | null;
   /** PS de profundidad por duración real del desglosador de tiempo (sesión); curva progresiva 5→6→8→12… sin tope. */
   desglosadorBloqueDepthPsGranted?: number;

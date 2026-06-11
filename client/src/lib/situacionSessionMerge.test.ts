@@ -9,6 +9,7 @@ import {
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
   mergeSubVehiculosById,
+  shouldPreferLocalSubTareas,
   shouldPreferLocalSubVehiculos,
 } from "./situacionSessionMerge.ts";
 
@@ -304,5 +305,45 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     assert.equal(merged.subTareas?.length, 2);
     assert.equal(merged.subTareas![0].texto, "Comprar leche");
     assert.equal(merged.subTareas![1].completada, true);
+  });
+
+  it("shouldPreferLocalSubTareas when firebase lost cron rows", () => {
+    const fb: Vehicle = {
+      ...baseVehicle(),
+      subTareas: [st("c1", { enDesgloseCronometro: true, minutosCupo: 10 })],
+    };
+    const local: Vehicle = {
+      ...baseVehicle(),
+      subTareas: [
+        st("c1", { enDesgloseCronometro: true, minutosCupo: 10 }),
+        st("c2", { enDesgloseCronometro: true, minutosCupo: 8 }),
+        st("c3", { enDesgloseCronometro: true, minutosCupo: 6 }),
+      ],
+    };
+    assert.equal(shouldPreferLocalSubTareas(fb, local), true);
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.subTareas?.length, 3);
+  });
+
+  it("preserves local subTareas on closed situacion vehicle", () => {
+    const now = Date.now();
+    const localSubs = [
+      st("a", { completada: true, cerradaAt: now }),
+      st("b", { enDesgloseCronometro: true, resultadoSituacion: "cumplido", cerradaAt: now }),
+    ];
+    const fb: Vehicle = {
+      ...baseVehicle(),
+      status: "cumplido",
+      cierreAt: now,
+      subTareas: [localSubs[0]],
+    };
+    const local: Vehicle = {
+      ...baseVehicle(),
+      status: "cumplido",
+      cierreAt: now,
+      subTareas: localSubs,
+    };
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.subTareas?.length, 2);
   });
 });

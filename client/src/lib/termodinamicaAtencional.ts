@@ -394,8 +394,10 @@ export function subTareaDecisionEnJornada(
 ): boolean {
   if (st.enDesgloseCronometro) {
     if (st.resultadoSituacion !== "cumplido") return false;
-    const ts = st.cerradaAt ?? 0;
-    return ts >= dayStartMs;
+    const ts = st.cerradaAt ?? st.creadaAt ?? 0;
+    if (ts >= dayStartMs) return true;
+    if ((st.creadaAt ?? 0) >= dayStartMs) return true;
+    return false;
   }
 
   if (!st.completada) return false;

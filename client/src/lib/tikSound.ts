@@ -2,6 +2,7 @@ const TIK_SOUND_KEY = "sistemicar_tik_sound";
 const SITUACION_ALERTS_KEY = "sistemicar_situacion_alerts";
 const PUERTA_VOZ_KEY = "sistemicar_puerta_voz";
 const DESGLOSADOR_VOZ_KEY = "sistemicar_desglosador_voz";
+const PUNTO_CERO_VOZ_KEY = "sistemicar_punto_cero_voz";
 
 export function isTikSoundEnabled(): boolean {
   try {
@@ -53,6 +54,31 @@ export function setDesglosadorVoiceEnabled(on: boolean): void {
       }
     }
     window.dispatchEvent(new CustomEvent("sistemicar-desglosador-voz-changed", { detail: { on } }));
+  } catch {
+    /* noop */
+  }
+}
+
+/** Voz guía de Punto Cero (TTS). Default ON. */
+export function isPuntoCeroVoiceEnabled(): boolean {
+  try {
+    return localStorage.getItem(PUNTO_CERO_VOZ_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function setPuntoCeroVoiceEnabled(on: boolean): void {
+  try {
+    localStorage.setItem(PUNTO_CERO_VOZ_KEY, on ? "on" : "off");
+    if (!on && typeof window !== "undefined" && window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        /* noop */
+      }
+    }
+    window.dispatchEvent(new CustomEvent("sistemicar-punto-cero-voz-changed", { detail: { on } }));
   } catch {
     /* noop */
   }

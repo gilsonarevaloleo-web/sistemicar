@@ -84,7 +84,10 @@ function pickSituacionCronometro(
   if (fb.activo === true && local.activo !== true) return fb;
   const fbFin = fb.horaFinContratoMs ?? fb.horaFinMs ?? 0;
   const localFin = local.horaFinContratoMs ?? local.horaFinMs ?? 0;
-  return localFin >= fbFin ? local : fb;
+  const picked = localFin >= fbFin ? local : fb;
+  const other = localFin >= fbFin ? fb : local;
+  const proyectoEnfoqueId = picked.proyectoEnfoqueId?.trim() || other?.proyectoEnfoqueId?.trim();
+  return proyectoEnfoqueId ? { ...picked, proyectoEnfoqueId } : picked;
 }
 
 function pickSituacionCupoAnchor(
@@ -108,19 +111,10 @@ export function applySituacionDesgloseMerge(
   firebaseV: Vehicle,
   localV: Vehicle
 ): Vehicle {
-  const activeSituacionPair =
-    firebaseV.tipoFlota === "situacion" &&
-    localV.tipoFlota === "situacion" &&
-    firebaseV.status === "activo" &&
-    localV.status === "activo";
-
-  if (
-    !activeSituacionPair &&
-    !hasActiveSituacionDesglose(firebaseV) &&
-    !hasActiveSituacionDesglose(localV)
-  ) {
+  if (firebaseV.tipoFlota !== "situacion" || localV.tipoFlota !== "situacion") {
     return merged;
   }
+
   return {
     ...merged,
     subTareas: mergeSubTareasById(firebaseV.subTareas, localV.subTareas),
@@ -180,6 +174,30 @@ function activeSubId(subs: SubVehiculo[] | undefined): string | undefined {
   return subs?.find(s => s.status === "activo")?.id;
 }
 
+function countSubTareasCerradas(subs: SubTarea[] | undefined): number {
+  return (subs ?? []).filter(
+    st =>
+      st.completada ||
+      st.resultadoSituacion === "cumplido" ||
+      st.resultadoSituacion === "fallado"
+  ).length;
+}
+
+/** Conserva subtareas locales cuando Firebase pierde filas (sync parcial). */
+export function shouldPreferLocalSubTareas(firebaseV: Vehicle, localV: Vehicle): boolean {
+  if (firebaseV.tipoFlota !== "situacion" && localV.tipoFlota !== "situacion") return false;
+  const localSubs = localV.subTareas ?? [];
+  if (localSubs.length === 0) return false;
+  const fbSubs = firebaseV.subTareas ?? [];
+  if (fbSubs.length === 0) return true;
+  if (localSubs.length > fbSubs.length) return true;
+  if (countSubTareasCerradas(localSubs) > countSubTareasCerradas(fbSubs)) return true;
+  const localCron = localSubs.filter(st => st.enDesgloseCronometro).length;
+  const fbCron = fbSubs.filter(st => st.enDesgloseCronometro).length;
+  if (localCron > fbCron) return true;
+  return false;
+}
+
 /** Conserva subs locales cuando Firebase pierde el array al cerrar el desglosador. */
 export function shouldPreferLocalSubVehiculos(firebaseV: Vehicle, localV: Vehicle): boolean {
   if (firebaseV.tipoReloj !== "desglosador" || localV.tipoReloj !== "desglosador") return false;
@@ -193,44 +211,74 @@ export function shouldPreferLocalSubVehiculos(firebaseV: Vehicle, localV: Vehicl
   return false;
 }
 
+function withMergedSubVehiculos(base: Vehicle, firebaseV: Vehicle, localV: Vehicle): Vehicle {
+  if (
+    shouldPreferLocalSubVehiculos(base, localV) ||
+    (firebaseV.tipoReloj === "desglosador" &&
+      localV.tipoReloj === "desglosador" &&
+      (localV.subVehiculos?.length ?? 0) > 0)
+  ) {
+    return {
+      ...base,
+      subVehiculos: mergeSubVehiculosById(base.subVehiculos, localV.subVehiculos),
+    };
+  }
+  return base;
+}
+
+function finalizeSessionMerge(base: Vehicle, firebaseV: Vehicle, localV: Vehicle): Vehicle {
+  let merged = withMergedSubVehiculos(base, firebaseV, localV);
+
+  if (firebaseV.tipoFlota === "situacion" && localV.tipoFlota === "situacion") {
+    return applySituacionDesgloseMerge(merged, firebaseV, localV);
+  }
+
+  if (shouldPreferLocalSubTareas(firebaseV, localV)) {
+    merged = {
+      ...merged,
+      subTareas: mergeSubTareasById(firebaseV.subTareas, localV.subTareas),
+      situacionCronometro: pickSituacionCronometro(
+        firebaseV.situacionCronometro,
+        localV.situacionCronometro
+      ),
+      situacionCupoAnchor: pickSituacionCupoAnchor(
+        firebaseV.situacionCupoAnchor,
+        localV.situacionCupoAnchor
+      ),
+    };
+  }
+
+  return merged;
+}
+
 export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehicle | undefined): Vehicle {
   if (!localV) return firebaseV;
 
-  const withLocalSubs = (base: Vehicle): Vehicle =>
-    shouldPreferLocalSubVehiculos(base, localV)
-      ? {
-          ...base,
-          subVehiculos: mergeSubVehiculosById(base.subVehiculos, localV.subVehiculos),
-        }
-      : base;
-
   if (localV.status !== "activo" && firebaseV.status === "activo") {
-    return withLocalSubs({
-      ...firebaseV,
-      status: localV.status,
-      ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
-      ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
-      ...(localV.cierreManual != null ? { cierreManual: localV.cierreManual } : {}),
-      ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
-      ...(localV.etiquetaSalida ? { etiquetaSalida: localV.etiquetaSalida } : {}),
-      ...(localV.notaSalida != null ? { notaSalida: localV.notaSalida } : {}),
-      situacionCronometro: localV.situacionCronometro ?? null,
-      situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
-    });
+    return finalizeSessionMerge(
+      {
+        ...firebaseV,
+        status: localV.status,
+        ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
+        ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
+        ...(localV.cierreManual != null ? { cierreManual: localV.cierreManual } : {}),
+        ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
+        ...(localV.etiquetaSalida ? { etiquetaSalida: localV.etiquetaSalida } : {}),
+        ...(localV.notaSalida != null ? { notaSalida: localV.notaSalida } : {}),
+        situacionCronometro: localV.situacionCronometro ?? null,
+        situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
+      },
+      firebaseV,
+      localV
+    );
   }
 
   if (firebaseV.status !== "activo" || localV.status !== "activo") {
-    return withLocalSubs(firebaseV);
+    return finalizeSessionMerge(firebaseV, firebaseV, localV);
   }
 
   let merged: Vehicle = { ...firebaseV };
 
-  if (firebaseV.tipoReloj === "desglosador" && localV.subVehiculos && localV.subVehiculos.length > 0) {
-    merged = {
-      ...merged,
-      subVehiculos: mergeSubVehiculosById(firebaseV.subVehiculos, localV.subVehiculos),
-    };
-  }
   if (localV.desglosadorBloqueDepthPsGranted != null) {
     merged = { ...merged, desglosadorBloqueDepthPsGranted: localV.desglosadorBloqueDepthPsGranted };
   }
@@ -243,7 +291,7 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
     };
   }
 
-  return applySituacionDesgloseMerge(merged, firebaseV, localV);
+  return finalizeSessionMerge(merged, firebaseV, localV);
 }
 
 /**

@@ -62,6 +62,7 @@ import {
   RotateCcw,
   Bell,
   BellOff,
+  Magnet,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { toast } from "sonner";
@@ -230,6 +231,7 @@ import {
 import DesglosadorDuracionPanel from "@/components/DesglosadorDuracionPanel";
 import {
   aplicarTiempoGanadoAlCumplir,
+  absorberSaldoAdelantoEnFoco,
   applyCupoManualYRedistribuir,
   computeSituacionCronometroHorarios,
   quitarMinutosHaciaFoco,
@@ -247,6 +249,7 @@ import {
   situacionGananciaVsContratoMin,
   sumMinutosCronometroPendientes,
   sumBonusPreviewEnColaPendiente,
+  minutosGanadosEnVivoFoco,
   totalBudgetMinFromCronometro,
 } from "@/lib/situacionCupoDistrib";
 import {
@@ -379,10 +382,14 @@ import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import PlanificacionCockpit from "@/components/PlanificacionCockpit";
 import ImanPensamientosDock from "@/components/ImanPensamientosDock";
 import {
+  aplicarProyectoHeredadoASub,
+  dominanteProyectoIdEnSubs,
   imanItemsParaDesglosador,
   NIDO_INBOX_ID,
   nidoKeyFromReserva,
+  proyectoMetaParaReservaDesdeSub,
   registrarPasoDesdeSubIman,
+  resolveProyectoIdEnfoqueSituacion,
   subTareaConPasoEjecutado,
   subTareaFromImanItem,
 } from "@/lib/imanPensamientos";
@@ -1942,6 +1949,8 @@ export default function Planeacion() {
 
   const vehiclesRef = useRef(vehicles);
   const desglosadorSyncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const vehicleById = (vehicleId: string) =>
+    vehiclesRef.current.find(v => v.id === vehicleId) ?? vehicles.find(v => v.id === vehicleId);
   const closingInProgressRef = useRef<Map<string, number>>(new Map());
   const CLOSING_STALE_MS = 45_000;
   const isCloseBlocked = (vehicleId: string): boolean => {
@@ -4394,9 +4403,16 @@ export default function Planeacion() {
 
   const handleAddSubTarea = async (vehicleId: string, texto: string): Promise<string | undefined> => {
     if (!user) return undefined;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle) return undefined;
-    const newSubTarea = { id: `st_${Date.now()}`, texto, completada: false, creadaAt: Date.now() };
+    const proyectoId = resolveProyectoIdEnfoqueSituacion(vehicle, segmentoActivo?.proyectoVinculadoId);
+    const newSubTarea = {
+      id: `st_${Date.now()}`,
+      texto,
+      completada: false,
+      creadaAt: Date.now(),
+      ...(proyectoId ? { proyectoId } : {}),
+    };
     const subTareas = [...(vehicle.subTareas || []), newSubTarea];
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
@@ -4419,7 +4435,7 @@ export default function Planeacion() {
 
   const handleToggleSubTarea = async (vehicleId: string, subTareaId: string) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const targetSub = (vehicle.subTareas || []).find(st => st.id === subTareaId);
     if (targetSub?.enDesgloseCronometro) return;
@@ -4473,7 +4489,7 @@ export default function Planeacion() {
 
   const handleSetSubTareaMinutosCupo = async (vehicleId: string, subTareaId: string, minutos: number | undefined) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle?.subTareas) return;
     const sc = vehicle.situacionCronometro;
     const cronActivo = sc?.activo === true;
@@ -4519,7 +4535,7 @@ export default function Planeacion() {
 
   const handleExtendSituacionCupo = async (vehicleId: string, subTareaId: string, delta: number) => {
     if (!user || delta <= 0) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return;
     const list = vehicle.subTareas;
     const idx = list.findIndex(st => st.id === subTareaId);
@@ -4726,7 +4742,11 @@ export default function Planeacion() {
     }
   }, [vehicles, tryFinalizeSituacionDesgloseBloque, situacionBloqueSummaries, openSituacionDesgloseCelebration]);
 
-  const handleEnqueueSubTareasToCronometro = async (vehicleId: string, ids: string[]) => {
+  const handleEnqueueSubTareasToCronometro = async (
+    vehicleId: string,
+    ids: string[],
+    opts?: { proyectoEnfoqueId?: string }
+  ) => {
     if (!user || ids.length === 0) return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return;
@@ -4747,15 +4767,11 @@ export default function Planeacion() {
       return;
     }
 
-    const budgetMin = remainingCronometroBudgetMin(sc);
-    if (budgetMin == null) {
-      toast.error("Meta del reto no disponible", {
-        description: "No hay tiempo sellado para repartir entre la cola.",
-        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
-        duration: 3200,
-      });
-      return;
-    }
+    const segProy = segmentoActivo?.proyectoVinculadoId;
+    const enfoqueHeredado =
+      opts?.proyectoEnfoqueId?.trim() ||
+      sc.proyectoEnfoqueId?.trim() ||
+      resolveProyectoIdEnfoqueSituacion(vehicle, segProy);
 
     const lifted = vehicle.subTareas
       .filter(st => idSet.has(st.id))
@@ -4770,14 +4786,33 @@ export default function Planeacion() {
           delete (next as { minutosCupo?: number }).minutosCupo;
           delete (next as { cupoFijo?: boolean }).cupoFijo;
         }
-        return next;
+        return aplicarProyectoHeredadoASub(next, enfoqueHeredado);
       });
     const libreOrdered = vehicle.subTareas.filter(st => !idSet.has(st.id));
     let subTareas = [...libreOrdered, ...lifted];
+    const budgetMin = remainingCronometroBudgetMin(sc, subTareas);
+    if (budgetMin == null) {
+      toast.error("Meta del reto no disponible", {
+        description: "No hay tiempo sellado para repartir entre la cola.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 3200,
+      });
+      return;
+    }
+
     subTareas = redistribuirMinutosSituacionCronometro(subTareas, budgetMin);
 
     const contratoMs = situacionContratoFinMs(sc);
-    const situacionCronometro = { ...sc };
+    const proyectoEnfoqueId =
+      opts?.proyectoEnfoqueId?.trim() ||
+      sc.proyectoEnfoqueId?.trim() ||
+      dominanteProyectoIdEnSubs(subTareas.filter(st => st.enDesgloseCronometro)) ||
+      vehicle.proyectoId?.trim() ||
+      segProy?.trim();
+    const situacionCronometro = {
+      ...sc,
+      ...(proyectoEnfoqueId && !sc.proyectoEnfoqueId?.trim() ? { proyectoEnfoqueId } : {}),
+    };
     let situacionCupoAnchor = vehicle.situacionCupoAnchor ?? undefined;
     const curAnchor = vehicle.situacionCupoAnchor;
     const curSub = curAnchor ? subTareas.find(s => s.id === curAnchor.subTareaId) : undefined;
@@ -4821,16 +4856,20 @@ export default function Planeacion() {
   const handleMoveSubTareasToCronometro = async (
     vehicleId: string,
     ids: string[],
-    opts?: { objetivoHora?: string }
+    opts?: { objetivoHora?: string; proyectoEnfoqueId?: string }
   ) => {
     if (!user || ids.length === 0) return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return;
     if (vehicle.situacionCronometro?.activo === true) {
-      await handleEnqueueSubTareasToCronometro(vehicleId, ids);
+      await handleEnqueueSubTareasToCronometro(vehicleId, ids, opts);
       return;
     }
     const idSet = new Set(ids);
+    const segProy = segmentoActivo?.proyectoVinculadoId;
+    const enfoqueHeredado =
+      opts?.proyectoEnfoqueId?.trim() ||
+      resolveProyectoIdEnfoqueSituacion(vehicle, segProy);
     const libreOrdered = vehicle.subTareas.filter(st => !idSet.has(st.id));
     const lifted = vehicle.subTareas.filter(st => idSet.has(st.id)).map(st => {
       const next: SubTarea = {
@@ -4842,7 +4881,7 @@ export default function Planeacion() {
         delete (next as { minutosCupo?: number }).minutosCupo;
         delete (next as { cupoFijo?: boolean }).cupoFijo;
       }
-      return next;
+      return aplicarProyectoHeredadoASub(next, enfoqueHeredado);
     });
     let subTareas = [...libreOrdered, ...lifted];
     const prevSc = vehicle.situacionCronometro;
@@ -4861,6 +4900,11 @@ export default function Planeacion() {
     const firstActivation = true;
     const bloqueInicioAt = Date.now();
     const retoNumero = nextRetoNumero(prevSc);
+    const proyectoEnfoqueId =
+      opts?.proyectoEnfoqueId?.trim() ||
+      dominanteProyectoIdEnSubs(lifted) ||
+      vehicle.proyectoId?.trim() ||
+      segProy?.trim();
     const situacionCronometro = {
       activo: true,
       bloqueInicioAt,
@@ -4873,6 +4917,7 @@ export default function Planeacion() {
       minutosGanadosSesion: prevSc?.minutosGanadosSesion ?? 0,
       saldoAdelantoMin: 0,
       bolsaSegundoRetoMin: undefined,
+      ...(proyectoEnfoqueId ? { proyectoEnfoqueId } : {}),
     };
     const firstCron = subTareas.find(st => situacionFilaCronometroPendiente(st) && (st.minutosCupo ?? 0) > 0);
     let situacionCupoAnchor = vehicle.situacionCupoAnchor ?? undefined;
@@ -4944,7 +4989,7 @@ export default function Planeacion() {
     if (!user) return;
     const m = hhmm.trim().match(/^(\d{1,2}):(\d{2})$/);
     if (!m) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle?.subTareas || vehicle.situacionCronometro?.activo !== true) return;
     if (vehicle.situacionCronometro.horaFinContratoMs != null || vehicle.situacionCronometro.horaFinMs != null) {
       toast.info("Meta del reto sellada", {
@@ -4982,7 +5027,7 @@ export default function Planeacion() {
 
   const handleSituacionCronometroCumplido = async (vehicleId: string, subTareaId: string) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion" || vehicle.situacionCronometro?.activo !== true) return;
     const list = vehicle.subTareas;
     const targetSub = list.find(st => st.id === subTareaId);
@@ -4996,14 +5041,20 @@ export default function Planeacion() {
       sc = { ...sc, horaFinContratoMs: sc.horaFinMs };
     }
     const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? now;
+    let workingList = list;
+    if ((sc.saldoAdelantoMin ?? 0) > 0) {
+      const absorbed = absorberSaldoAdelantoEnFoco(workingList, sc.saldoAdelantoMin!, vehicle.situacionCupoAnchor);
+      workingList = absorbed.subTareas;
+      sc = { ...sc, saldoAdelantoMin: absorbed.saldoRestante };
+    }
     let { subTareas, minutosGanados, saldoAdelantoMin } = aplicarTiempoGanadoAlCumplir(
-      list,
+      workingList,
       subTareaId,
       vehicle.situacionCupoAnchor,
       now,
       bloqueInicio
     );
-    const repartoColaDesc = describeRepartoGananciaEnCola(list, subTareas, subTareaId);
+    const repartoColaDesc = describeRepartoGananciaEnCola(workingList, subTareas, subTareaId);
     const pasoNumero = await registrarPasoDesdeSubIman(user.uid, targetSub);
     if (pasoNumero != null) {
       subTareas = subTareaConPasoEjecutado(subTareas, subTareaId, pasoNumero);
@@ -5050,12 +5101,10 @@ export default function Planeacion() {
           duration: 2800,
         });
       } else if (minutosGanados > 0) {
-        toast.success(`+4 PS · +${minutosGanados} min a tus próximas filas`, {
+        toast.success(`+4 PS · +${minutosGanados} min ganados`, {
           description:
             repartoColaDesc ??
-            (saldoAdelantoMin > 0
-              ? `${saldoAdelantoMin} min adelantando la meta`
-              : "Tiempo sumado al cupo de la cola"),
+            "Tiempo sumado al cupo de la cola o de la fila en foco",
           style: { backgroundColor: PIZARRA, border: `1px solid ${VERDE}`, color: VERDE },
           duration: 3400,
         });
@@ -5080,7 +5129,7 @@ export default function Planeacion() {
 
   const handleSituacionCronometroFallado = async (vehicleId: string, subTareaId: string) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion" || vehicle.situacionCronometro?.activo !== true) return;
     const targetSub = vehicle.subTareas.find(st => st.id === subTareaId);
     if (!targetSub?.enDesgloseCronometro || (targetSub.resultadoSituacion ?? "pendiente") !== "pendiente") return;
@@ -5138,6 +5187,15 @@ export default function Planeacion() {
         origenVehiculoId: vehicle.id,
         minutosCupo: extraido.minutosCupo,
         detalles: extraido.detalles,
+        ...proyectoMetaParaReservaDesdeSub(
+          extraido,
+          vehicle,
+          segmentoActivo?.proyectoVinculadoId,
+          imanProyectos
+        ),
+        ...(segmentoActivo
+          ? { segmentoId: segmentoActivo.id, segmentoNombre: segmentoActivo.nombre }
+          : {}),
       });
       if (!localSaved) {
         toast.error("No se pudo guardar la reserva en el dispositivo", {
@@ -5149,8 +5207,8 @@ export default function Planeacion() {
       }
       void updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro: sc });
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
-      toast.info("En reservas tácticas", {
-        description: `"${extraido.texto}" — ruta S · retómala cuando tengas tiempo`,
+      toast.info("Devuelto al Imán", {
+        description: `"${extraido.texto}" · ruta S · retómalo con Abrir nido`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 3200,
       });
@@ -5424,7 +5482,8 @@ export default function Planeacion() {
     persistVehiclesRef();
     try {
       if (cronIds.length > 0) {
-        await handleMoveSubTareasToCronometro(vehicle.id, cronIds);
+        const nidoProy = nidoId !== NIDO_INBOX_ID ? nidoId : undefined;
+        await handleMoveSubTareasToCronometro(vehicle.id, cronIds, { proyectoEnfoqueId: nidoProy });
       } else {
         await updateVehicle(user.uid, vehicle.id, { subTareas });
       }
@@ -5468,7 +5527,7 @@ export default function Planeacion() {
 
   const handleQuitarSituacionCupo = async (vehicleId: string, subTareaId: string, delta: number) => {
     if (!user || delta <= 0) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return;
     const focusId = resolveFocusSubTareaId(vehicle.subTareas, vehicle.situacionCupoAnchor);
     if (!focusId) {
@@ -5513,7 +5572,7 @@ export default function Planeacion() {
 
   const handleAddCasaItem = async (vehicleId: string, subTareaId: string, texto: string) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const t = texto.trim();
     if (!t) return;
@@ -5539,7 +5598,7 @@ export default function Planeacion() {
 
   const handleToggleCasaItem = async (vehicleId: string, subTareaId: string, detalleId: string) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const targetSub = (vehicle.subTareas || []).find(st => st.id === subTareaId);
     const target = (targetSub?.detalles || []).find(d => d.id === detalleId && d.casa);
@@ -5566,7 +5625,7 @@ export default function Planeacion() {
 
   const handleAddDetalle = async (vehicleId: string, subTareaId: string, texto: string) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const nuevoDetalle: DetalleSubTarea = { id: `dt_${Date.now()}`, texto, entregado: false, creadaAt: Date.now() };
     const subTareas = (vehicle.subTareas || []).map(st =>
@@ -5580,7 +5639,7 @@ export default function Planeacion() {
 
   const handleEntregarDetalle = async (vehicleId: string, subTareaId: string, detalleId: string) => {
     if (!user) return;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const targetSub = (vehicle.subTareas || []).find(st => st.id === subTareaId);
     const targetDetalle = (targetSub?.detalles || []).find(d => d.id === detalleId);
@@ -8875,8 +8934,6 @@ export default function Planeacion() {
           defaultProyectoId={segmentoActivo?.proyectoVinculadoId ?? ""}
           onQuickAdd={(texto, ruta, proyectoId) => handleReservaTacticaQuickAdd(texto, ruta, proyectoId)}
           onAbrirNido={(nidoId) => void handleAbrirNidoEnSituacion(nidoId)}
-          onToCronometro={(id) => void handleReservaACronometro(id)}
-          onToListaLibre={(id) => void handleReservaAListaLibre(id)}
           onDelete={(id) => void handleReservaEliminar(id)}
           onRutaChange={(id, ruta) => void handleReservaRutaChange(id, ruta)}
           colors={{ plata: PLATA, cyan: CYAN, gold: GOLD }}
@@ -8986,7 +9043,7 @@ function VehicleCard({
   onSetSubTareaMinutosCupo?: (vehicleId: string, subTareaId: string, minutos: number | undefined) => void;
   onExtendSituacionCupo?: (vehicleId: string, subTareaId: string, delta: number) => void;
   onSyncSituacionCupoAnchor?: (vehicleId: string) => void;
-  onMoveSubTareasToCronometro?: (vehicleId: string, subTareaIds: string[], opts?: { objetivoHora?: string }) => void;
+  onMoveSubTareasToCronometro?: (vehicleId: string, subTareaIds: string[], opts?: { objetivoHora?: string; proyectoEnfoqueId?: string }) => void;
   onSituacionCronometroSetHoraFin?: (vehicleId: string, hhmm: string) => void;
   onSituacionCronometroCumplido?: (vehicleId: string, subTareaId: string) => void;
   onSituacionCronometroFallado?: (vehicleId: string, subTareaId: string) => void;
@@ -9546,7 +9603,7 @@ function VehicleCard({
   ) => {
     if (!onDesglosadorUpdate) return;
     const now = Date.now();
-    const allSubs = [...(vehicle.subVehiculos || [])];
+    const allSubs = [...(subVehiculosRef.current ?? vehicle.subVehiculos ?? [])];
     const idx = allSubs.findIndex(s => s.id === activeSubId);
     if (idx === -1) return;
     const cantidadCheck = validateSubCloseCantidad(allSubs[idx], String(cantidad), status);
@@ -10590,7 +10647,7 @@ function VehicleCard({
                                             if (blockedByInterrupt) return;
                                             playWarDrum();
                                             const now = Date.now();
-                                            const allSubs = [...(vehicle.subVehiculos || [])];
+                                            const allSubs = [...(subVehiculosRef.current ?? vehicle.subVehiculos ?? [])];
                                             const idx = allSubs.findIndex(s => s.id === activeSub.id);
                                             if (idx === -1) return;
                                             const duracionCompletado = allSubs[idx].aperturaAt
@@ -10611,7 +10668,7 @@ function VehicleCard({
                                             if (blockedByInterrupt) return;
                                             playWarDrum();
                                             const now = Date.now();
-                                            const allSubs = [...(vehicle.subVehiculos || [])];
+                                            const allSubs = [...(subVehiculosRef.current ?? vehicle.subVehiculos ?? [])];
                                             const idx = allSubs.findIndex(s => s.id === activeSub.id);
                                             if (idx === -1) return;
                                             const duracionFallado = allSubs[idx].aperturaAt
@@ -10979,7 +11036,6 @@ function VehicleCard({
                       bloqueInicioAt: bloqueInicio,
                       anchor: vehicle.situacionCupoAnchor,
                       now: nowTick,
-                      saldoAdelantoMin: sc.saldoAdelantoMin,
                     });
                     const gananciaMin = situacionGananciaVsContratoMin(contratoMs, proyMs);
                     const bonusEnCola = sumBonusPreviewEnColaPendiente(
@@ -11039,14 +11095,22 @@ function VehicleCard({
                     const limitSec = st.minutosCupo * 60;
                     const elapsedSec = Math.max(0, Math.floor((Date.now() - anchor.startedAt) / 1000));
                     const remainSec = Math.max(0, limitSec - elapsedSec);
+                    const gananciaVivoMin = minutosGanadosEnVivoFoco(subs, anchor, Date.now());
                     const rm = Math.floor(remainSec / 60);
                     const rs = remainSec % 60;
                     const cronList = subs.filter(s => s.enDesgloseCronometro);
                     const idx = (st.enDesgloseCronometro ? cronList : subs).findIndex(s => s.id === st.id) + 1;
                     return (
-                      <p className="text-[8px] font-mono mb-1.5" style={{ color: "rgba(212,175,55,0.9)" }} data-testid={`situacion-cupo-countdown-${vehicle.id}`}>
-                        Fila foco #{idx} · {String(rm).padStart(2, "0")}:{String(rs).padStart(2, "0")} / {st.minutosCupo} min
-                      </p>
+                      <div className="mb-1.5" data-testid={`situacion-cupo-countdown-${vehicle.id}`}>
+                        <p className="text-[8px] font-mono" style={{ color: "rgba(212,175,55,0.9)" }}>
+                          Fila foco #{idx} · {String(rm).padStart(2, "0")}:{String(rs).padStart(2, "0")} / {st.minutosCupo} min
+                        </p>
+                        {gananciaVivoMin > 0 && (
+                          <p className="text-[7px] font-bold font-mono mt-0.5" style={{ color: VERDE }}>
+                            +{gananciaVivoMin} min ganados → repartiéndose en cola
+                          </p>
+                        )}
+                      </div>
                     );
                   })()}
                   {vehicle.situacionCronometro?.activo !== true && (situacionBloquePsTotal ?? 0) > 0 && onVerSituacionBloquePs && (
@@ -11103,7 +11167,6 @@ function VehicleCard({
                                     anchor: vehicle.situacionCupoAnchor,
                                     now: Date.now(),
                                     previewTiempoGanado: vehicle.situacionCronometro?.activo === true,
-                                    saldoAdelantoMin: vehicle.situacionCronometro?.saldoAdelantoMin,
                                   })
                                 : [];
                             const horarioById = new Map(horariosCron.map(h => [h.subTareaId, h]));
@@ -11361,6 +11424,7 @@ function VehicleCard({
                                             <div className="flex gap-1 flex-shrink-0">
                                               <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroCumplido?.(vehicle.id, st.id); }} className="px-2 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(0,200,81,0.15)", color: VERDE, border: "1px solid rgba(0,200,81,0.4)" }}>Cumplido</button>
                                               <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroFallado?.(vehicle.id, st.id); }} className="px-2 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.35)" }}>Fallado</button>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroReservar?.(vehicle.id, st.id); }} className="px-2 py-0.5 rounded text-[7px] font-black uppercase flex items-center gap-0.5" style={{ backgroundColor: "rgba(148,163,184,0.12)", color: PLATA, border: "1px solid rgba(148,163,184,0.35)" }} title="Devolver al Imán (ruta S)"><Magnet size={9} /> Imán</button>
                                             </div>
                                           )}
                                           {pend && !enFoco && (

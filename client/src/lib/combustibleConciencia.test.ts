@@ -110,6 +110,20 @@ describe("combustibleConciencia", () => {
     assert.equal(countSubsSituacionCumplidosHoy([v], dayStart), 0);
   });
 
+  it("sub cron cumplido cuenta aunque sync pierda cerradaAt", () => {
+    const st: SubTarea = {
+      id: "st-cron",
+      texto: "Cron",
+      completada: true,
+      creadaAt: dayStart + 1000,
+      enDesgloseCronometro: true,
+      resultadoSituacion: "cumplido",
+    };
+    const v = makeSituacion([st]);
+    assert.equal(subTareaDecisionEnJornada(st, v, dayStart), true);
+    assert.equal(countSubsSituacionCumplidosHoy([v], dayStart), 1);
+  });
+
   it("formatCombustibleCelebracionBloque con decisiones", () => {
     const msg = formatCombustibleCelebracionBloque({ minutos: 18, decisiones: 3, psTotal: 16 });
     assert.match(msg, /18 min/);

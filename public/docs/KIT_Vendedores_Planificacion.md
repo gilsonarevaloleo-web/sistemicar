@@ -1,6 +1,6 @@
 # Kit vendedores — Planificación SISTEMICAR
 
-**Versión:** 1.1 · **Actualizado:** junio 2026  
+**Versión:** 1.2 · **Actualizado:** junio 2026  
 **Audiencia:** vendedores afiliados, closers, partners de distribución  
 **Contacto operativo:** Gilson · WhatsApp +51 918 260 514
 
@@ -81,7 +81,8 @@ Cliente con stack **Producción** (Base + Operativo ? **$59.98/mes**):
 
 - **Desglosador situacional** (bloques 3+3, cupos, cronómetro por subtarea)
 - **Hub Proyectos** y peldaños (escalera de avance)
-- Reserva táctica, bolsa de ganancia de tiempo
+- **Imán de pensamientos** (captura, nidos por proyecto, devolución ruta S)
+- Bolsa de ganancia de tiempo
 - Ideal para “para mañana”, noche, ideas — **sin calendario rígido**
 
 **Requiere:** Planificación Base.
@@ -89,6 +90,48 @@ Cliente con stack **Producción** (Base + Operativo ? **$59.98/mes**):
 **Frase de venta:** *“Tres ideas, un bloque cerrado. Mañana ya sabes qué ganaste.”*
 
 **Stack Estudiante:** Base + Soberanía ? **$49.98/mes** ? ~**$15/mes** para ti.
+
+---
+
+### 3.2.1 Imán de pensamientos (por qué vale la pena “escribir dos veces”)
+
+**Nombre en app:** Imán de pensamientos (evolución de “reservas tácticas” — mismo almacén, mejor metáfora).
+
+**Para quién:** mente acelerada, ideas sueltas, interrupciones, “tengo que hacer algo con esto pero no ahora”.
+
+**Qué es (en una línea):**  
+El **primer sistema que ordena pensamientos** hacia proyectos, tiempo y pasos de fe — no solo los guarda.
+
+**Flujo que debes mostrar en demo (2 min):**
+
+```
+Mente ? Imán (captura + nido/proyecto)
+     ? Desglosador situacional (foco ~60% con cronómetro)
+     ? [no alcanza el bloque] ? Imán otra vez (ruta S, sin perder hilo)
+     ? Cumplido ? paso ejecutado en proyecto (fe incremental)
+```
+
+**La objeción que debes anticipar:**
+
+| Objeción | Respuesta de venta |
+|----------|-------------------|
+| “¿Por qué escribo dos veces: aquí y donde resuelvo?” | Sin nido/proyecto, sí es fricción. Con Imán + proyecto, **la primera escritura es aterrizaje con destino**; la segunda es ejecución medida en tiempo. |
+| “Prefiero anotar directo donde trabajo” | Directo = foco bajo si no acotas tiempo. El desglosador + cronómetro **sube el foco ~60%**; sin ese paso la mente no se sostiene en la tarea. |
+| “Es otra bandeja de notas” | No. Es **imán de ordenamiento**: cada pensamiento va a un nido (proyecto o inbox), ruta S/E/M, y puede volver al desglosador sin perderse. |
+
+**Por qué sube el valor con el tiempo (insight de uso real):**
+
+1. **Proyecto como ancla de fe** — Al cumplir, el pensamiento puede contar como **paso numerado** hacia un sueño más grande. Ahí sí vale la pena capturar antes de ejecutar: no es duplicar, es **invertir** en claridad + evidencia de avance.
+2. **Foco medido** — Pasar del Imán al desglosador con cupo obliga a nombrar, acotar y ejecutar en ventana. La mente deja de vaguear.
+3. **Orden sin perder nada** — Devolver al Imán (ruta S) no borra: **retoma con Abrir nido** cuando haya tiempo.
+
+**Frases listas para copiar:**
+
+- *“No es escribir dos veces al vacío: es capturar con nido y cerrar con paso en tu proyecto.”*
+- *“El Imán ordena; el desglosador enfoca; el proyecto te da fe para soñar más grande.”*
+- *“Prácticamente el primer sistema que ordena pensamientos hacia acción medida.”*
+
+**Qué NO decir:** que el Imán reemplaza al desglosador o que “planifica solo”. El usuario cierra bloques y cumple subs.
 
 ---
 
@@ -133,6 +176,7 @@ Usa **dolor ? resultado ? prueba en la app**, no lista de funciones técnicas.
 | Persona | Dolor típico | Resultado prometido | Qué mostrar en demo (5 min) |
 |---------|--------------|---------------------|-----------------------------|
 | Estudiante / tiempo libre | Día “se fue” sin bloques cerrados | Bloques 3+3 cerrados + PS del día | Segmento ? desglosador situación ? cerrar 1 bloque |
+| Mente acelerada / ideas sueltas | Pensamientos que se pierden o duplican trabajo | Imán con nido ? desglosador ? paso en proyecto | Imán (captura) ? Abrir nido ? 1 sub en cronómetro ? cumplido |
 | Emprendedor / proyectos | Muchas ideas, poco avance visible | Peldaños conquistados + oleada activa | Hub proyectos ? vínculo a segmento |
 | Producción / costura | Unidades sin ritmo; autoengaño al cerrar | Unidades + récord + termo vs ayer | Desglosador tiempo ? 2–3 subs ? panel termodinámica |
 | Persona con Espejo | Sabe que se sabotea pero no cómo medirlo | Diagnóstico + plan con flota | Espejo ? luego “tu día necesita segmentos” |
@@ -150,8 +194,9 @@ Usa **dolor ? resultado ? prueba en la app**, no lista de funciones técnicas.
 | Add-on | Beneficio clave |
 |--------|-----------------|
 | Soberanía del día | Cierra bloques en tiempo libre sin calendario corporativo |
-| Operativo | Ritmo por unidad + récord + ruta fluido/concentrado/límite con voz |
+| Imán de pensamientos | Ordena capturas hacia nidos/proyectos; ruta S devuelve sin perder hilo |
 | Proyectos (vía Soberanía) | Escalera de peldaños y claridad/oleada hacia un norte |
+| Operativo | Ritmo por unidad + récord + ruta fluido/concentrado/límite con voz |
 
 ---
 
@@ -162,6 +207,9 @@ Porque aquí pagas por **cierre medido y ritmo**, no por almacenar notas. El sist
 
 **“¿Es muy complicado?”**  
 Hay **Express** (nombre + tipo de fin en 30 segundos) y **Profundo** (7 pasos cuando la misión importa). El desglosador es para quien ya trabaja en bloques.
+
+**“¿Por qué capturar en el Imán si luego escribo en el desglosador?”**  
+Porque sin aterrizaje el pensamiento se pierde o te saca del foco. Con **nido + proyecto + paso al cumplir**, la captura no es duplicar: es ordenar antes de ejecutar. El desglosador con cronómetro es lo que **sostiene el foco (~60%)**; el Imán es lo que **no deja que la idea se evapore**.
 
 **“¿Y si no renuevo?”**  
 El cliente pierde acceso al módulo; tú dejas de ganar comisión ese mes. Tu incentivo alineado con **retener** al usuario (onboarding y primer cierre en 48 h).
@@ -217,7 +265,7 @@ Para no sobreprometer en demos:
 | Área | Estado | Comentario vendedor |
 |------|--------|---------------------|
 | Segmentos + Flota + 4 ejes | Producción | Core estable |
-| Desglosador situación + proyectos | Producción | Stack Estudiante |
+| Desglosador situación + proyectos + Imán | Producción | Stack Estudiante; demo Imán ? nido ? cronómetro |
 | Desglosador tiempo + ruta voz | Producción | Stack Producción |
 | Termodinámica v2 (resistencia, dominio fluido) | Producción | Mejor tras sync de subs |
 | Claridad mental / oleada en proyectos | En despliegue | Mencionar solo si el cliente ya lo ve en su cuenta |

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Brain, Check, Circle, Clock, Sparkles, Sun, Moon, Volume2, VolumeX, Wind } from "lucide-react";
 import type { Vehicle } from "@/lib/persistence";
@@ -20,9 +20,11 @@ import {
 import { usePuntoCeroOrchestrator } from "@/hooks/usePuntoCeroOrchestrator";
 import { usePuntoCeroAudio } from "@/hooks/usePuntoCeroAudio";
 import {
-  mensajePasivaDia,
-  mensajePasivaNoche,
-  speakPleasant,
+  MENSAJE_PASIVA_DIA,
+  MENSAJE_PASIVA_NOCHE,
+  speakColorInmersion,
+  speakEtapaPuntoCero,
+  speakPuntoCeroSequence,
 } from "@/lib/puntoCeroVoice";
 import { toast } from "sonner";
 
@@ -141,6 +143,7 @@ export function PuntoCeroPanel({
 
   const [colorInmersion, setColorInmersion] = useState<{ color: string; zona: string; idx: number } | null>(null);
   const [inmersionCount, setInmersionCount] = useState(3);
+  const primeraGuiaVozRef = useRef(true);
 
   const primerAccionMs = vehicle.primerAccionAt;
   const aperturaMs = vehicle.aperturaAt || Date.now();
@@ -164,9 +167,9 @@ export function PuntoCeroPanel({
     onAutoClose: () => onAutoClose(vehicle.id),
     onEnterPasiva: () => {
       if (session?.modo === "dia") {
-        speakPleasant(mensajePasivaDia(), { rate: 0.85, volume: 0.5 });
+        speakPuntoCeroSequence(MENSAJE_PASIVA_DIA, "day");
       } else {
-        speakPleasant(mensajePasivaNoche(), { rate: 0.75, volume: 0.4 });
+        speakPuntoCeroSequence(MENSAJE_PASIVA_NOCHE, "night");
       }
     },
     onCompletada: msg => {
@@ -370,10 +373,10 @@ export function PuntoCeroPanel({
           </p>
           <p className="text-[7px] text-slate-600 mt-0.5">
             {puntoCeroAudio.muted || puntoCeroAudio.volume <= 0
-              ? "Audio silenciado — subí el volumen o activá On"
+              ? "Audio silenciado — subí el volumen o activá On · voz guía al tocar etapas"
               : puntoCeroAudio.unlocked
-                ? `Audio ${puntoCeroAudio.volume}% · auriculares recomendados`
-                : "Tocá una etapa o color para iniciar el audio"}
+                ? `Audio ${puntoCeroAudio.volume}% · auriculares recomendados · voz guía al tocar etapas`
+                : "Tocá una etapa o color para iniciar audio y voz guía"}
           </p>
           {eficienciaSec !== null && (
             <p className="text-[8px] mt-1" style={{ color: flotaColor }}>⚡ Primera etapa: {eficienciaSec < 60 ? `${eficienciaSec}s` : `${Math.round(eficienciaSec / 60)}m`} desde apertura</p>
@@ -395,6 +398,9 @@ export function PuntoCeroPanel({
                     onClick={() => {
                       if (checked || isLocked || isColorEtapa) return;
                       void puntoCeroAudio.unlockAudio();
+                      const intro = primeraGuiaVozRef.current;
+                      if (intro) primeraGuiaVozRef.current = false;
+                      speakEtapaPuntoCero(key, { intro });
                       onEtapaToggle(vehicle.id, key);
                     }}
                     disabled={checked || isLocked || isColorEtapa}
@@ -428,6 +434,7 @@ export function PuntoCeroPanel({
                               e.stopPropagation();
                               if (!confirmado && session) {
                                 void puntoCeroAudio.unlockAudio();
+                                speakColorInmersion(zona);
                                 setColorInmersion({ color, zona, idx });
                               }
                             }}
