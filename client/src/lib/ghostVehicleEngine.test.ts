@@ -92,6 +92,18 @@ describe("ghostVehicleEngine", () => {
     assert.equal(recovered[0]?.id, "loc1");
   });
 
+  it("recoverMissingJournalDayActives no reabre si el id está cerrado localmente", () => {
+    const parkedActivo = v({ id: "loc1", aperturaAt: DAY_START + 3600_000 });
+    const recovered = recoverMissingJournalDayActives(
+      [],
+      [parkedActivo],
+      NOW,
+      () => false,
+      id => id === "loc1"
+    );
+    assert.equal(recovered.length, 0);
+  });
+
   it("preserva activo reciente en ventana de sync", () => {
     const fresh = v({ id: "f1", aperturaAt: NOW - 5 * 60000, clientRequestId: "crq_x" });
     assert.equal(shouldPreserveLocalActivo(fresh, NOW, DAY_START), true);

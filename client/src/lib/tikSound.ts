@@ -34,12 +34,15 @@ export function isPuertaVozEnabled(): boolean {
   }
 }
 
-/** Voz del desglosador (ruta de enfoque): solo si el usuario activa DSG explícitamente. */
+/** Voz del desglosador (ruta de enfoque): ON por defecto si alertas situacionales están ON. */
 export function isDesglosadorVoiceEnabled(): boolean {
   try {
-    return localStorage.getItem(DESGLOSADOR_VOZ_KEY) === "on";
+    const v = localStorage.getItem(DESGLOSADOR_VOZ_KEY);
+    if (v === "off") return false;
+    if (v === "on") return true;
+    return isSituacionAlertsEnabled();
   } catch {
-    return false;
+    return true;
   }
 }
 

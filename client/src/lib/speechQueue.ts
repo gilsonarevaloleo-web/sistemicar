@@ -18,6 +18,8 @@ let queue: string[] = [];
 let speaking = false;
 let lastWarmupMs = 0;
 let stuckTimer: ReturnType<typeof setTimeout> | null = null;
+let voicesPrimed = false;
+let pendingOnPhraseStarted: (() => void) | null = null;
 const idleListeners = new Set<() => void>();
 
 function notifySpeechQueueIdle(): void {
@@ -40,6 +42,29 @@ export function subscribeSpeechQueueIdle(listener: () => void): () => void {
 const STUCK_SPEAK_MS = 45_000;
 const WARMUP_REFRESH_MS = 20 * 60_000;
 
+function getSynth(): SpeechSynthesis | null {
+  if (typeof window === "undefined") return null;
+  return window.speechSynthesis ?? null;
+}
+
+function primeVoicesOnce(): void {
+  const synth = getSynth();
+  if (!synth || voicesPrimed) return;
+  voicesPrimed = true;
+  synth.getVoices();
+  synth.addEventListener("voiceschanged", () => synth.getVoices(), { once: true });
+}
+
+function resumeSynthIfPaused(): void {
+  const synth = getSynth();
+  if (!synth) return;
+  try {
+    if (synth.paused) synth.resume();
+  } catch {
+    /* noop */
+  }
+}
+
 function clearStuckTimer(): void {
   if (stuckTimer) {
     clearTimeout(stuckTimer);
@@ -53,7 +78,7 @@ function armStuckReset(): void {
     if (!speaking) return;
     speaking = false;
     try {
-      window.speechSynthesis?.cancel();
+      getSynth()?.cancel();
     } catch {
       /* noop */
     }
@@ -61,30 +86,73 @@ function armStuckReset(): void {
   }, STUCK_SPEAK_MS);
 }
 
-/** Libera cola atascada (p. ej. pestaña en segundo plano). */
+function isBackground(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.hidden || !document.hasFocus();
+}
+
+function enqueueForBackground(phrases: string[], source: UbicacionVoiceSource): void {
+  void import("./backgroundAttentionAlerts").then(mod => {
+    for (const phrase of phrases) {
+      mod.enqueueMissedPuertaVoice(phrase, source);
+    }
+  });
+}
+
+/** Libera cola atascada sin cancelar frases en curso si el sintetizador sigue activo. */
 export function recoverSpeechQueue(): void {
-  speaking = false;
-  clearStuckTimer();
-  try {
-    window.speechSynthesis?.cancel();
-  } catch {
-    /* noop */
+  const synth = getSynth();
+  if (!synth) return;
+
+  resumeSynthIfPaused();
+  primeVoicesOnce();
+
+  const synthSpeaking = synth.speaking;
+  const flagStuck = speaking && !synthSpeaking;
+
+  if (flagStuck) {
+    speaking = false;
+    clearStuckTimer();
   }
-  processQueue();
+
+  if (queue.length > 0 && !speaking) {
+    processQueue();
+    return;
+  }
+
+  if (flagStuck && queue.length === 0) {
+    try {
+      synth.cancel();
+    } catch {
+      /* noop */
+    }
+  }
 }
 
 function processQueue(): void {
   if (speaking || queue.length === 0) return;
-  if (typeof window === "undefined" || !window.speechSynthesis) {
+  const synth = getSynth();
+  if (!synth) {
     queue = [];
     return;
   }
+
+  primeVoicesOnce();
+  resumeSynthIfPaused();
+
   const text = queue.shift()!;
   speaking = true;
   armStuckReset();
   try {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = "es-ES";
+    u.onstart = () => {
+      if (pendingOnPhraseStarted) {
+        const cb = pendingOnPhraseStarted;
+        pendingOnPhraseStarted = null;
+        cb();
+      }
+    };
     u.onend = () => {
       speaking = false;
       clearStuckTimer();
@@ -97,7 +165,7 @@ function processQueue(): void {
       processQueue();
       notifySpeechQueueIdle();
     };
-    window.speechSynthesis.speak(u);
+    synth.speak(u);
   } catch {
     speaking = false;
     clearStuckTimer();
@@ -110,48 +178,63 @@ function processQueue(): void {
  * Se re-ejecuta si pasó tiempo (navegadores revocan autoplay al cabo de rato).
  */
 export function warmupSpeechSynthesis(force = false): void {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  const synth = getSynth();
+  if (!synth) return;
   const now = Date.now();
   if (!force && now - lastWarmupMs < WARMUP_REFRESH_MS) return;
   lastWarmupMs = now;
   try {
-    window.speechSynthesis.getVoices();
-    const u = new SpeechSynthesisUtterance("");
-    u.volume = 0;
-    window.speechSynthesis.speak(u);
+    primeVoicesOnce();
+    resumeSynthIfPaused();
   } catch {
     /* noop */
   }
 }
 
-/** Encola frases y las reproduce en orden. cancelPrevious=true cancela lo anterior (nuevo sub). */
+/**
+ * Encola frases y las reproduce en orden.
+ * cancelPrevious=true cancela lo anterior (nuevo sub).
+ * onPhraseStarted se dispara cuando el navegador realmente empieza a hablar la primera frase.
+ */
 export function speakUbicacionQueue(
   phrases: string[],
   cancelPrevious = false,
-  source: UbicacionVoiceSource = "situacion"
+  source: UbicacionVoiceSource = "situacion",
+  onPhraseStarted?: () => void
 ): void {
   const filtered = phrases.map(p => p.trim()).filter(Boolean);
   if (filtered.length === 0) return;
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  if (!getSynth()) return;
 
   if (!isVoiceEnabledFor(source)) return;
+
+  if (isBackground()) {
+    enqueueForBackground(filtered, source);
+    return;
+  }
 
   warmupSpeechSynthesis();
 
   if (cancelPrevious) {
     try {
-      window.speechSynthesis.cancel();
+      getSynth()?.cancel();
     } catch {
       /* noop */
     }
     queue = [];
     speaking = false;
     clearStuckTimer();
+    pendingOnPhraseStarted = null;
   }
+
+  pendingOnPhraseStarted = onPhraseStarted ?? null;
 
   queue.push(...filtered);
   processQueue();
-  if (!speaking && queue.length === 0) notifySpeechQueueIdle();
+  if (!speaking && queue.length === 0) {
+    pendingOnPhraseStarted = null;
+    notifySpeechQueueIdle();
+  }
 }
 
 export function speakUbicacionSingle(

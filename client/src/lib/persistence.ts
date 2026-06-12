@@ -706,7 +706,9 @@ const PARKED_ACTIVES_KEY = "sistemicar_parked_actives";
 /** Guarda activos en sessionStorage al ir a segundo plano (recuperación tras suspender la pestaña). */
 export function parkActiveVehiclesForResume(vehicles: Vehicle[]): void {
   try {
-    const actives = vehicles.filter(v => v.status === "activo" && !v.autoVerdad);
+    const actives = vehicles.filter(
+      v => v.status === "activo" && !v.autoVerdad && !wasVehicleRecentlyClosed(v.id)
+    );
     if (actives.length === 0) {
       sessionStorage.removeItem(PARKED_ACTIVES_KEY);
       return;
@@ -715,6 +717,39 @@ export function parkActiveVehiclesForResume(vehicles: Vehicle[]): void {
   } catch {
     // sessionStorage no disponible
   }
+}
+
+function unparkVehicleOnClose(vehicleId: string): void {
+  try {
+    const raw = sessionStorage.getItem(PARKED_ACTIVES_KEY);
+    if (!raw) return;
+    const parked = parseParkedVehicles(raw);
+    const filtered = parked.filter(v => v.id !== vehicleId);
+    if (filtered.length === 0) {
+      sessionStorage.removeItem(PARKED_ACTIVES_KEY);
+    } else if (filtered.length !== parked.length) {
+      sessionStorage.setItem(PARKED_ACTIVES_KEY, JSON.stringify(filtered));
+    }
+  } catch {
+    // sessionStorage no disponible
+  }
+}
+
+/** Nunca dejar que un snapshot remoto (o aparcado stale) reabra un vehículo cerrado localmente. */
+function enforceLocalClosedOverrides(incoming: Vehicle[], current: Vehicle[]): Vehicle[] {
+  const closedById = new Map(
+    current.filter(v => v.status !== "activo").map(v => [v.id, v])
+  );
+  return incoming.map(v => {
+    if (v.status !== "activo") return v;
+    const closed = closedById.get(v.id);
+    if (closed) return mergeActiveVehicleSessionState(v, closed);
+    if (wasVehicleRecentlyClosed(v.id)) {
+      const fromCurrent = current.find(c => c.id === v.id && c.status !== "activo");
+      if (fromCurrent) return mergeActiveVehicleSessionState(v, fromCurrent);
+    }
+    return v;
+  });
 }
 
 function parseParkedVehicles(raw: string): Vehicle[] {
@@ -878,6 +913,7 @@ export function saveLocalVehicles(vehicles: Vehicle[]): boolean {
   // that were explicitly closed recently. A NEW vehicle created immediately after closing
   // another has a different ID and is always protected.
   const current = getLocalVehicles();
+  vehicles = enforceLocalClosedOverrides(vehicles, current);
   const newIds = new Set(vehicles.map(v => v.id));
   const newClientRequestIds = new Set(
     vehicles.map(v => v.clientRequestId).filter(Boolean)
@@ -959,6 +995,7 @@ export function notifyVehicleClosed(vehicleId?: string): void {
     const now = Date.now();
     _recentlyClosedIds.set(vehicleId, now);
     writeClosedIdToSession(vehicleId);
+    unparkVehicleOnClose(vehicleId);
     const cutoff = now - RECENTLY_CLOSED_MS;
     for (const [id, t] of _recentlyClosedIds) {
       if (t < cutoff) _recentlyClosedIds.delete(id);
@@ -1202,11 +1239,18 @@ export function subscribeToVehicles(
       }
 
       sortedWithSubs = mergeMissingLocalActives(sortedWithSubs);
+      const localClosedIds = new Set(
+        existingLocal.filter(v => v.status !== "activo").map(v => v.id)
+      );
+      const parkedActives = getParkedActiveVehicles().filter(
+        p => !localClosedIds.has(p.id) && !wasVehicleRecentlyClosed(p.id)
+      );
       sortedWithSubs = recoverMissingJournalDayActives(
         sortedWithSubs,
-        [...existingLocal, ...getParkedActiveVehicles()],
+        [...existingLocal, ...parkedActives],
         Date.now(),
-        wasVehicleRecentlyClosed
+        wasVehicleRecentlyClosed,
+        id => localClosedIds.has(id)
       );
 
       // Archiva interrupciones huérfanas (no las elimina — deben aparecer en historial).

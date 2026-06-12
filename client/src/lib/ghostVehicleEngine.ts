@@ -86,7 +86,8 @@ export function recoverMissingJournalDayActives(
   merged: Vehicle[],
   localSource: Vehicle[],
   nowMs: number = Date.now(),
-  isRecentlyClosed: (id: string) => boolean = () => false
+  isRecentlyClosed: (id: string) => boolean = () => false,
+  isLocallyClosed: (id: string) => boolean = () => false
 ): Vehicle[] {
   const dayStart = getJournalDayStartMs(nowMs);
   const mergedIds = new Set(merged.map(v => v.id));
@@ -97,6 +98,7 @@ export function recoverMissingJournalDayActives(
     if (mergedIds.has(v.id)) return false;
     if (v.clientRequestId && mergedCrq.has(v.clientRequestId)) return false;
     if (isRecentlyClosed(v.id)) return false;
+    if (isLocallyClosed(v.id)) return false;
     if (isOrphanDesglosadorInterrupt(v, byId)) return false;
     return shouldPreserveLocalActivo(v, nowMs, dayStart);
   });

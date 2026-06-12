@@ -1631,11 +1631,15 @@ export default function Planeacion() {
         console.warn(`[Vehicles] Rescatando ${rescued.length} activo(s) ausentes del snapshot:`, rescued.map(v => `${v.id}:${v.titulo}`));
         merged = [...rescued, ...merged];
       }
+      const parkedForRecover = getParkedActiveVehicles().filter(
+        p => !localClosedIds.has(p.id) && !wasVehicleRecentlyClosed(p.id)
+      );
       merged = recoverMissingJournalDayActives(
         merged,
-        [...getLocalVehicles(), ...getParkedActiveVehicles(), ...vehiclesRef.current],
+        [...getLocalVehicles(), ...parkedForRecover, ...vehiclesRef.current],
         nowMs,
-        wasVehicleRecentlyClosed
+        wasVehicleRecentlyClosed,
+        id => localClosedIds.has(id)
       );
       if (merged.length > 0) {
         saveLocalVehicles(merged);
@@ -2017,7 +2021,13 @@ export default function Planeacion() {
     const rehydrateFromLocal = () => {
       const nowMs = Date.now();
       const dayStart = getJournalDayStartMs(nowMs);
-      const sources = [...getLocalVehicles(), ...getParkedActiveVehicles()];
+      const localRaw = getLocalVehicles();
+      const localById = new Map(localRaw.map(v => [v.id, v]));
+      const parked = getParkedActiveVehicles().filter(p => {
+        const local = localById.get(p.id);
+        return !(local && local.status !== "activo") && !wasVehicleRecentlyClosed(p.id);
+      });
+      const sources = [...localRaw, ...parked];
       const byId = new Map(vehiclesRef.current.map(v => [v.id, v]));
       const toAdd = sources.filter(
         v =>
@@ -2025,6 +2035,7 @@ export default function Planeacion() {
           !v.autoVerdad &&
           !byId.has(v.id) &&
           !wasVehicleRecentlyClosed(v.id) &&
+          !(localById.get(v.id) && localById.get(v.id)!.status !== "activo") &&
           shouldPreserveLocalActivo(v, nowMs, dayStart)
       );
       if (toAdd.length === 0) return;
@@ -3158,6 +3169,21 @@ export default function Planeacion() {
       return;
     }
 
+    const cierreAt = vehicle.cierreAt ?? Date.now();
+    const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || cierreAt;
+    const duracionFinal = vehicle.duracionFinal ?? Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
+    notifyVehicleClosed(vehicleId);
+    const optimisticClose = {
+      status,
+      cierreAt,
+      duracionFinal,
+      cierreManual: status === "cumplido",
+    };
+    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v)));
+    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v));
+    optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
+    saveLocalVehicles(vehiclesRef.current);
+
     const safeFb = async (label: string, fn: () => Promise<any>) => {
       try { await fn(); } catch (e) { console.error(`[handleStatusChange] ${label}:`, e); }
     };
@@ -3178,9 +3204,6 @@ export default function Planeacion() {
     let missionResult = { challengeCompleted: false, newRank: null as string | null, streak: 0 };
     try { missionResult = await recordMissionResult(user.uid, isSuccess, status === "cumplido", missionCP); } catch (e) { console.error("[handleStatusChange] recordMissionResult:", e); }
 
-    const cierreAt = vehicle.cierreAt ?? Date.now();
-    const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || cierreAt;
-    const duracionFinal = vehicle.duracionFinal ?? Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
     await safeFb("closeTimestamps", () =>
       updateVehicle(user.uid, vehicleId, {
         cierreAt,
@@ -3188,13 +3211,6 @@ export default function Planeacion() {
         cierreManual: status === "cumplido",
       })
     );
-    setVehicles(prev => prev.map(v =>
-      v.id === vehicleId ? { ...v, status, cierreAt, duracionFinal, cierreManual: status === "cumplido" } : v
-    ));
-    vehiclesRef.current = vehiclesRef.current.map(v =>
-      v.id === vehicleId ? { ...v, status, cierreAt, duracionFinal, cierreManual: status === "cumplido" } : v
-    );
-    saveLocalVehicles(vehiclesRef.current);
 
     await safeFb("updateStatus", () => updateVehicleStatus(user.uid, vehicleId, status));
     if (intensidadEnergeticaFin) {
@@ -6069,7 +6085,7 @@ export default function Planeacion() {
         title={
           desglosadorVozEnabled
             ? "Silenciar voz de ruta de enfoque (desglosador)"
-            : "Activar voz opcional al iniciar sub con ruta de enfoque marcada"
+            : "Activar voz de ruta de enfoque (desglosador) — ON por defecto con alertas"
         }
         data-testid="button-desglosador-voz-toggle"
       >
@@ -9763,7 +9779,6 @@ function VehicleCard({
     for (const alert of alerts) {
       const key = `${activeSub.id}-${alert}`;
       if (rutaUmbralAlertKeysRef.current.has(key)) continue;
-      rutaUmbralAlertKeysRef.current.add(key);
       onRutaBandCross?.({
         vehicleId: vehicle.id,
         subId: activeSub.id,
@@ -9775,7 +9790,9 @@ function VehicleCard({
       } else {
         playChime();
       }
-      speakUbicacionQueue(rutaVozPartsForBanda(alert), false, "desglosador");
+      speakUbicacionQueue(rutaVozPartsForBanda(alert), false, "desglosador", () => {
+        rutaUmbralAlertKeysRef.current.add(key);
+      });
     }
     const cruzadoChanged =
       nextRuta.cruzado.concentrado !== activeSub.rutaEnfoque.cruzado.concentrado ||
@@ -9794,12 +9811,35 @@ function VehicleCard({
     if (!activeSub?.rutaEnfoque?.activa || !activeSub.aperturaAt) return;
     const key = `${activeSub.id}-${activeSub.aperturaAt}`;
     if (subStartVoiceRef.current.has(key)) return;
-    subStartVoiceRef.current.add(key);
-    speakUbicacionQueue(
-      rutaVozFluidoParts(cleanSubTitulo(activeSub.titulo)),
-      true,
-      "desglosador"
-    );
+
+    const phrases = rutaVozFluidoParts(cleanSubTitulo(activeSub.titulo));
+    let marked = false;
+    const markSpoken = () => {
+      if (marked) return;
+      marked = true;
+      subStartVoiceRef.current.add(key);
+    };
+
+    const speakIntro = () => {
+      if (subStartVoiceRef.current.has(key)) return;
+      speakUbicacionQueue(phrases, true, "desglosador", markSpoken);
+    };
+
+    speakIntro();
+
+    const retryTimer = window.setTimeout(() => {
+      if (!subStartVoiceRef.current.has(key)) speakIntro();
+    }, 1500);
+
+    const onGesture = () => {
+      if (!subStartVoiceRef.current.has(key)) speakIntro();
+    };
+    window.addEventListener("pointerdown", onGesture, { capture: true });
+
+    return () => {
+      window.clearTimeout(retryTimer);
+      window.removeEventListener("pointerdown", onGesture, { capture: true });
+    };
   }, [vehicle.subVehiculos, vehicle.status, vehicle.tipoReloj]);
 
   const attemptCloseActiveSub = (
