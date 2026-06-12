@@ -147,6 +147,7 @@ import {
   reconcileStaleCentinelaInFirestore,
 } from "@/lib/persistence";
 import {
+  filterVehiclesForAnilloCoverage,
   filterVehiclesForEntropy,
   isGhostActiveVehicle,
   recoverMissingJournalDayActives,
@@ -248,6 +249,7 @@ import {
   computeSituacionCronometroHorarios,
   quitarMinutosHaciaFoco,
   redistribuirMinutosSituacionCronometro,
+  reacomodarColaCronometroAMeta,
   remainingCronometroBudgetMin,
   cerrarCronometroDeGolpe,
   registrarCierreFalladoCronometro,
@@ -1547,7 +1549,7 @@ export default function Planeacion() {
     void anilloTick;
     const segs = planilla?.segmentos || [];
     const nowMs = Date.now();
-    const vehiculosAnillo = filterVehiclesForEntropy(vehicles, nowMs);
+    const vehiculosAnillo = filterVehiclesForAnilloCoverage(vehicles, nowMs);
     const metricas = calcularMetricasAnilloConciencia({
       segmentos: segs,
       vehiculos: vehiculosAnillo,
@@ -5264,8 +5266,13 @@ export default function Planeacion() {
       subTareaId,
       vehicle.situacionCupoAnchor,
       now,
-      bloqueInicio
+      bloqueInicio,
+      sc.horaFinContratoMs ?? sc.horaFinMs
     );
+    const contratoFin = sc.horaFinContratoMs ?? sc.horaFinMs;
+    if (contratoFin != null) {
+      subTareas = reacomodarColaCronometroAMeta(subTareas, contratoFin, now);
+    }
     const repartoColaDesc = describeRepartoGananciaEnCola(workingList, subTareas, subTareaId);
     const pasoNumero = await registrarPasoDesdeSubIman(user.uid, targetSub);
     if (pasoNumero != null) {
@@ -5353,13 +5360,18 @@ export default function Planeacion() {
     const now = Date.now();
     const sc = vehicle.situacionCronometro!;
     const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? now;
-    const subTareas = registrarCierreFalladoCronometro(
+    const subTareasRaw = registrarCierreFalladoCronometro(
       vehicle.subTareas,
       subTareaId,
       vehicle.situacionCupoAnchor,
       now,
       bloqueInicio
     );
+    const contratoFin = sc.horaFinContratoMs ?? sc.horaFinMs;
+    const subTareas =
+      contratoFin != null
+        ? reacomodarColaCronometroAMeta(subTareasRaw, contratoFin, now)
+        : subTareasRaw;
     const bloqueListo = !subTareas.some(situacionFilaCronometroPendiente);
     const situacionCronometro = sc;
     const situacionCupoAnchor = bloqueListo ? null : vehicle.situacionCupoAnchor;
@@ -11345,13 +11357,16 @@ function VehicleCard({
                       bloqueInicioAt: bloqueInicio,
                       anchor: vehicle.situacionCupoAnchor,
                       now: nowTick,
+                      horaFinContratoMs: contratoMs,
                     });
                     const gananciaMin = situacionGananciaVsContratoMin(contratoMs, proyMs);
                     const bonusEnCola = sumBonusPreviewEnColaPendiente(
                       vehicle.subTareas || [],
                       vehicle.situacionCupoAnchor,
-                      nowTick
+                      nowTick,
+                      contratoMs
                     );
+                    const proyEnTopeMeta = contratoMs != null && proyMs != null && proyMs >= contratoMs;
                     const fmtHora = (ms: number | null) =>
                       ms != null
                         ? new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -11379,11 +11394,13 @@ function VehicleCard({
                             <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : PLATA }}>Proyección</p>
                             <p className="text-sm font-black font-mono mt-0.5" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : PLATA }}>{fmtHora(proyMs)}</p>
                             {bonusEnCola > 0 ? (
-                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>+{bonusEnCola} min repartidos en cola</p>
+                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>+{bonusEnCola} min en cola (dentro de meta)</p>
                             ) : gananciaMin != null && gananciaMin > 0 ? (
                               <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>↓ {gananciaMin} min vs meta</p>
+                            ) : proyEnTopeMeta ? (
+                              <p className="text-[7px] font-bold mt-0.5 text-amber-400/90">tope en meta</p>
                             ) : gananciaMin != null && gananciaMin < 0 ? (
-                              <p className="text-[7px] font-bold mt-0.5 text-red-400">↑ {Math.abs(gananciaMin)} min perdiendo</p>
+                              <p className="text-[7px] font-bold mt-0.5 text-red-400">↑ {Math.abs(gananciaMin)} min ajustando cola</p>
                             ) : (
                               <p className="text-[7px] text-slate-500 mt-0.5">en tiempo</p>
                             )}

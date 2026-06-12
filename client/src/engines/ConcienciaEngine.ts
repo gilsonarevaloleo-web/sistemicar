@@ -199,6 +199,38 @@ function subtractMsIntervals(base: MsInterval[], subtract: MsInterval[]): MsInte
   return result;
 }
 
+function plannedSegmentWindowsMs(
+  segmentos: SegmentoAnilloLite[],
+  limaDayStartMs: number,
+  livedStartMs: number,
+  nowMs: number
+): MsInterval[] {
+  const windows: MsInterval[] = [];
+  for (const seg of segmentos) {
+    const { start, end } = segmentWindowMs(
+      seg.horaInicio || "00:00",
+      seg.horaFin || "00:00",
+      limaDayStartMs
+    );
+    const evalStart = Math.max(start, livedStartMs);
+    const evalEnd = Math.min(end, nowMs);
+    if (evalEnd > evalStart) windows.push({ start: evalStart, end: evalEnd });
+  }
+  return mergeMsIntervals(windows);
+}
+
+function intersectIntervalsWithWindows(intervals: MsInterval[], windows: MsInterval[]): MsInterval[] {
+  if (windows.length === 0 || intervals.length === 0) return [];
+  const out: MsInterval[] = [];
+  for (const interval of intervals) {
+    for (const w of windows) {
+      const clipped = clipInterval(interval, w.start, w.end);
+      if (clipped) out.push(clipped);
+    }
+  }
+  return mergeMsIntervals(out);
+}
+
 const MINUTOS_MEDIA_JORNADA = 12 * 60;
 
 /** Grados en reloj 12h: 00:00/12:00 arriba, sentido horario; 360° = 720 min. */
@@ -408,11 +440,13 @@ export function computeTimelineClockArcs(params: {
   const conquistaMerged = mergeMsIntervals(conquistaSessions);
   const gapCoverMerged = mergeMsIntervals(gapCoverSessions);
 
-  for (const interval of conquistaMerged) {
-    arcs.push(...intervalToClockArcs(interval, limaDayStartMs, "conquista"));
-  }
-
   if (hasSegments) {
+    const segmentWindows = plannedSegmentWindowsMs(segmentos, limaDayStartMs, livedStartMs, nowMs);
+    const conquistaInSegments = intersectIntervalsWithWindows(conquistaMerged, segmentWindows);
+    for (const interval of conquistaInSegments) {
+      arcs.push(...intervalToClockArcs(interval, limaDayStartMs, "conquista"));
+    }
+
     for (const seg of segmentos) {
       const { start, end } = segmentWindowMs(
         seg.horaInicio || "00:00",
@@ -434,6 +468,9 @@ export function computeTimelineClockArcs(params: {
       }
     }
   } else {
+    for (const interval of conquistaMerged) {
+      arcs.push(...intervalToClockArcs(interval, limaDayStartMs, "conquista"));
+    }
     const window: MsInterval = { start: livedStartMs, end: livedEndMs };
     const gaps = subtractMsIntervals([window], gapCoverMerged);
     for (const gap of gaps) {
@@ -546,7 +583,11 @@ export function computeTimelineDayStats(params: {
   const gapCoverMerged = mergeMsIntervals(gapCoverSessions);
 
   const entropyRaw: MsInterval[] = [];
+  let conquistaForStats = conquistaMerged;
   if (segmentos.length > 0) {
+    const segmentWindows = plannedSegmentWindowsMs(segmentos, limaDayStartMs, livedStartMs, nowMs);
+    conquistaForStats = intersectIntervalsWithWindows(conquistaMerged, segmentWindows);
+
     for (const seg of segmentos) {
       const { start, end } = segmentWindowMs(
         seg.horaInicio || "00:00",
@@ -573,10 +614,14 @@ export function computeTimelineDayStats(params: {
   const sumMin = (intervals: MsInterval[]) =>
     intervals.reduce((acc, i) => acc + (i.end - i.start) / 60000, 0);
 
-  const conquistaMin = sumMin(conquistaMerged);
+  const conquistaMin = sumMin(conquistaForStats);
   const entropiaMin = sumMin(entropiaMerged);
   const livedMin = (livedEndMs - livedStartMs) / 60000;
-  const vacioMin = Math.max(0, livedMin - conquistaMin - entropiaMin);
+  const plannedMin =
+    segmentos.length > 0
+      ? sumMin(plannedSegmentWindowsMs(segmentos, limaDayStartMs, livedStartMs, nowMs))
+      : livedMin;
+  const vacioMin = Math.max(0, plannedMin - conquistaMin - entropiaMin);
 
   return {
     conquistaMin: Math.round(conquistaMin * 10) / 10,

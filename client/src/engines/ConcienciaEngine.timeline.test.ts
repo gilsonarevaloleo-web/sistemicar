@@ -10,6 +10,7 @@ import {
   UMBRAL_CONTINGENCIA_MIN,
 } from "./ConcienciaEngine.ts";
 import { getJournalDayStartMs } from "../lib/segmentTime.ts";
+import { filterVehiclesForAnilloCoverage } from "../lib/ghostVehicleEngine.ts";
 
 /** Hora civil en Lima (UTC-5) como timestamp UTC. */
 function limaAt(y: number, mo: number, d: number, h: number, min = 0): number {
@@ -222,6 +223,60 @@ describe("computeTimelineClockArcs", () => {
     });
     assert.equal(stats.entropiaMin, 0);
   });
+
+  it("a las 5:40 segmento 5-10 sin vehículo en jornada: rojo, sin morado", () => {
+    const now = limaAt(2026, 4, 18, 5, 40);
+    const arcs = computeTimelineClockArcs({
+      vehiculos: [],
+      segmentos: [{ horaInicio: "05:00", horaFin: "10:00" }],
+      now,
+    });
+    assert.ok(arcs.some(a => a.kind === "entropia"));
+    assert.equal(arcs.filter(a => a.kind === "conquista").length, 0);
+  });
+
+  it("activo arrastrado desde 04:00 no pinta morado tras filtro de anillo", () => {
+    const now = limaAt(2026, 4, 18, 5, 40);
+    const journalStart = getJournalDayStartMs(now);
+    const stale = {
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "activo",
+      aperturaAt: journalStart - 3600_000,
+    };
+    const vehiculos = filterVehiclesForAnilloCoverage([stale as any], now);
+    assert.equal(vehiculos.length, 0);
+    const arcs = computeTimelineClockArcs({
+      vehiculos,
+      segmentos: [{ horaInicio: "05:00", horaFin: "10:00" }],
+      now,
+    });
+    assert.ok(arcs.some(a => a.kind === "entropia"));
+    assert.equal(arcs.filter(a => a.kind === "conquista").length, 0);
+    const st = computeAnilloEstado({
+      segmentos: [{ horaInicio: "05:00", horaFin: "10:00" }],
+      vehiculos,
+      now,
+    });
+    assert.equal(st.mode, "entropia");
+  });
+
+  it("conquista solo dentro del segmento planificado, no antes del umbral", () => {
+    const now = limaAt(2026, 4, 18, 9, 0);
+    const journalStart = getJournalDayStartMs(now);
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "activo",
+      aperturaAt: journalStart,
+    }];
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const arcs = computeTimelineClockArcs({ segmentos, vehiculos, now });
+    const conquista = arcs.filter(a => a.kind === "conquista");
+    assert.ok(conquista.length > 0);
+    const minDeg = Math.min(...conquista.map(a => a.startDeg));
+    assert.ok(minDeg >= clockMinutesToDeg(8 * 60) - 1, "morado no antes de 08:00");
+  });
 });
 
 describe("computeAnilloEstado", () => {
@@ -252,7 +307,7 @@ describe("computeAnilloEstado", () => {
     assert.equal(st.mode, "entropia");
   });
 
-  it("modo conquista inmediato con vehículo activo (incluso cruzando 05:00)", () => {
+  it("activo cruzando 05:00 sin filtro de anillo aún muestra conquista en motor", () => {
     const now = limaAt(2026, 4, 18, 9, 0);
     const journalStart = getJournalDayStartMs(now);
     const st = computeAnilloEstado({

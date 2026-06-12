@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Vehicle } from "./persistence";
 import {
+  filterVehiclesForAnilloCoverage,
   filterVehiclesForEntropy,
   GHOST_MAX_SESSION_MS,
   hasRealActiveConsciousVehicle,
@@ -101,5 +102,27 @@ describe("ghostVehicleEngine", () => {
     const filtered = filterVehiclesForEntropy([cross], NOW);
     assert.equal(filtered.length, 1);
     assert.equal(hasRealActiveConsciousVehicle([cross], NOW), true);
+  });
+
+  it("filterVehiclesForAnilloCoverage excluye activo arrastrado antes de 05:00", () => {
+    const cross = v({ id: "c1", aperturaAt: DAY_START - 3600_000 });
+    const filtered = filterVehiclesForAnilloCoverage([cross], NOW);
+    assert.equal(filtered.length, 0);
+  });
+
+  it("filterVehiclesForAnilloCoverage incluye activo abierto en la jornada", () => {
+    const morning = v({ id: "m1", aperturaAt: DAY_START + 3600_000 });
+    const filtered = filterVehiclesForAnilloCoverage([morning], NOW);
+    assert.equal(filtered.length, 1);
+  });
+
+  it("filterVehiclesForAnilloCoverage excluye descanso overnight", () => {
+    const overnight = v({
+      id: "d1",
+      tipoFlota: "descanso",
+      aperturaAt: DAY_START - 3600_000,
+    });
+    const filtered = filterVehiclesForAnilloCoverage([overnight], NOW);
+    assert.equal(filtered.length, 0);
   });
 });

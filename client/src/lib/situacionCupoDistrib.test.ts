@@ -4,6 +4,7 @@ import type { SubTarea } from "./persistence.ts";
 import {
   aplicarTiempoGanadoAlCumplir,
   applyCupoManualYRedistribuir,
+  capSituacionProyeccionFinMs,
   cerrarCronometroDeGolpe,
   computeSituacionCronometroHorarios,
   computeSituacionProyeccionFinMs,
@@ -11,6 +12,7 @@ import {
   descontarMinutosDeFlexiblesPosteriores,
   extraerSubTareaAReserva,
   quitarMinutosHaciaFoco,
+  reacomodarColaCronometroAMeta,
   redistribuirMinutosSituacionCronometro,
   situacionRelojDebeMostrarse,
   situacionTargetMsReloj,
@@ -64,7 +66,7 @@ describe("redistribuirMinutosSituacionCronometro", () => {
 });
 
 describe("remainingCronometroBudgetMin", () => {
-  it("no achica presupuesto por debajo del cupo pendiente acumulado", () => {
+  it("usa solo tiempo de pared hasta meta (no infla por cupo acumulado)", () => {
     const now = 1_000_000;
     const sc = {
       activo: true,
@@ -72,7 +74,7 @@ describe("remainingCronometroBudgetMin", () => {
       saldoAdelantoMin: 4,
     };
     const subs = [st("a", 10), st("b", 20), st("c", 10)];
-    assert.equal(remainingCronometroBudgetMin(sc, subs, now), 40);
+    assert.equal(remainingCronometroBudgetMin(sc, subs, now), 25);
     assert.equal(remainingCronometroBudgetMin(sc, undefined, now), 25);
   });
 });
@@ -136,26 +138,29 @@ describe("computeSituacionCronometroHorarios", () => {
     assert.equal(horarios[0]!.enFoco, true);
   });
 
-  it("preview suma minutosCupo en filas posteriores mientras el foco va ganando", () => {
+  it("preview adelanta cursor en foco sin extender filas posteriores más allá de meta", () => {
     const subs = [st("a", 15), st("b", 10), st("c", 10)];
     const anchorAt = base;
     const now = base + 5 * 60000;
+    const meta = base + 25 * 60000;
     const sinPreview = computeSituacionCronometroHorarios(subs, {
       bloqueInicioAt: base,
       anchor: { subTareaId: "a", startedAt: anchorAt },
       now,
       previewTiempoGanado: false,
+      horaFinContratoMs: meta,
     });
     const conPreview = computeSituacionCronometroHorarios(subs, {
       bloqueInicioAt: base,
       anchor: { subTareaId: "a", startedAt: anchorAt },
       now,
       previewTiempoGanado: true,
+      horaFinContratoMs: meta,
     });
-    const durSinB = sinPreview[1]!.finMs - sinPreview[1]!.inicioMs;
-    const durConB = conPreview[1]!.finMs - conPreview[1]!.inicioMs;
-    assert.equal(durSinB, 10 * 60000);
-    assert.equal(durConB, 15 * 60000);
+    const finSin = sinPreview[sinPreview.length - 1]!.finMs;
+    const finCon = conPreview[conPreview.length - 1]!.finMs;
+    assert.ok(finCon <= finSin, "preview no alarga el fin proyectado");
+    assert.ok(finCon <= meta);
   });
 
   it("sumBonusPreviewEnColaPendiente cuenta minutos virtuales repartidos", () => {
@@ -173,18 +178,24 @@ describe("contrato vs proyección", () => {
     assert.equal(situacionGananciaVsContratoMin(contrato, proy), 8);
   });
 
-  it("computeSituacionProyeccionFinMs incluye cupo extra en preview en vivo", () => {
+  it("computeSituacionProyeccionFinMs no supera meta sellada", () => {
     const base = 1_700_000_000_000;
+    const meta = base + 20 * 60000;
     const subs = [st("a", 15), st("b", 10)];
     const now = base + 8 * 60000;
     const proy = computeSituacionProyeccionFinMs(subs, {
       bloqueInicioAt: base,
       anchor: { subTareaId: "a", startedAt: base },
       now,
-      saldoAdelantoMin: 0,
+      horaFinContratoMs: meta,
     });
     assert.ok(proy != null);
-    assert.ok(proy! > base + 15 * 60000);
+    assert.ok(proy! <= meta);
+  });
+
+  it("capSituacionProyeccionFinMs limita al contrato", () => {
+    assert.equal(capSituacionProyeccionFinMs(9000, 8000), 8000);
+    assert.equal(capSituacionProyeccionFinMs(7000, 8000), 7000);
   });
 });
 
@@ -250,6 +261,41 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     assert.equal(saldoAdelantoMin, 0);
     assert.equal(out.find(s => s.id === "b")!.minutosCupo, 20);
     assert.equal(sumMinutosCronometroPendientes(out), 20);
+  });
+
+  it("ganancia sin margen hasta meta va a saldoAdelantoMin, no infla cola", () => {
+    const meta = base + 12 * 60000;
+    const subs = [st("a", 15), st("b", 10), st("c", 10)];
+    const now = base + 10 * 60000;
+    const { subTareas: out, minutosGanados, saldoAdelantoMin } = aplicarTiempoGanadoAlCumplir(
+      subs,
+      "a",
+      { subTareaId: "a", startedAt: base },
+      now,
+      base,
+      meta
+    );
+    assert.equal(minutosGanados, 5);
+    assert.ok(saldoAdelantoMin > 0);
+    assert.equal(sumMinutosCronometroPendientes(out), 20);
+    const proy = computeSituacionProyeccionFinMs(out, {
+      bloqueInicioAt: base,
+      anchor: { subTareaId: "b", startedAt: now },
+      now,
+      horaFinContratoMs: meta,
+    });
+    assert.ok(proy != null && proy <= meta);
+  });
+});
+
+describe("reacomodarColaCronometroAMeta", () => {
+  const base = 1_700_000_000_000;
+
+  it("comprime cupos cuando exceden tiempo hasta meta", () => {
+    const meta = base + 15 * 60000;
+    const subs = [st("a", 10), st("b", 20), st("c", 10)];
+    const out = reacomodarColaCronometroAMeta(subs, meta, base);
+    assert.equal(sumMinutosCronometroPendientes(out), 15);
   });
 });
 
