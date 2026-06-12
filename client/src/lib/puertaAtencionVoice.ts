@@ -45,8 +45,36 @@ export function speakPuertaSegmento(params: {
   });
 }
 
-export function speakEntropiaAtencionCruce(): void {
+import { getJournalDateString } from "./segmentTime";
+
+const CRUCE_GRACE_VOZ_PREFIX = "sistemicar_cruce_grace_voz_";
+
+function cruceGraceVozKey(activeSegId: string): string {
+  return `${CRUCE_GRACE_VOZ_PREFIX}${getJournalDateString()}_${activeSegId}`;
+}
+
+export function wasCruceGraceEndVoicePlayed(activeSegId: string): boolean {
+  try {
+    return sessionStorage.getItem(cruceGraceVozKey(activeSegId)) != null;
+  } catch {
+    return false;
+  }
+}
+
+export function markCruceGraceEndVoicePlayed(activeSegId: string): void {
+  try {
+    sessionStorage.setItem(cruceGraceVozKey(activeSegId), String(Date.now()));
+  } catch {
+    /* noop */
+  }
+}
+
+export function speakEntropiaAtencionCruce(activeSegId?: string): void {
   if (!isPuertaVozEnabled()) return;
+  if (activeSegId) {
+    if (wasCruceGraceEndVoicePlayed(activeSegId)) return;
+    markCruceGraceEndVoicePlayed(activeSegId);
+  }
   const phrase = "Cierre por entropía-atención. Ordena tu jornada, operador.";
   deliverPuertaVoice(phrase, {
     source: "puerta",

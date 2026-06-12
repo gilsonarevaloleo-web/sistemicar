@@ -7,6 +7,7 @@ import {
   CRUCE_GRACE_MIN,
   evaluateSegmentCrossEntropy,
   getCruceGraciaState,
+  getCrossingVehiclesState,
   isVehicleFromPreviousSegment,
 } from "./segmentCrossEntropyEngine";
 
@@ -106,6 +107,22 @@ describe("segmentCrossEntropyEngine", () => {
     });
     expect(events.some(e => e.type === "auto_close" && e.vehicleId === "v1")).toBe(true);
     expect(events.some(e => e.type === "segment_entropia" && e.segId === "a")).toBe(true);
+  });
+
+  it("getCrossingVehiclesState null sin cruce ni segmento activo", () => {
+    expect(getCrossingVehiclesState([], [], dayStart)).toBeNull();
+    const segmentos = [seg({ id: "b", estado: "activo", horaInicio: "10:00" })];
+    expect(getCrossingVehiclesState(segmentos, [], dayStart)).toBeNull();
+    const vehicles = [vehicle({ id: "v1", segmentoId: "b" })];
+    expect(getCrossingVehiclesState(segmentos, vehicles, dayStart)).toBeNull();
+  });
+
+  it("getCrossingVehiclesState detecta cruce pendiente", () => {
+    const segmentos = [seg({ id: "b", estado: "activo", horaInicio: "10:00", nombre: "Tarde" })];
+    const vehicles = [vehicle({ id: "v1", segmentoId: "a", segmentoOrigen: "Mañana" })];
+    const ctx = getCrossingVehiclesState(segmentos, vehicles, dayStart);
+    expect(ctx?.crossing.length).toBe(1);
+    expect(ctx?.activeSegment.id).toBe("b");
   });
 
   it("applyOriginSegmentCruceEntropia marca activo como entropía", () => {

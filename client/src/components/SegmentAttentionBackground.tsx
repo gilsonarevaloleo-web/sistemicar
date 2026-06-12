@@ -28,10 +28,14 @@ import {
   scheduleCrossEntropyNotifications,
   scheduleSegmentNotifications,
 } from "@/lib/notifications";
+import { registerNotificationStateProvider } from "@/lib/notificationState";
+import { dispatchConcienciaClockTick } from "@/lib/concienciaClock";
 import { recoverSpeechQueue, warmupSpeechSynthesis } from "@/lib/speechQueue";
 
 const TICK_MS_FOREGROUND = 10_000;
 const TICK_MS_BACKGROUND = 15_000;
+const CLOCK_MS_FOREGROUND = 1_000;
+const CLOCK_MS_BACKGROUND = 5_000;
 
 /**
  * Motor global de segmentos: puertas, entropía y cierres por cruce.
@@ -62,6 +66,14 @@ export function SegmentAttentionBackground() {
       },
       e => console.error("[SegmentAttentionBackground] progression", e)
     );
+
+    const unsubNotificationState = registerNotificationStateProvider(() => {
+      if (!planillaRef.current) return null;
+      return {
+        segmentos: planillaRef.current.segmentos,
+        vehicles: vehiclesRef.current,
+      };
+    });
 
     void getPlanillaHoy(user.uid).then(p => {
       planillaRef.current = p;
@@ -131,10 +143,19 @@ export function SegmentAttentionBackground() {
     let intervalId = window.setInterval(() => void runTick(), intervalMs);
     void runTick();
 
+    let clockMs = CLOCK_MS_FOREGROUND;
+    let clockId = window.setInterval(dispatchConcienciaClockTick, clockMs);
+    dispatchConcienciaClockTick();
+
     const resetInterval = () => {
       clearInterval(intervalId);
       intervalMs = isAppInBackground() ? TICK_MS_BACKGROUND : TICK_MS_FOREGROUND;
       intervalId = window.setInterval(() => void runTick(), intervalMs);
+
+      clearInterval(clockId);
+      clockMs = isAppInBackground() ? CLOCK_MS_BACKGROUND : CLOCK_MS_FOREGROUND;
+      clockId = window.setInterval(dispatchConcienciaClockTick, clockMs);
+      dispatchConcienciaClockTick();
     };
 
     const onVisible = () => {
@@ -150,16 +171,20 @@ export function SegmentAttentionBackground() {
 
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
+    window.addEventListener("pageshow", onVisible);
 
     return () => {
       unsubProg();
+      unsubNotificationState();
       unsubPlanilla();
       unsubVehicles();
       unregisterForce();
       clearInterval(intervalId);
+      clearInterval(clockId);
       cancelAllNotifications();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
+      window.removeEventListener("pageshow", onVisible);
     };
   }, [user]);
 

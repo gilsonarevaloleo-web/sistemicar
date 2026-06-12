@@ -18,7 +18,7 @@ const PRODUCTOS = [
 const STACKS = [
   {
     title: "Conquista medible",
-    pelda?o: "Pelda?o 2 ? primer upsell",
+    peldao: "Pelda?o 2 ? primer upsell",
     modules: "Base + Operativo",
     total: 59.98,
     comisionEjemplo: 18.0,
@@ -26,7 +26,7 @@ const STACKS = [
   },
   {
     title: "Orden mental",
-    pelda?o: "Pelda?o 3 ? avanzado",
+    peldao: "Pelda?o 3 ? avanzado",
     modules: "Base + Soberanía del día",
     total: 49.98,
     comisionEjemplo: 15.0,
@@ -34,7 +34,7 @@ const STACKS = [
   },
   {
     title: "Sistema completo",
-    pelda?o: "Pelda?os 2 + 3",
+    peldao: "Pelda?os 2 + 3",
     modules: "Base + Operativo + Soberanía",
     total: 89.96,
     comisionEjemplo: 27.0,
@@ -43,9 +43,9 @@ const STACKS = [
 ];
 
 const EMBUDO_PREGUNTAS = [
-  { pelda?o: 1, pregunta: "?Tu día cierra con estructura?", respuesta: "Planificación Base." },
-  { pelda?o: 2, pregunta: "?Necesitas unidades, ritmo y récord reales?", respuesta: "A?ade Operativo ? primer upsell." },
-  { pelda?o: 3, pregunta: "?Ideas sueltas, imprevistos y proyectos grandes?", respuesta: "A?ade Soberanía ? Imán + situación + pasos de fe." },
+  { peldao: 1, pregunta: "?Tu día cierra con estructura?", respuesta: "Planificación Base." },
+  { peldao: 2, pregunta: "?Necesitas unidades, ritmo y récord reales?", respuesta: "A?ade Operativo ? primer upsell." },
+  { peldao: 3, pregunta: "?Ideas sueltas, imprevistos y proyectos grandes?", respuesta: "A?ade Soberanía ? Imán + situación + pasos de fe." },
 ];
 
 const PREGUNTAS = [
@@ -123,9 +123,9 @@ export default function VendedoresPlanificacion() {
           <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">?En qué pelda?o está el cliente?</h2>
           <div className="space-y-3">
             {EMBUDO_PREGUNTAS.map((item) => (
-              <div key={item.pelda?o} className="flex gap-3">
+              <div key={item.peldao} className="flex gap-3">
                 <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black" style={{ backgroundColor: `${GOLD}20`, color: GOLD }}>
-                  {item.pelda?o}
+                  {item.peldao}
                 </span>
                 <div>
                   <p className="text-[11px] font-bold text-slate-300">{item.pregunta}</p>
@@ -159,7 +159,7 @@ export default function VendedoresPlanificacion() {
               <div key={s.title} className="p-4 rounded-xl border border-white/10 bg-card/40">
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <h3 className="font-bold text-white text-sm">{s.title}</h3>
-                  <span className="text-[9px] text-slate-500 uppercase">{s.pelda?o}</span>
+                  <span className="text-[9px] text-slate-500 uppercase">{s.peldao}</span>
                 </div>
                 <p className="text-[10px] text-slate-500 mb-2">{s.modules}</p>
                 <p className="text-lg font-black" style={{ color: GOLD }}>~${s.total.toFixed(2)}<span className="text-xs text-slate-500 font-normal">/mes</span></p>

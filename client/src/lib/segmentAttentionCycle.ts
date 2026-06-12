@@ -23,6 +23,7 @@ import {
 import {
   applyOriginSegmentCruceEntropia,
   evaluateSegmentCrossEntropy,
+  getActiveSegment,
 } from "./segmentCrossEntropyEngine";
 import { deliverSegmentEntropiaAlert, isAppInBackground } from "./backgroundAttentionAlerts";
 import { speakEntropiaAtencionCruce, speakPuertaSegmento } from "./puertaAtencionVoice";
@@ -193,7 +194,7 @@ export async function runSegmentAttentionCycle(
         voicePhrase: `Quedan ${ev.minutesLeft} minutos para cerrar ${ev.titulo} y abrir otro vehículo en este segmento.`,
       });
     } else if (ev.type === "voz") {
-      speakEntropiaAtencionCruce();
+      speakEntropiaAtencionCruce(getActiveSegment(planillaForCruce.segmentos)?.id);
     } else if (ev.type === "segment_entropia") {
       const { segmentos: rolled, event, changed: cruceChanged } = applyOriginSegmentCruceEntropia(
         planillaForCruce.segmentos,

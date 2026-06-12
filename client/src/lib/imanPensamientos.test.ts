@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  CRISOL_MOS_LABEL,
+  CRISOL_TAGLINE,
+  CRISOL_TITLE,
+  IMAN_PENSAMIENTOS_TITLE,
   NIDO_INBOX_ID,
   agruparImanPorNido,
   dominanteProyectoIdEnSubs,
@@ -22,6 +26,13 @@ function reserva(partial: Partial<SituacionReservaItem> & Pick<SituacionReservaI
 }
 
 describe("imanPensamientos", () => {
+  it("CRISOL_* branding y alias IMAN_* deprecado", () => {
+    assert.equal(CRISOL_TITLE, "El Crisol");
+    assert.ok(CRISOL_TAGLINE.includes("Ordena pensamientos"));
+    assert.equal(CRISOL_MOS_LABEL, "Matriz de Ordenamiento Situacional");
+    assert.equal(IMAN_PENSAMIENTOS_TITLE, CRISOL_TITLE);
+  });
+
   it("nidoKeyFromReserva usa inbox sin proyecto", () => {
     assert.equal(nidoKeyFromReserva(reserva({ id: "1", texto: "x" })), NIDO_INBOX_ID);
     assert.equal(nidoKeyFromReserva(reserva({ id: "2", texto: "y", proyectoId: "proy_a" })), "proy_a");

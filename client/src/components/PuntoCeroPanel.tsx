@@ -22,6 +22,7 @@ import { usePuntoCeroAudio } from "@/hooks/usePuntoCeroAudio";
 import {
   MENSAJE_PASIVA_DIA,
   MENSAJE_PASIVA_NOCHE,
+  PUNTO_CERO_ETAPAS_LIST,
   speakColorInmersion,
   speakEtapaPuntoCero,
   speakPuntoCeroSequence,
@@ -221,12 +222,12 @@ export function PuntoCeroPanel({
     ? faseDuracionesMin(session.duracionTotalMin)
     : { activaMin: 5, pasivaMin: 10 };
 
-  const etapasCfg = [
-    { key: "etapa1" as const, label: "Tensión y quietud del cuerpo", instruccion: "Antes de la quietud: tensá el cuerpo por zonas en este orden — empezá por la cabeza; seguí bajando por el torso y las piernas hasta que el penúltimo foco sean los pies y el último las manos. Soltá todo y sentí el alivio agradable. Recién entonces quedate en quietud física total.", Icon: Circle },
-    { key: "etapa2" as const, label: "Identificación del Pensamiento", instruccion: "¿Qué estoy pensando? Lo identifico → apago ese movimiento mental.", Icon: Brain },
-    { key: "etapa3" as const, label: "Ritmo, polos y apnea", instruccion: "Primero: tomá conciencia del ritmo de tu respiración tal como está, sin corregirla. Después: jugá con polos opuestos (inhalá lleno / exhalá vacío, o el par que uses en tu práctica). Al final: retené la respiración unos segundos a tu medida y mantené sin aire con calma.", Icon: Wind },
-    { key: "etapa4" as const, label: "Alimento de Colores", instruccion: "Toca cada color para inhalarlo e introducirlo a su zona.", Icon: Sparkles },
-  ];
+  const etapasCfg = PUNTO_CERO_ETAPAS_LIST.map(({ key, label, instruccion }) => ({
+    key,
+    label,
+    instruccion,
+    Icon: key === "etapa1" ? Circle : key === "etapa2" ? Brain : key === "etapa3" ? Wind : Sparkles,
+  }));
 
   if (enPasiva && session) {
     return (
@@ -375,8 +376,8 @@ export function PuntoCeroPanel({
             {puntoCeroAudio.muted || puntoCeroAudio.volume <= 0
               ? "Audio silenciado — subí el volumen o activá On · voz guía al tocar etapas"
               : puntoCeroAudio.unlocked
-                ? `Audio ${puntoCeroAudio.volume}% · auriculares recomendados · voz guía al tocar etapas`
-                : "Tocá una etapa o color para iniciar audio y voz guía"}
+                ? `Audio ${puntoCeroAudio.volume}% · auriculares recomendados · voz guía lee el protocolo completo`
+                : "Tocá una etapa para iniciar audio y escuchar el protocolo paso a paso"}
           </p>
           {eficienciaSec !== null && (
             <p className="text-[8px] mt-1" style={{ color: flotaColor }}>⚡ Primera etapa: {eficienciaSec < 60 ? `${eficienciaSec}s` : `${Math.round(eficienciaSec / 60)}m`} desde apertura</p>
@@ -400,7 +401,10 @@ export function PuntoCeroPanel({
                       void puntoCeroAudio.unlockAudio();
                       const intro = primeraGuiaVozRef.current;
                       if (intro) primeraGuiaVozRef.current = false;
-                      speakEtapaPuntoCero(key, { intro });
+                      speakEtapaPuntoCero(key, {
+                        intro,
+                        transicionEtapa4: key === "etapa3",
+                      });
                       onEtapaToggle(vehicle.id, key);
                     }}
                     disabled={checked || isLocked || isColorEtapa}
@@ -434,7 +438,7 @@ export function PuntoCeroPanel({
                               e.stopPropagation();
                               if (!confirmado && session) {
                                 void puntoCeroAudio.unlockAudio();
-                                speakColorInmersion(zona);
+                                speakColorInmersion(zona, idx);
                                 setColorInmersion({ color, zona, idx });
                               }
                             }}

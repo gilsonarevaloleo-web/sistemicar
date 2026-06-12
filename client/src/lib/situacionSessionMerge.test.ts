@@ -325,6 +325,29 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     assert.equal(merged.subTareas?.length, 3);
   });
 
+  it("prefers local cron closed over stale firebase active cron", () => {
+    const fb: Vehicle = {
+      ...baseVehicle(),
+      subTareas: [st("c1", { enDesgloseCronometro: true, resultadoSituacion: "cumplido", minutosCupo: 10 })],
+      situacionCronometro: { activo: true, bloqueInicioAt: 1000, horaFinMs: 5000, depthBlockPsGranted: 0 },
+    };
+    const local: Vehicle = {
+      ...baseVehicle(),
+      subTareas: [st("c1", { enDesgloseCronometro: true, resultadoSituacion: "cumplido", minutosCupo: 10 })],
+      situacionCronometro: {
+        activo: false,
+        bloqueInicioAt: 1000,
+        horaFinMs: 5000,
+        depthBlockPsGranted: 2,
+        retosCompletados: 1,
+        bolsaSegundoRetoMin: 12,
+      },
+    };
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.situacionCronometro?.activo, false);
+    assert.equal(merged.situacionCronometro?.retosCompletados, 1);
+  });
+
   it("preserves local subTareas on closed situacion vehicle", () => {
     const now = Date.now();
     const localSubs = [

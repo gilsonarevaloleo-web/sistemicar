@@ -58,7 +58,7 @@ const EMBUDO_PREGUNTAS = [
   {
     id: "soberania",
     pregunta: "¿Ideas sueltas, imprevistos y poco avance en proyectos grandes?",
-    si: "Añade Soberanía del día — orden mental avanzado (Imán, situación, pasos de fe).",
+    si: "Añade Soberanía del día — orden mental avanzado (Crisol MOS, situación, pasos de fe).",
     peldaño: 3,
   },
 ];
@@ -132,10 +132,10 @@ const planificacionPlans: Plan[] = [
     peldaño: "Peldaño 3 · Orden mental",
     funnelHint: "Nivel avanzado — ideal tras habituar cierre medible",
     forWho: "Ideas sueltas · imprevistos · proyectos",
-    anchorCopy: "Imán + desglosador situacional + pasos en proyectos.",
+    anchorCopy: "Crisol MOS + Ring situacional + pasos en proyectos.",
     roiCopy: "Ordena pensamientos hacia fe incremental — no solo listas.",
     features: [
-      { name: "Imán de pensamientos (nidos y ruta S)", locked: false, highlight: true },
+      { name: "El Crisol de Pensamientos · MOS (nidos y ruta S)", locked: false, highlight: true },
       { name: "Desglosador Situacional (bloques 3+3)", locked: false, highlight: true },
       { name: "Hub Proyectos y peldaños / pasos de fe", locked: false },
       { name: "Bolsa de ganancia de tiempo", locked: false },
@@ -166,7 +166,7 @@ const STACKS = [
     totalUsd: 49.98,
     addOnId: "soberania_dia" as const,
     color: "#38BDF8",
-    desc: "Imán, desglosador situación, pasos de fe.",
+    desc: "Crisol MOS, Ring situacional, pasos de fe.",
   },
   {
     id: "completo",

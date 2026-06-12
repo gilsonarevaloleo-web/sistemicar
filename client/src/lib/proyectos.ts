@@ -110,7 +110,7 @@ export interface Proyecto {
   claridadActiva?: RutasMentalesSet;
   /** Oleada / objetivo actual (ej. producción 10 días). */
   oleadaTitulo?: string;
-  /** Pasos ejecutados desde el Imán (subs cumplidas con proyecto vinculado). */
+  /** Pasos ejecutados desde el Crisol (MOS) — subs cumplidas con proyecto vinculado. */
   pasosEjecutadosTotal?: number;
 }
 
@@ -786,7 +786,7 @@ export async function registrarActividadFlotaEnProyecto(
   void syncFirestoreProyecto(userId, updated);
 }
 
-/** Incrementa el correlativo de pasos ejecutados al cumplir una sub del Imán. */
+/** Incrementa el correlativo de pasos ejecutados al cumplir una sub del Crisol (MOS). */
 export async function registrarPasoEjecutadoEnProyecto(
   userId: string,
   proyectoId: string

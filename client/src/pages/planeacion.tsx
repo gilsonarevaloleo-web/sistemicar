@@ -62,7 +62,7 @@ import {
   RotateCcw,
   Bell,
   BellOff,
-  Magnet,
+  FlaskConical,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { toast } from "sonner";
@@ -189,7 +189,7 @@ import {
   RutaSeguimientoPicker,
   rutaSeguimientoPickerCanConfirm,
 } from "@/components/RutaSeguimientoPicker";
-import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis, recoverSpeechQueue } from "@/lib/speechQueue";
+import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis, recoverSpeechQueue, subscribeSpeechQueueIdle } from "@/lib/speechQueue";
 import {
   flushMissedPuertaVoiceOnVisible,
 } from "@/lib/backgroundAttentionAlerts";
@@ -199,6 +199,7 @@ import {
   clearCruceWarnedIds,
   runSegmentAttentionTickNow,
 } from "@/lib/segmentAttentionCycle";
+import { CONCIENCIA_CLOCK_TICK_EVENT } from "@/lib/concienciaClock";
 import {
   isTikSoundEnabled,
   setTikSoundEnabled,
@@ -214,9 +215,20 @@ import {
   fireSituacion2MinAlert,
   fireSituacionCupoAlert,
   speakSituacionFilaEnFoco,
+  speakRingBienvenida,
+  speakRingTiempoSobra,
   SITUACION_CUPO_ESCALATION_MS,
   SITUACION_CUPO_ESCALATION_MAX,
 } from "@/lib/situacionAlerts";
+import {
+  RING_COPY,
+  RING_ENFOQUE_INACTIVIDAD_MS,
+  RING_SOBRA_INVITACION_MIN,
+  buildSituacionCronometroPausaInactividad,
+  filtrarRingPendientes,
+  liberarRingPendientesAlTaller,
+  quitarSubsPorId,
+} from "@/lib/ringEnfoqueReal";
 import {
   computeDesglosadorClocks,
   formatElapsedHHMMSS,
@@ -313,7 +325,15 @@ import {
   getPlanillaDailySnapshotForDate,
   getPlanillaDailySnapshots,
   computeCombustibleDia,
+  buildTermoDecisionSnapshot,
 } from "@/lib/termodinamicaAtencional";
+import {
+  decisionKeyMision,
+  decisionKeySubDesglosador,
+  decisionKeySubSituacion,
+  getDecisionLedger,
+  recordDecision,
+} from "@/lib/decisionesLedger";
 import type { PlanillaDailySnapshot } from "@/lib/termodinamicaAtencional";
 import { formatCombustibleResumen, formatCombustibleDetalle, formatCombustibleCelebracionBloque } from "@/lib/combustibleConciencia";
 import { repairStuckSituacionVehicles } from "@/lib/situacionRepair";
@@ -383,6 +403,7 @@ import PlanificacionCockpit from "@/components/PlanificacionCockpit";
 import ImanPensamientosDock from "@/components/ImanPensamientosDock";
 import {
   aplicarProyectoHeredadoASub,
+  devolverRingPendientesAlIman,
   dominanteProyectoIdEnSubs,
   imanItemsParaDesglosador,
   NIDO_INBOX_ID,
@@ -1268,6 +1289,7 @@ export default function Planeacion() {
   const [closedSegmentName, setClosedSegmentName] = useState("");
   const [segmentTick, setSegmentTick] = useState(0);
   const [activandoSegId, setActivandoSegId] = useState<string | null>(null);
+  const [cerrandoSegId, setCerrandoSegId] = useState<string | null>(null);
   const [showCierreJornada, setShowCierreJornada] = useState(false);
   const [todayCierreJornada, setTodayCierreJornada] = useState<CierreJornadaLog | null>(null);
   const [cierreEnergiaPending, setCierreEnergiaPending] = useState<CierreEnergiaModalPayload | null>(null);
@@ -1394,8 +1416,9 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    const interval = setInterval(() => setAnilloTick(t => t + 1), 1000);
-    return () => clearInterval(interval);
+    const onClock = () => setAnilloTick(t => t + 1);
+    window.addEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
+    return () => window.removeEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
   }, []);
 
   useEffect(() => () => {
@@ -1559,7 +1582,17 @@ export default function Planeacion() {
         const local =
           vehiclesRef.current.find(lv => lv.id === v.id) ??
           getLocalVehicles().find(lv => lv.id === v.id);
-        return mergeActiveVehicleSessionState(v, local);
+        let merged = mergeActiveVehicleSessionState(v, local);
+        if (wasVehicleRecentlyClosed(v.id) && merged.status === "activo") {
+          const closedLocal =
+            local && local.status !== "activo"
+              ? local
+              : getLocalVehicles().find(lv => lv.id === v.id && lv.status !== "activo");
+          if (closedLocal) {
+            merged = mergeActiveVehicleSessionState(v, closedLocal);
+          }
+        }
+        return merged;
       });
       let merged = pending.length > 0 ? [...pending, ...protectedData] : protectedData;
       if (pending.length > 0) {
@@ -1729,7 +1762,7 @@ export default function Planeacion() {
       entropiaMin: balance.entropiaMin,
       vacioMin: balance.vacioMin,
     });
-  }, [planilla, vehicles, focusEventsToday]);
+  }, [planilla, vehicles, focusEventsToday, anilloTick, segmentTick]);
 
   const termoCompare = useMemo(
     () => computeTermodinamicaCompareV2(yesterdayTermoSnapshot, todayTermoLive),
@@ -1739,8 +1772,9 @@ export default function Planeacion() {
   const combustibleLive = useMemo(() => {
     const dayStartMs = getJournalDayStartMs();
     const jornadaVehicles = vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs));
-    return computeCombustibleDia(jornadaVehicles, dayStartMs);
-  }, [vehicles, segmentTick, anilloTick]);
+    const ledger = user ? getDecisionLedger(user.uid, dayStartMs) : [];
+    return computeCombustibleDia(jornadaVehicles, dayStartMs, ledger);
+  }, [vehicles, segmentTick, anilloTick, user]);
 
   const disciplinaLive = useMemo(() => {
     const dayStartMs = getLimaDayStartMs();
@@ -2826,7 +2860,7 @@ export default function Planeacion() {
       toast.error("No hay planilla del día cargada");
       return;
     }
-    if (activandoSegId) return;
+    if (activandoSegId === segId) return;
     const seg = planilla.segmentos.find(s => s.id === segId);
     if (!seg) {
       toast.error("Segmento no encontrado");
@@ -2900,13 +2934,14 @@ export default function Planeacion() {
       }
       setPlanilla(saved);
       setActiveSegmento(user.uid, segId);
-      const ok = await safeAwardPS(2, "Puerta de atención: " + seg.nombre);
       const timingLabel = puertaTiming === "antes_voz" ? "antes de la voz" : "tras la voz";
       toast.success("+2 PS Puerta de atención abierta", {
         description: `${seg.nombre} · ${timingLabel}`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
       });
-      if (ok) toastDailyPSTotal();
+      void safeAwardPS(2, "Puerta de atención: " + seg.nombre).then(ok => {
+        if (ok) toastDailyPSTotal();
+      });
       void registrarEvento(COMPONENTES.PLANIFICACION);
     } catch (err) {
       console.error("[activarSegmento]", err);
@@ -2923,6 +2958,7 @@ export default function Planeacion() {
 
   const cerrarSegmentoManual = async (segId: string) => {
     if (!user || !planilla) return;
+    if (cerrandoSegId === segId) return;
     const seg = planilla.segmentos.find(s => s.id === segId);
     if (!seg || seg.estado !== "activo") return;
 
@@ -2940,34 +2976,90 @@ export default function Planeacion() {
       }
     }
 
-    const duration = seg.activadoAt ? Math.round((Date.now() - seg.activadoAt) / 60000) : 0;
+    const nowMs = Date.now();
+    const duration = seg.activadoAt ? Math.round((nowMs - seg.activadoAt) / 60000) : 0;
     setClosedSegmentDuration(duration);
     setClosedSegmentName(seg.nombre);
 
-    const { planilla: updated } = await updateSegmentoInPlanilla(user.uid, segId, {
-      estado: "cerrado_manual",
-      cerradoAt: Date.now(),
-      psGanados: (seg.psGanados || 0) + 2
-    });
-    setPlanilla(updated);
-    toast.success("+2 PS Cierre consciente de puerta", {
-      description: seg.puertaSistema
-        ? `${seg.nombre} · Recuperaste los 2 PS de entropía`
-        : `${seg.nombre} · Puerta cerrada con intención`,
-      style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD }
-    });
-    const ok = await safeAwardPS(2, "Cierre consciente: " + seg.nombre);
-    if (ok) toastDailyPSTotal();
-    incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
-    if (labIntroTimeoutRef.current) {
-      clearTimeout(labIntroTimeoutRef.current);
-      labIntroTimeoutRef.current = null;
+    const patch = {
+      estado: "cerrado_manual" as const,
+      cerradoAt: nowMs,
+      psGanados: (seg.psGanados || 0) + 2,
+    };
+    const optimisticPlanilla: Planilla = {
+      ...planilla,
+      segmentos: planilla.segmentos.map(s => (s.id === segId ? { ...s, ...patch } : s)),
+    };
+    setCerrandoSegId(segId);
+    setPlanilla(optimisticPlanilla);
+    setSegmentTick(t => t + 1);
+
+    const rollbackSegmento = () =>
+      setPlanilla(prev =>
+        prev
+          ? {
+              ...prev,
+              segmentos: prev.segmentos.map(s =>
+                s.id === segId
+                  ? {
+                      ...s,
+                      estado: "activo" as const,
+                      cerradoAt: undefined,
+                      psGanados: seg.psGanados || 0,
+                    }
+                  : s
+              ),
+            }
+          : prev
+      );
+
+    try {
+      const { planilla: updated, localSaved } = await updateSegmentoInPlanilla(
+        user.uid,
+        segId,
+        patch,
+        optimisticPlanilla
+      );
+      if (!localSaved) {
+        rollbackSegmento();
+        toast.error("No se pudo guardar en el dispositivo", {
+          description: "Libera espacio en el navegador o cierra pestañas y vuelve a intentar.",
+          style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+          duration: 6000,
+        });
+        return;
+      }
+      setPlanilla(updated);
+      toast.success("+2 PS Cierre consciente de puerta", {
+        description: seg.puertaSistema
+          ? `${seg.nombre} · Recuperaste los 2 PS de entropía`
+          : `${seg.nombre} · Puerta cerrada con intención`,
+        style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
+      });
+      void safeAwardPS(2, "Cierre consciente: " + seg.nombre).then(ok => {
+        if (ok) toastDailyPSTotal();
+      });
+      incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
+      if (labIntroTimeoutRef.current) {
+        clearTimeout(labIntroTimeoutRef.current);
+        labIntroTimeoutRef.current = null;
+      }
+      labIntroTimeoutRef.current = window.setTimeout(() => {
+        labIntroTimeoutRef.current = null;
+        setShowLabIntrospeccion(true);
+      }, 1800);
+      void registrarEvento(COMPONENTES.PLANIFICACION);
+    } catch (err) {
+      console.error("[cerrarSegmentoManual]", err);
+      rollbackSegmento();
+      toast.error("No se pudo cerrar la puerta", {
+        description: "Algo falló al procesar el cierre. Intenta otra vez.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
+        duration: 5000,
+      });
+    } finally {
+      setCerrandoSegId(null);
     }
-    labIntroTimeoutRef.current = window.setTimeout(() => {
-      labIntroTimeoutRef.current = null;
-      setShowLabIntrospeccion(true);
-    }, 1800);
-    registrarEvento(COMPONENTES.PLANIFICACION);
   };
 
   const TERMINO_OPTIONS: { id: TipoTerminoRapido; label: string; sublabel: string; puntosCumple: number; puntosNoCumple: number; color: string }[] = [
@@ -3328,11 +3420,45 @@ export default function Planeacion() {
 
     notifyVehicleClosed(vehicleId);
 
+    const termoDecisionSnapshot = buildTermoDecisionSnapshot(
+      { ...vehicle, status, cierreAt, ...situacionCloseExtras },
+      getJournalDayStartMs(cierreAt)
+    );
+    if (
+      vehicle.tipoReloj !== "desglosador" &&
+      vehicle.tipoFlota !== "descanso" &&
+      vehicle.tipoFlota !== "situacion" &&
+      (status === "cumplido" || status === "archivado")
+    ) {
+      recordDecision(user.uid, {
+        key: decisionKeyMision(vehicleId),
+        kind: "mision_directa",
+        vehicleId,
+        ts: cierreAt,
+      });
+    }
+    if (vehicle.tipoFlota === "situacion") {
+      for (const st of vehicle.subTareas ?? []) {
+        if (st.enDesgloseCronometro) {
+          if (st.resultadoSituacion !== "cumplido") continue;
+        } else if (!st.completada) {
+          continue;
+        }
+        recordDecision(user.uid, {
+          key: decisionKeySubSituacion(vehicleId, st.id),
+          kind: "sub_situacion",
+          vehicleId,
+          ts: st.cerradaAt ?? cierreAt,
+        });
+      }
+    }
+
     const optimisticClose = {
       status,
       cierreAt,
       duracionFinal: duracionMin,
       cierreManual: isCierreManual,
+      termoDecisionSnapshot,
       ...situacionCloseExtras,
       ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
     };
@@ -3360,6 +3486,7 @@ export default function Planeacion() {
       cierreAt,
       duracionFinal: duracionMin,
       cierreManual: isCierreManual,
+      termoDecisionSnapshot,
       ...situacionCloseExtras,
       ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
     };
@@ -3963,6 +4090,17 @@ export default function Planeacion() {
       return;
     }
 
+    for (const sub of updatedSubs) {
+      if (sub.status !== "cumplido") continue;
+      const prevSub = prevVehicle.subVehiculos?.find(s => s.id === sub.id);
+      if (prevSub?.status === "cumplido") continue;
+      recordDecision(user.uid, {
+        key: decisionKeySubDesglosador(vehicleId, sub.id),
+        kind: "sub_desglosador",
+        vehicleId,
+      });
+    }
+
     let depthGranted = opts?.resetDepth ? 0 : (prevVehicle.desglosadorBloqueDepthPsGranted ?? 0);
 
     const newVehicles = vehiclesRef.current.map(v => {
@@ -4198,6 +4336,19 @@ export default function Planeacion() {
     }
 
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
+    const termoDecisionSnapshot = buildTermoDecisionSnapshot(
+      { ...vehicle, status: "cumplido", cierreAt, subVehiculos: subsConRuta },
+      getJournalDayStartMs(cierreAt)
+    );
+    for (const sv of subsConRuta) {
+      if (sv.status !== "cumplido") continue;
+      recordDecision(user.uid, {
+        key: decisionKeySubDesglosador(vehicleId, sv.id),
+        kind: "sub_desglosador",
+        vehicleId,
+        ts: sv.cierreAt ?? cierreAt,
+      });
+    }
     const closePatch = {
       status: "cumplido" as const,
       cierreAt,
@@ -4205,6 +4356,7 @@ export default function Planeacion() {
       cierreManual: true,
       subVehiculos: subsConRuta,
       desglosadorBloqueDepthPsGranted: vehicle.desglosadorBloqueDepthPsGranted ?? 0,
+      termoDecisionSnapshot,
       interrupcionActiva: false,
       desglosadorPausa: undefined,
       ...(intensidadEnergeticaFin ? { intensidadEnergeticaFin } : {}),
@@ -4468,6 +4620,12 @@ export default function Planeacion() {
       void handleSyncSituacionCupoAnchor(vehicleId);
       if (chimesOnComplete > 0) void playSituacionChimes(chimesOnComplete);
       if (isChecking && vehicle.tipoFlota === "situacion" && targetSub) {
+        recordDecision(user.uid, {
+          key: decisionKeySubSituacion(vehicleId, subTareaId),
+          kind: "sub_situacion",
+          vehicleId,
+          ts: nowMs,
+        });
         try {
           await awardSovereigntyPoints(user.uid, 2, `Sub-tarea (lista libre): ${targetSub.texto}`);
           toast.success("+2 PS · Cerrar sin reloj", {
@@ -4477,7 +4635,7 @@ export default function Planeacion() {
           if (pasoNumero != null) {
             const proyTitulo = proyectosHub.find(p => p.id === targetSub.proyectoId)?.titulo;
             toast.info(`Paso #${pasoNumero} en ${proyTitulo ?? "proyecto"}`, {
-              description: "Correlativo del Imán — fe incremental, anti-miopía.",
+              description: "Paso desde el Crisol — fe incremental, anti-miopía.",
               style: { backgroundColor: PIZARRA, border: `1px solid ${CYAN}`, color: CYAN },
               duration: 3500,
             });
@@ -4691,6 +4849,57 @@ export default function Planeacion() {
       });
     } catch (e) {
       console.error("[handleCerrarSituacionDesglosadorDeGolpe]", e);
+    }
+  };
+
+  const handleCerrarRingPorInactividad = async (vehicleId: string) => {
+    if (!user) return;
+    const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
+    if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion" || vehicle.situacionCronometro?.activo !== true) {
+      return;
+    }
+    const sc = vehicle.situacionCronometro!;
+    const pendingRing = filtrarRingPendientes(vehicle.subTareas);
+    const { quitadosIds, devueltos } = await devolverRingPendientesAlIman(
+      user.uid,
+      vehicle,
+      pendingRing,
+      {
+        segmentoProyectoId: segmentoActivo?.proyectoVinculadoId,
+        proyectos: imanProyectos,
+        ...(segmentoActivo
+          ? { segmento: { id: segmentoActivo.id, nombre: segmentoActivo.nombre } }
+          : {}),
+      }
+    );
+    const quitados = new Set(quitadosIds);
+    let subTareas = quitarSubsPorId(vehicle.subTareas, quitados);
+    if (devueltos < pendingRing.length) {
+      subTareas = liberarRingPendientesAlTaller(subTareas);
+    }
+    const situacionCronometro = buildSituacionCronometroPausaInactividad(sc);
+    setVehicles(prev =>
+      prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor: null } : v))
+    );
+    vehiclesRef.current = vehiclesRef.current.map(v =>
+      v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor: null } : v
+    );
+    persistVehiclesRef();
+    try {
+      await updateVehicle(user.uid, vehicleId, {
+        subTareas,
+        situacionCronometro,
+        situacionCupoAnchor: null,
+      });
+      toast.info(RING_COPY.inactividadToast, {
+        description:
+          devueltos > 0
+            ? `${devueltos} fila${devueltos !== 1 ? "s" : ""} devuelta${devueltos !== 1 ? "s" : ""} al Crisol · ${RING_COPY.inactividadCrisolHint}`
+            : RING_COPY.inactividadCrisolHint,
+        duration: 4500,
+      });
+    } catch (e) {
+      console.error("[handleCerrarRingPorInactividad]", e);
     }
   };
 
@@ -4947,9 +5156,12 @@ export default function Planeacion() {
     setExpandedId(vehicleId);
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor: situacionCupoAnchor ?? null });
-      if (firstActivation) void requestNotificationPermission();
+      if (firstActivation) {
+        void requestNotificationPermission();
+        speakRingBienvenida(retoNumero);
+      }
       void handleSyncSituacionCupoAnchor(vehicleId);
-      toast.success(retoNumero > 1 ? "Siguiente ronda" : "Desglosador activo", {
+      toast.success(retoNumero > 1 ? RING_COPY.siguienteRonda : RING_COPY.ring, {
         description: `${lifted.length} subtarea(s) · meta ${objetivoHora} (${sum} min repartidos)`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 2800,
@@ -5073,27 +5285,32 @@ export default function Planeacion() {
       retoNumero: sc.retoNumero ?? 1,
       retosCompletados: sc.retosCompletados ?? 0,
     };
-    const situacionCronometro = bloqueListo
-      ? buildSituacionCronometroCierre(scActivo, now)
-      : scActivo;
-    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
-    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
+    const situacionCronometro = scActivo;
+    const situacionCupoAnchor = bloqueListo ? null : vehicle.situacionCupoAnchor;
+    setVehicles(prev =>
+      prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v))
+    );
+    vehiclesRef.current = vehiclesRef.current.map(v =>
+      v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v
+    );
     persistVehiclesRef();
+    recordDecision(user.uid, {
+      key: decisionKeySubSituacion(vehicleId, subTareaId),
+      kind: "sub_situacion",
+      vehicleId,
+      ts: now,
+    });
     try {
-      await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
+      await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor });
       void playSituacionChimes(chimesOnComplete);
-      void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
+      if (!bloqueListo) void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
       await safeAwardPS(4, `Sub-tarea (cronómetro): ${targetSub.texto}`);
       if (deltaDepth > 0) await safeAwardPS(deltaDepth, `Profundidad bloque situación: ${vehicle.titulo}`);
       if (bloqueListo) {
-        const bolsa = situacionCronometro.bolsaSegundoRetoMin ?? 0;
-        toast.success("+4 PS · Lista completada", {
-          description:
-            bolsa > 0
-              ? `Te sobran ${bolsa} min en la meta — puedes lanzar otra ronda`
-              : "Ronda cerrada. Selecciona subtareas para continuar.",
+        toast.success("+4 PS · Ronda completada", {
+          description: `Todas las filas del ring están cerradas. Usa «${RING_COPY.cerrarRing}» cuando quieras sellar la ronda.`,
           style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
-          duration: 4000,
+          duration: 5000,
         });
       } else if (deltaDepth > 0) {
         toast.success(`+4 PS · +${deltaDepth} PS profundidad (bloque)`, {
@@ -5117,7 +5334,7 @@ export default function Planeacion() {
       if (pasoNumero != null) {
         const proyTitulo = proyectosHub.find(p => p.id === targetSub.proyectoId)?.titulo;
         toast.info(`Paso #${pasoNumero} en ${proyTitulo ?? "proyecto"}`, {
-          description: "Correlativo del Imán — fe incremental, anti-miopía.",
+          description: "Paso desde el Crisol — fe incremental, anti-miopía.",
           style: { backgroundColor: PIZARRA, border: `1px solid ${CYAN}`, color: CYAN },
           duration: 3500,
         });
@@ -5144,21 +5361,22 @@ export default function Planeacion() {
       bloqueInicio
     );
     const bloqueListo = !subTareas.some(situacionFilaCronometroPendiente);
-    const situacionCronometro = bloqueListo ? buildSituacionCronometroCierre(sc, now) : sc;
-    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v)));
-    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro } : v));
+    const situacionCronometro = sc;
+    const situacionCupoAnchor = bloqueListo ? null : vehicle.situacionCupoAnchor;
+    setVehicles(prev =>
+      prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v))
+    );
+    vehiclesRef.current = vehiclesRef.current.map(v =>
+      v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v
+    );
     persistVehiclesRef();
     try {
-      await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
-      void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
+      await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor });
+      if (!bloqueListo) void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
       if (bloqueListo) {
-        const bolsa = situacionCronometro.bolsaSegundoRetoMin ?? 0;
-        toast.info("Lista completada", {
-          description:
-            bolsa > 0
-              ? `Te sobran ${bolsa} min en la meta — puedes lanzar otra ronda`
-              : "Ronda cerrada.",
-          duration: 3500,
+        toast.info("Ronda completada", {
+          description: `Usa «${RING_COPY.cerrarRing}» para sellar la ronda o añade más filas al ring.`,
+          duration: 4500,
         });
       } else {
         toast.info("Fallado (sin PS de fila)", { description: targetSub.texto, duration: 2200 });
@@ -5207,25 +5425,24 @@ export default function Planeacion() {
       }
       void updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro: sc });
       void handleSyncSituacionCupoAnchor(vehicleId, { forceResetSameRow: true });
-      toast.info("Devuelto al Imán", {
+      toast.info("Devuelto al Crisol", {
         description: `"${extraido.texto}" · ruta S · retómalo con Abrir nido`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 3200,
       });
       const bloqueListo = !subTareas.some(situacionFilaCronometroPendiente);
       if (bloqueListo) {
-        const situacionCronometroCierre = buildSituacionCronometroCierre(sc, now);
         setVehicles(prev =>
-          prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro: situacionCronometroCierre } : v))
+          prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCupoAnchor: null } : v))
         );
         vehiclesRef.current = vehiclesRef.current.map(v =>
-          v.id === vehicleId ? { ...v, subTareas, situacionCronometro: situacionCronometroCierre } : v
+          v.id === vehicleId ? { ...v, subTareas, situacionCupoAnchor: null } : v
         );
         persistVehiclesRef();
-        await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro: situacionCronometroCierre });
-        toast.info("Lista completada", {
-          description: "Cierra la situación cuando quieras.",
-          duration: 3500,
+        await updateVehicle(user.uid, vehicleId, { subTareas, situacionCupoAnchor: null });
+        toast.info("Ronda completada", {
+          description: `Usa «${RING_COPY.cerrarRing}» para sellar la ronda.`,
+          duration: 4500,
         });
       }
     } catch (e) {
@@ -7426,11 +7643,14 @@ export default function Planeacion() {
                                 <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
                                 {isActive && cierreVentanaAbierta && (
                                   <button
-                                    onClick={() => cerrarSegmentoManual(seg.id)}
-                                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-red-900/40 text-red-300/90 bg-red-950/20 hover:bg-red-950/35"
+                                    type="button"
+                                    disabled={cerrandoSegId === seg.id}
+                                    onClick={() => void cerrarSegmentoManual(seg.id)}
+                                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-colors border border-red-900/40 text-red-300/90 bg-red-950/20 hover:bg-red-950/35 disabled:opacity-50"
                                     data-testid={`button-close-segment-${seg.id}`}
                                   >
-                                    <Square size={10} /> Cerrar puerta (+2 PS)
+                                    <Square size={10} />
+                                    {cerrandoSegId === seg.id ? "Cerrando…" : "Cerrar puerta (+2 PS)"}
                                   </button>
                                 )}
                                 {isActive && !cierreVentanaAbierta && seg.horaFin && (
@@ -7572,7 +7792,7 @@ export default function Planeacion() {
               <div ref={flotaActivosRef} className="scroll-mt-4">
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length} defaultOpen>
                 {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreRutaPatron(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onAddSubTareaUrgenteACola={handleAddSubTareaUrgenteACola} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onCerrarSituacionDesglosadorDeGolpe={handleCerrarSituacionDesglosadorDeGolpe} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorCierreDeGolpe={handleDesglosadorCierreDeGolpe} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onDesglosadorAddSub={handleDesglosadorAddSub} onDesglosadorActivatePendingSub={handleDesglosadorActivatePendingSub} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onPuntoCeroSessionUpdate={handlePuntoCeroSessionUpdate} onPuntoCeroColorConfirm={handlePuntoCeroColorConfirm} onPuntoCeroAutoClose={handlePuntoCeroAutoClose} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
+                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreRutaPatron(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onAddSubTareaUrgenteACola={handleAddSubTareaUrgenteACola} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onCerrarSituacionDesglosadorDeGolpe={handleCerrarSituacionDesglosadorDeGolpe} onCerrarRingPorInactividad={handleCerrarRingPorInactividad} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorCierreDeGolpe={handleDesglosadorCierreDeGolpe} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onDesglosadorAddSub={handleDesglosadorAddSub} onDesglosadorActivatePendingSub={handleDesglosadorActivatePendingSub} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onPuntoCeroSessionUpdate={handlePuntoCeroSessionUpdate} onPuntoCeroColorConfirm={handlePuntoCeroColorConfirm} onPuntoCeroAutoClose={handlePuntoCeroAutoClose} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
                 ))}
               </AccordionSection>
               </div>
@@ -9026,7 +9246,7 @@ function VehicleCard({
   segmentoNumero,
   planilla,
   onAddSubTarea, onAddSubTareaUrgenteACola, onToggleSubTarea, onSetSubTareaMinutosCupo, onExtendSituacionCupo, onSyncSituacionCupoAnchor, onAddDetalle, onEntregarDetalle, onAddCasaItem, onToggleCasaItem, arquitectoUnlocked,
-  onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onSituacionCronometroReservar, onQuitarSituacionCupo, onCerrarSituacionDesgloseBloque, onCerrarSituacionDesglosadorDeGolpe, situacionBloquePsTotal, onVerSituacionBloquePs,
+  onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onSituacionCronometroReservar, onQuitarSituacionCupo, onCerrarSituacionDesgloseBloque, onCerrarSituacionDesglosadorDeGolpe, onCerrarRingPorInactividad, situacionBloquePsTotal, onVerSituacionBloquePs,
   onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose, onDesglosadorCierreDeGolpe, onDesglosadorDepthTick, onDesglosadorPausaInterrupcion, onResumeDesglosador, onDesglosadorReorderSubs, onDesglosadorAddSub, onDesglosadorActivatePendingSub,
   onReorderSubTareasCronometro,
   onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle,
@@ -9051,6 +9271,7 @@ function VehicleCard({
   onQuitarSituacionCupo?: (vehicleId: string, subTareaId: string, minutos: number) => void;
   onCerrarSituacionDesgloseBloque?: (vehicleId: string) => void;
   onCerrarSituacionDesglosadorDeGolpe?: (vehicleId: string) => void;
+  onCerrarRingPorInactividad?: (vehicleId: string) => void;
   onDesglosadorCierreDeGolpe?: (vehicleId: string) => void;
   situacionBloquePsTotal?: number;
   onVerSituacionBloquePs?: () => void;
@@ -9140,6 +9361,9 @@ function VehicleCard({
   const situacionCupoFireKeyRef = useRef<string | null>(null);
   const situacion2MinWarnKeyRef = useRef<string | null>(null);
   const situacionFilaVoiceKeysRef = useRef<Set<string>>(new Set());
+  const ringInactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ringInactivityBloqueRef = useRef<string | null>(null);
+  const ringSobraVoiceKeyRef = useRef<string | null>(null);
   const situacionCupoEscalationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const subVehiculosRef = useRef(vehicle.subVehiculos);
   subVehiculosRef.current = vehicle.subVehiculos;
@@ -9429,9 +9653,7 @@ function VehicleCard({
     situacion2MinWarnKeyRef.current = null;
     situacionCupoFireKeyRef.current = null;
 
-    const isFirstFila =
-      anchor.startedAt === vehicle.situacionCronometro?.bloqueInicioAt;
-    speakSituacionFilaEnFoco(sub.texto, { intro: isFirstFila });
+    speakSituacionFilaEnFoco(sub.texto, { intro: false });
   }, [
     vehicle.tipoFlota,
     vehicle.status,
@@ -9901,6 +10123,93 @@ function VehicleCard({
   useEffect(() => {
     if (situacionCronActivo) setSubTasksCollapsed(false);
   }, [situacionCronActivo]);
+
+  const clearRingInactivityTimer = useCallback(() => {
+    if (ringInactivityTimerRef.current) {
+      clearTimeout(ringInactivityTimerRef.current);
+      ringInactivityTimerRef.current = null;
+    }
+  }, []);
+
+  const armRingInactivityTimer = useCallback(() => {
+    if (!onCerrarRingPorInactividad) return;
+    if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    if (vehicle.situacionCronometro?.activo !== true) return;
+    if (situacionBloqueListo) return;
+    clearRingInactivityTimer();
+    ringInactivityTimerRef.current = setTimeout(() => {
+      onCerrarRingPorInactividad(vehicle.id);
+    }, RING_ENFOQUE_INACTIVIDAD_MS);
+  }, [
+    onCerrarRingPorInactividad,
+    vehicle.tipoFlota,
+    vehicle.status,
+    vehicle.situacionCronometro?.activo,
+    vehicle.id,
+    situacionBloqueListo,
+    clearRingInactivityTimer,
+  ]);
+
+  useEffect(() => {
+    if (vehicle.tipoFlota !== "situacion" || vehicle.situacionCronometro?.activo !== true) {
+      clearRingInactivityTimer();
+      ringInactivityBloqueRef.current = null;
+      return;
+    }
+    const bloqueKey = `${vehicle.id}-${vehicle.situacionCronometro?.bloqueInicioAt ?? 0}`;
+    if (ringInactivityBloqueRef.current !== bloqueKey) {
+      ringInactivityBloqueRef.current = bloqueKey;
+      ringSobraVoiceKeyRef.current = null;
+    }
+    const unsubIdle = subscribeSpeechQueueIdle(() => {
+      armRingInactivityTimer();
+    });
+    return () => {
+      unsubIdle();
+      clearRingInactivityTimer();
+    };
+  }, [
+    vehicle.tipoFlota,
+    vehicle.id,
+    vehicle.situacionCronometro?.activo,
+    vehicle.situacionCronometro?.bloqueInicioAt,
+    armRingInactivityTimer,
+    clearRingInactivityTimer,
+  ]);
+
+  useEffect(() => {
+    if (!situacionCronActivo || situacionBloqueListo) return;
+    armRingInactivityTimer();
+  }, [
+    situacionCronActivo,
+    situacionBloqueListo,
+    vehicle.situacionCupoAnchor,
+    vehicle.subTareas,
+    situacionCupoUiTick,
+    armRingInactivityTimer,
+  ]);
+
+  useEffect(() => {
+    if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    if (!situacionBloqueListo) return;
+    const sc = vehicle.situacionCronometro;
+    if (sc?.activo !== true) return;
+    const contratoMs = situacionContratoFinMs(sc);
+    if (contratoMs == null) return;
+    const sobraMin = Math.round((contratoMs - Date.now()) / 60000);
+    if (sobraMin < RING_SOBRA_INVITACION_MIN) return;
+    const key = `${vehicle.id}_${sc.bloqueInicioAt ?? 0}`;
+    if (ringSobraVoiceKeyRef.current === key) return;
+    ringSobraVoiceKeyRef.current = key;
+    speakRingTiempoSobra(sobraMin);
+  }, [
+    vehicle.tipoFlota,
+    vehicle.status,
+    vehicle.situacionCronometro,
+    vehicle.id,
+    situacionBloqueListo,
+    situacionCupoUiTick,
+  ]);
 
   useEffect(() => {
     if (situacionCronActivo) return;
@@ -10963,7 +11272,7 @@ function VehicleCard({
                   </div>
                   {!situacionCronActivo && (
                   <p className="text-[7px] text-slate-600 leading-snug mb-2 px-0.5 border-l-2 pl-2" style={{ borderColor: "rgba(139,92,246,0.4)" }}>
-                    El espacio de enfoque es limitado — sella aquí solo lo que vas a sostener con tiempo. El resto ciérralo sin reloj. Meta horaria sellada: el tiempo se reparte en partes iguales; si fijas minutos en una fila, el resto se redistribuye.
+                    {RING_COPY.ringHint}
                   </p>
                   )}
                   {!situacionCronActivo && onComplete && onArchive && (
@@ -10993,7 +11302,7 @@ function VehicleCard({
                       data-testid={`situacion-reto-setup-${vehicle.id}`}
                     >
                       <p className="text-[8px] font-black uppercase tracking-wider" style={{ color: GOLD }}>
-                        {situacionProximoReto > 1 ? "Siguiente ronda" : "Abrir espacio de enfoque"}
+                        {situacionProximoReto > 1 ? RING_COPY.siguienteRonda : RING_COPY.abrirRing}
                       </p>
                       <div className="flex items-center gap-2">
                         <label className="text-[7px] font-bold uppercase tracking-wider text-slate-500 shrink-0">Tiempo objetivo</label>
@@ -11022,7 +11331,7 @@ function VehicleCard({
                         </p>
                       )}
                       <p className="text-[7px] text-slate-600">
-                        Marca «Sellar en enfoque (con tiempo)» en cada fila ({situacionLibreSeleccion.size} sellada{situacionLibreSeleccion.size !== 1 ? "s" : ""}).
+                        Marca «{RING_COPY.sellarEnRing}» en cada fila ({situacionLibreSeleccion.size} sellada{situacionLibreSeleccion.size !== 1 ? "s" : ""}).
                       </p>
                     </div>
                   )}
@@ -11049,6 +11358,15 @@ function VehicleCard({
                         : "—";
                     return (
                       <>
+                        {situacionBloqueListo && (
+                          <p
+                            className="text-[8px] font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded-lg text-center"
+                            style={{ backgroundColor: "rgba(212,175,55,0.1)", color: GOLD, border: "1px solid rgba(212,175,55,0.3)" }}
+                            data-testid={`situacion-ronda-lista-${vehicle.id}`}
+                          >
+                            Ronda lista — {RING_COPY.cerrarRing.toLowerCase()} cuando quieras
+                          </p>
+                        )}
                         <div className="grid grid-cols-2 gap-2 mb-2" data-testid={`situacion-reto-relojes-${vehicle.id}`}>
                           <div className="p-2 rounded-lg border text-center" style={{ backgroundColor: "rgba(212,175,55,0.08)", borderColor: "rgba(212,175,55,0.28)" }}>
                             <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: GOLD }}>Meta</p>
@@ -11140,7 +11458,7 @@ function VehicleCard({
                           ? ` · ${situacionTotalCasa} en Casa`
                           : ""}
                       {situacionTotalDetalles > 0 ? ` · ${situacionTotalDetalles} detalles` : ""}
-                      {situacionCronActivo ? " · reloj activo" : ""}
+                      {situacionCronActivo ? ` · ${RING_COPY.ring} activo` : ""}
                     </button>
                   )}
                   <AnimatePresence>
@@ -11174,10 +11492,10 @@ function VehicleCard({
                               <>
                                 <div className="px-0.5 mb-1 space-y-0.5">
                                   <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: PLATA }}>
-                                    Resueltas aparte
+                                    {RING_COPY.taller}
                                   </p>
                                   <p className="text-[6px] text-slate-600 leading-snug">
-                                    Izq. sellar en enfoque (con tiempo) · Der. cerrar sin reloj (+2 PS)
+                                    {RING_COPY.tallerHint}
                                   </p>
                                 </div>
                                 {subsLibre.map((st, stIdx) => {
@@ -11227,7 +11545,7 @@ function VehicleCard({
                                           }}
                                           data-testid={`situacion-sellar-enfoque-${st.id}`}
                                         >
-                                          {situacionLibreSeleccion.has(st.id) ? "✓ " : ""}Sellar en enfoque (con tiempo)
+                                          {situacionLibreSeleccion.has(st.id) ? "✓ " : ""}{RING_COPY.sellarEnRing}
                                         </button>
                                       )}
                                       <button
@@ -11327,7 +11645,7 @@ function VehicleCard({
                                 {subsCron.length > 0 && (
                                   <div className="flex items-center justify-between px-0.5 mt-2 gap-2 flex-wrap">
                                     <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: "#c4b5fd" }}>
-                                      Espacio de enfoque · +4 PS
+                                      {RING_COPY.ring} · +4 PS
                                       {(() => {
                                         const firstPend = subsCron.find(st => (st.resultadoSituacion ?? "pendiente") === "pendiente");
                                         return firstPend && vehicle.situacionCronometro?.activo ? (
@@ -11424,7 +11742,7 @@ function VehicleCard({
                                             <div className="flex gap-1 flex-shrink-0">
                                               <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroCumplido?.(vehicle.id, st.id); }} className="px-2 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(0,200,81,0.15)", color: VERDE, border: "1px solid rgba(0,200,81,0.4)" }}>Cumplido</button>
                                               <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroFallado?.(vehicle.id, st.id); }} className="px-2 py-0.5 rounded text-[7px] font-black uppercase" style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.35)" }}>Fallado</button>
-                                              <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroReservar?.(vehicle.id, st.id); }} className="px-2 py-0.5 rounded text-[7px] font-black uppercase flex items-center gap-0.5" style={{ backgroundColor: "rgba(148,163,184,0.12)", color: PLATA, border: "1px solid rgba(148,163,184,0.35)" }} title="Devolver al Imán (ruta S)"><Magnet size={9} /> Imán</button>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); onSituacionCronometroReservar?.(vehicle.id, st.id); }} className="px-2 py-0.5 rounded text-[7px] font-black uppercase flex items-center gap-0.5" style={{ backgroundColor: "rgba(148,163,184,0.12)", color: PLATA, border: "1px solid rgba(148,163,184,0.35)" }} title="Devolver al Crisol (ruta S)"><FlaskConical size={9} /> Crisol</button>
                                             </div>
                                           )}
                                           {pend && !enFoco && (
@@ -11642,7 +11960,7 @@ function VehicleCard({
                       data-testid={`situacion-encolar-reto-${vehicle.id}`}
                     >
                       <p className="text-[8px] font-black uppercase tracking-wider" style={{ color: VERDE }}>
-                        Añadir al espacio de enfoque
+                        {RING_COPY.anadirAlRing}
                       </p>
                       <p className="text-[7px] text-slate-500 leading-snug">
                         Selladas para el bloque · {situacionLibreSeleccion.size} tarea{situacionLibreSeleccion.size !== 1 ? "s" : ""} · la meta no se mueve
@@ -11660,11 +11978,23 @@ function VehicleCard({
                         data-testid={`situacion-anadir-cola-${vehicle.id}`}
                       >
                         <Plus size={12} />
-                        Sellar en enfoque (con tiempo)
+                        {RING_COPY.sellarEnRing}
                       </button>
                     </div>
                   )}
-                  {situacionCronActivo && onCerrarSituacionDesglosadorDeGolpe && (
+                  {situacionBloqueListo && onCerrarSituacionDesgloseBloque && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onCerrarSituacionDesgloseBloque(vehicle.id); }}
+                      className="w-full py-2.5 mb-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5"
+                      style={{ backgroundColor: "rgba(212,175,55,0.14)", color: GOLD, border: "1px solid rgba(212,175,55,0.45)" }}
+                      data-testid={`situacion-cerrar-bloque-${vehicle.id}`}
+                    >
+                      <Check size={12} />
+                      {RING_COPY.cerrarRing}
+                    </button>
+                  )}
+                  {situacionCronActivo && !situacionBloqueListo && onCerrarSituacionDesglosadorDeGolpe && (
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); onCerrarSituacionDesglosadorDeGolpe(vehicle.id); }}
@@ -11673,7 +12003,7 @@ function VehicleCard({
                       data-testid={`situacion-cerrar-de-golpe-${vehicle.id}`}
                     >
                       <Square size={11} />
-                      Cerrar desglosador de golpe
+                      {RING_COPY.cerrarRingGolpe}
                     </button>
                   )}
                   <div className="flex gap-2 mt-2">
@@ -11685,7 +12015,7 @@ function VehicleCard({
                         onAddSubTarea(vehicle.id, newSubTarea.trim());
                       }
                       setNewSubTarea("");
-                    }} placeholder={situacionCronActivo ? "Nueva tarea para el bloque..." : "Nueva tarea..."} className="flex-1 p-2 rounded-lg bg-black/40 border text-white text-[10px] placeholder:text-slate-600 focus:outline-none" style={{ borderColor: situacionCronActivo ? "rgba(0,200,81,0.25)" : "rgba(148,163,184,0.2)" }} data-testid={`input-subtarea-${vehicle.id}`} />
+                    }} placeholder={situacionCronActivo ? "Nueva tarea para el ring..." : "Nueva tarea..."} className="flex-1 p-2 rounded-lg bg-black/40 border text-white text-[10px] placeholder:text-slate-600 focus:outline-none" style={{ borderColor: situacionCronActivo ? "rgba(0,200,81,0.25)" : "rgba(148,163,184,0.2)" }} data-testid={`input-subtarea-${vehicle.id}`} />
                     {situacionCronActivo && onAddSubTareaUrgenteACola ? (
                       <button
                         type="button"
@@ -11697,10 +12027,10 @@ function VehicleCard({
                         disabled={!newSubTarea.trim()}
                         className="px-2 py-1.5 rounded-lg transition-all disabled:opacity-30 text-[6px] font-black uppercase leading-tight max-w-[5.5rem]"
                         style={{ backgroundColor: "rgba(0,255,195,0.12)", color: CYAN, border: "1px solid rgba(0,255,195,0.35)" }}
-                        title="Crear y sellar directo en el espacio de enfoque"
+                        title="Crear y sellar directo en el ring de enfoque real"
                         data-testid={`button-urgente-cola-${vehicle.id}`}
                       >
-                        Sellar en enfoque
+                        {RING_COPY.sellarDirectoRing}
                       </button>
                     ) : null}
                     <button onClick={() => { if (onAddSubTarea && newSubTarea.trim()) { onAddSubTarea(vehicle.id, newSubTarea.trim()); setNewSubTarea(""); } }} disabled={!newSubTarea.trim()} className="px-2 py-1 rounded-lg transition-all disabled:opacity-30" style={{ backgroundColor: "rgba(148,163,184,0.2)", color: PLATA }} data-testid={`button-add-subtarea-${vehicle.id}`}><Plus size={14} /></button>
@@ -11726,7 +12056,7 @@ function VehicleCard({
                       data-testid={`situacion-lanzar-reto-${vehicle.id}`}
                     >
                       <Flag size={12} />
-                      {situacionProximoReto > 1 ? "Lanzar siguiente ronda" : "Abrir espacio de enfoque"}
+                      {situacionProximoReto > 1 ? `Lanzar ${RING_COPY.siguienteRonda.toLowerCase()}` : RING_COPY.abrirRing}
                       {situacionLibreSeleccion.size > 0 ? ` · ${situacionLibreSeleccion.size} subtarea${situacionLibreSeleccion.size !== 1 ? "s" : ""}` : ""}
                       {situacionObjetivoHoraValid ? ` · ${situacionObjetivoHoraTrim}` : ""}
                     </button>

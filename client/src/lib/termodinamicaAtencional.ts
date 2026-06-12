@@ -7,6 +7,8 @@ import type { RutaBandaId } from "./rutaEnfoque";
 import { computeDisciplinaDia } from "./disciplinaEngine";
 import type { DisciplinaDia } from "./disciplinaEngine";
 export type { DisciplinaDia, SegmentoDisciplina } from "./disciplinaEngine";
+import type { DecisionLedgerEntry } from "./decisionesLedger";
+import { countDecisionesFromLedger } from "./decisionesLedger";
 import { getLimaDayStartMs } from "./segmentTime";
 
 export interface PsDesglose {
@@ -331,9 +333,14 @@ export function countSubsDesglosadorCumplidosHoy(vehicles: Vehicle[], dayStartMs
   let total = 0;
   for (const v of vehicles) {
     if (v.tipoReloj !== "desglosador" || !vehicleEnTermoJornada(v, dayStartMs)) continue;
+    let fromSubs = 0;
     for (const sub of v.subVehiculos ?? []) {
-      if (subCumplidoEnJornada(sub, v, dayStartMs)) total++;
+      if (subCumplidoEnJornada(sub, v, dayStartMs)) fromSubs++;
     }
+    const snap = v.termoDecisionSnapshot;
+    const snapSubs =
+      snap && snap.journalDayStartMs === dayStartMs ? snap.subsDesglosadorCumplidos : 0;
+    total += Math.max(fromSubs, snapSubs);
   }
   return total;
 }
@@ -410,9 +417,14 @@ export function countSubsSituacionCumplidosHoy(vehicles: Vehicle[], dayStartMs: 
   for (const v of vehicles) {
     if (v.tipoFlota !== "situacion") continue;
     if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
+    let fromSubs = 0;
     for (const st of v.subTareas ?? []) {
-      if (subTareaDecisionEnJornada(st, v, dayStartMs)) total++;
+      if (subTareaDecisionEnJornada(st, v, dayStartMs)) fromSubs++;
     }
+    const snap = v.termoDecisionSnapshot;
+    const snapSubs =
+      snap && snap.journalDayStartMs === dayStartMs ? snap.subsSituacionCumplidos : 0;
+    total += Math.max(fromSubs, snapSubs);
   }
   return total;
 }
@@ -431,14 +443,18 @@ export function countMisionesDirectasCerradasHoy(vehicles: Vehicle[], dayStartMs
 }
 
 /** Combustible de conciencia: decisiones ejecutadas hoy (universal, sin unidades personales). */
-export function computeCombustibleDia(vehicles: Vehicle[], dayStartMs: number): CombustibleDia {
+export function computeCombustibleDia(
+  vehicles: Vehicle[],
+  dayStartMs: number,
+  ledgerEntries?: DecisionLedgerEntry[]
+): CombustibleDia {
   const subsTiempo = countSubsDesglosadorCumplidosHoy(vehicles, dayStartMs);
   const subsSituacion = countSubsSituacionCumplidosHoy(vehicles, dayStartMs);
   const misionesDirectas = countMisionesDirectasCerradasHoy(vehicles, dayStartMs);
   const desglosadoresCerrados = countDesglosadoresCerradosHoy(vehicles, dayStartMs);
   const bloquesOtros = countBloquesOtrosHoy(vehicles, dayStartMs);
 
-  return {
+  const live: CombustibleDia = {
     bloques: countBloquesCompletados(vehicles, dayStartMs),
     desglosadoresCerrados,
     bloquesOtros,
@@ -446,6 +462,60 @@ export function computeCombustibleDia(vehicles: Vehicle[], dayStartMs: number): 
     subsSituacion,
     misionesDirectas,
     decisiones: subsTiempo + subsSituacion + misionesDirectas,
+  };
+
+  if (!ledgerEntries?.length) return live;
+  return mergeCombustibleWithLedger(live, ledgerEntries);
+}
+
+/** Toma el máximo entre conteo en vivo y ledger local (nunca resta decisiones ya registradas). */
+export function mergeCombustibleWithLedger(
+  live: CombustibleDia,
+  ledgerEntries: DecisionLedgerEntry[]
+): CombustibleDia {
+  const ledger = countDecisionesFromLedger(ledgerEntries);
+  const subsTiempo = Math.max(live.subsTiempo, ledger.subsTiempo);
+  const subsSituacion = Math.max(live.subsSituacion, ledger.subsSituacion);
+  const misionesDirectas = Math.max(live.misionesDirectas, ledger.misionesDirectas);
+  return {
+    ...live,
+    subsTiempo,
+    subsSituacion,
+    misionesDirectas,
+    decisiones: subsTiempo + subsSituacion + misionesDirectas,
+  };
+}
+
+/** Snapshot al cerrar vehículo — respaldo si Firebase pierde subs al sincronizar. */
+export function buildTermoDecisionSnapshot(
+  vehicle: Vehicle,
+  dayStartMs: number
+): NonNullable<Vehicle["termoDecisionSnapshot"]> {
+  let subsDesglosadorCumplidos = 0;
+  if (vehicle.tipoReloj === "desglosador") {
+    subsDesglosadorCumplidos = (vehicle.subVehiculos ?? []).filter(s =>
+      subCumplidoEnJornada(s, vehicle, dayStartMs)
+    ).length;
+  }
+  let subsSituacionCumplidos = 0;
+  if (vehicle.tipoFlota === "situacion") {
+    subsSituacionCumplidos = (vehicle.subTareas ?? []).filter(st =>
+      subTareaDecisionEnJornada(st, vehicle, dayStartMs)
+    ).length;
+  }
+  const misionDirecta =
+    vehicle.tipoReloj !== "desglosador" &&
+    vehicle.tipoFlota !== "descanso" &&
+    vehicle.tipoFlota !== "situacion" &&
+    (vehicle.status === "cumplido" || vehicle.status === "archivado")
+      ? 1
+      : 0;
+  return {
+    journalDayStartMs: dayStartMs,
+    subsDesglosadorCumplidos,
+    subsSituacionCumplidos,
+    misionesDirectas: misionDirecta,
+    recordedAt: Date.now(),
   };
 }
 

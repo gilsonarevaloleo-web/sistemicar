@@ -6,8 +6,8 @@ import {
   tickPuntoCero,
 } from "@/engines/PuntoCeroEngine";
 import {
-  mensajeReactivacionDia,
   speakPuntoCeroGuide,
+  speakReactivacionDia,
   stopPleasantVoice,
   susurroNocheTexto,
 } from "@/lib/puntoCeroVoice";
@@ -56,7 +56,7 @@ export function usePuntoCeroOrchestrator(
         completadaAnnouncedRef.current = true;
         const msg = mensajeCompletado(next.modo);
         if (next.modo === "dia") {
-          speakPuntoCeroGuide(mensajeReactivacionDia(), { profile: "reactivation" });
+          speakReactivacionDia();
         } else {
           stopPleasantVoice();
         }

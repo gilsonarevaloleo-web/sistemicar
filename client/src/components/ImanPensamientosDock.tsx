@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Magnet, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, FlaskConical, Plus, Trash2 } from "lucide-react";
 import {
   RUTA_TACTICA_META,
   RUTA_TACTICA_ORDER,
@@ -9,8 +9,9 @@ import {
   type SituacionReservaItem,
 } from "@/lib/situacionReserva";
 import {
-  IMAN_PENSAMIENTOS_TAGLINE,
-  IMAN_PENSAMIENTOS_TITLE,
+  CRISOL_MOS_HINT,
+  CRISOL_TAGLINE,
+  CRISOL_TITLE,
   NIDO_INBOX_ID,
   agruparImanPorNido,
   imanItemsParaDesglosador,
@@ -115,9 +116,9 @@ export default function ImanPensamientosDock({
             className="w-full px-3 py-2 flex items-center gap-2"
             data-testid="iman-pensamientos-toggle"
           >
-            <Magnet size={14} style={{ color: colors.plata }} />
+            <FlaskConical size={14} style={{ color: colors.plata }} />
             <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: colors.plata }}>
-              {IMAN_PENSAMIENTOS_TITLE}
+              {CRISOL_TITLE}
             </span>
             <span
               className="text-[9px] font-black px-2 py-0.5 rounded-full"
@@ -138,10 +139,8 @@ export default function ImanPensamientosDock({
 
           {open && (
             <div className="border-t px-3 pb-3 pt-2 space-y-2" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-              <p className="text-[7px] text-slate-500 leading-relaxed">{IMAN_PENSAMIENTOS_TAGLINE}</p>
-              <p className="text-[7px] text-slate-600 leading-relaxed">
-                S = situación · E = ejecución · M = tener en cuenta. Abre el nido para ejecutar en el vehículo situacional.
-              </p>
+              <p className="text-[7px] text-slate-500 leading-relaxed">{CRISOL_TAGLINE}</p>
+              <p className="text-[7px] text-slate-600 leading-relaxed">{CRISOL_MOS_HINT}</p>
 
               <select
                 value={proyectoDraft}
@@ -189,7 +188,7 @@ export default function ImanPensamientosDock({
                   onKeyDown={e => {
                     if (e.key === "Enter") void submitQuickAdd();
                   }}
-                  placeholder="Aterrizar un pensamiento…"
+                  placeholder="Capturar pensamiento en el Crisol…"
                   className="flex-1 min-w-0 px-2.5 py-2 rounded-lg bg-black/40 border border-white/10 text-[10px] text-white placeholder:text-slate-600 focus:outline-none focus:border-white/25"
                   data-testid="iman-pensamiento-input"
                 />
@@ -213,7 +212,7 @@ export default function ImanPensamientosDock({
                     className="rounded-lg p-2 text-center"
                     style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid rgba(148,163,184,0.15)" }}
                   >
-                    <p className="text-[9px] text-slate-500">Vacío — tus ideas aterrizan aquí antes del desglosador.</p>
+                    <p className="text-[9px] text-slate-500">Vacío — ordena aquí antes del Taller y el Ring.</p>
                   </div>
                 ) : (
                   nidos.map(grupo => {

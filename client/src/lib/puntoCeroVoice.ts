@@ -1,5 +1,27 @@
 import { warmupSpeechSynthesis } from "./speechQueue";
 import { isPuntoCeroVoiceEnabled } from "./tikSound";
+import {
+  colorInmersionVoz,
+  MENSAJE_PASIVA_DIA,
+  MENSAJE_PASIVA_NOCHE,
+  MENSAJE_REACTIVACION_DIA,
+  PUNTO_CERO_ETAPA4_TRANSICION,
+  PUNTO_CERO_ETAPAS,
+  PUNTO_CERO_INTRO_VOZ,
+} from "./puntoCeroGuides";
+
+export type { PuntoCeroEtapaKey } from "./puntoCeroGuides";
+export {
+  colorInmersionVoz,
+  MENSAJE_PASIVA_DIA,
+  MENSAJE_PASIVA_NOCHE,
+  mensajePasivaDia,
+  mensajePasivaNoche,
+  mensajeReactivacionDia,
+  PUNTO_CERO_ETAPAS,
+  PUNTO_CERO_ETAPAS_LIST,
+} from "./puntoCeroGuides";
+import type { PuntoCeroEtapaKey } from "./puntoCeroGuides";
 
 /** Susurros de guía nocturna — uno cada 60s en fase pasiva. */
 export const SUSURROS_NOCHE: readonly string[] = [
@@ -15,40 +37,16 @@ export const SUSURROS_NOCHE: readonly string[] = [
   "Mañana retomás… ahora, solo esto.",
 ];
 
-export type PuntoCeroEtapaKey = "etapa1" | "etapa2" | "etapa3" | "etapa4";
 export type PuntoCeroVoiceProfile = "calm" | "night" | "day" | "reactivation";
-
-/** Guía hablada en frases cortas — pausas naturales entre cada una. */
-export const ETAPA_VOZ: Record<PuntoCeroEtapaKey, readonly string[]> = {
-  etapa1: [
-    "Tensión… y quietud.",
-    "Tensá el cuerpo… de la cabeza a los pies.",
-    "Soltá todo… y quedate en quietud.",
-  ],
-  etapa2: [
-    "Identificá el pensamiento.",
-    "¿Qué estoy pensando?",
-    "Lo nombro… y apago ese movimiento.",
-  ],
-  etapa3: [
-    "Ritmo y respiración.",
-    "Sentí el ritmo tal como está… sin corregir.",
-    "Jugá con polos opuestos… retención y apnea… a tu medida.",
-  ],
-  etapa4: [
-    "Alimento de colores.",
-    "Tocá cada color… para inhalarlo en su zona.",
-  ],
-};
 
 const VOICE_PROFILES: Record<
   PuntoCeroVoiceProfile,
   { rate: number; pitch: number; volume: number; pauseMs: number }
 > = {
-  calm: { rate: 0.7, pitch: 0.8, volume: 0.46, pauseMs: 720 },
-  night: { rate: 0.64, pitch: 0.76, volume: 0.38, pauseMs: 900 },
-  day: { rate: 0.72, pitch: 0.82, volume: 0.48, pauseMs: 680 },
-  reactivation: { rate: 0.78, pitch: 0.88, volume: 0.52, pauseMs: 500 },
+  calm: { rate: 0.68, pitch: 0.82, volume: 0.5, pauseMs: 880 },
+  night: { rate: 0.62, pitch: 0.78, volume: 0.42, pauseMs: 1050 },
+  day: { rate: 0.7, pitch: 0.84, volume: 0.5, pauseMs: 820 },
+  reactivation: { rate: 0.76, pitch: 0.88, volume: 0.54, pauseMs: 560 },
 };
 
 let voicesCache: SpeechSynthesisVoice[] | null = null;
@@ -70,21 +68,29 @@ if (typeof window !== "undefined" && window.speechSynthesis) {
   };
 }
 
-/** Voz en español profunda y calmada (preferencia masculina / grave si existe). */
+function scoreSpanishVoice(v: SpeechSynthesisVoice): number {
+  let score = 0;
+  const blob = `${v.name} ${v.voiceURI} ${v.lang}`.toLowerCase();
+  if (/^es-es/i.test(v.lang)) score += 50;
+  else if (/^es-/i.test(v.lang)) score += 28;
+  if (/google.*espa(?!.*estados)/i.test(v.name)) score += 35;
+  if (/microsoft.*(laura|elena|sabina|helena|david|pablo)/i.test(blob)) score += 30;
+  if (/natural|neural|premium|online/i.test(blob)) score += 18;
+  if (/male|hombre|diego|jorge|pablo|enrique|carlos|daniel|antonio|david/i.test(blob)) score += 12;
+  if (/female|mujer|helena|laura|sabina|elena/i.test(blob)) score += 8;
+  if (/estados unidos|latino|méxico|mexico|mexican/i.test(blob)) score -= 8;
+  if (/english|en-us|en-gb/i.test(v.lang)) score -= 40;
+  return score;
+}
+
+/** Voz en español calmada — prioriza es-ES y voces neurales del sistema. */
 export function pickCalmDeepSpanishVoice(): SpeechSynthesisVoice | null {
   const voices = loadVoices();
   if (!voices.length) return null;
-  const es = voices.filter(v => /es/i.test(v.lang));
+  const es = voices.filter(v => /^es/i.test(v.lang));
   const pool = es.length ? es : voices;
-  const deep = pool.find(v =>
-    /male|hombre|diego|jorge|pablo|enrique|carlos|daniel|antonio|baritone|deep|bass/i.test(
-      `${v.name} ${v.voiceURI}`
-    )
-  );
-  const soft = pool.find(v =>
-    /google español(?!.*estados)/i.test(v.name) || /microsoft.*espa/i.test(v.name)
-  );
-  return deep ?? soft ?? pool[0] ?? voices[0] ?? null;
+  const ranked = [...pool].sort((a, b) => scoreSpanishVoice(b) - scoreSpanishVoice(a));
+  return ranked[0] ?? voices[0] ?? null;
 }
 
 /** @deprecated Usar pickCalmDeepSpanishVoice */
@@ -215,52 +221,38 @@ export function speakPuntoCeroGuide(
 
 function splitMeditativePhrases(text: string): string[] {
   return text
-    .split(/(?<=[.!?…])\s+/)
+    .split(/(?<=[.!?…])\s+|(?<=[;—])\s+/)
     .map(p => p.trim())
     .filter(Boolean);
 }
 
 export function speakEtapaPuntoCero(
   etapa: PuntoCeroEtapaKey,
-  opts?: { intro?: boolean }
+  opts?: { intro?: boolean; transicionEtapa4?: boolean }
 ): void {
-  const phrases = [...ETAPA_VOZ[etapa]];
-  if (!phrases.length || !isPuntoCeroVoiceEnabled()) return;
+  const guide = PUNTO_CERO_ETAPAS[etapa];
+  if (!guide.voz.length || !isPuntoCeroVoiceEnabled()) return;
 
-  const sequence = opts?.intro ? ["Punto Cero.", "Polo neutro.", ...phrases] : phrases;
-  if (etapa === "etapa3") {
-    sequence.push(...ETAPA_VOZ.etapa4);
+  const sequence: string[] = opts?.intro ? [...PUNTO_CERO_INTRO_VOZ, ...guide.voz] : [...guide.voz];
+  if (opts?.transicionEtapa4 && etapa === "etapa3") {
+    sequence.push(...PUNTO_CERO_ETAPA4_TRANSICION);
   }
   speakPuntoCeroSequence(sequence, "calm");
 }
 
-export function speakColorInmersion(zona: string): void {
-  speakPuntoCeroSequence(
-    [`${zona}…`, "Inhálalo…", "Introdúcelo en su zona."],
-    "calm"
-  );
+export function speakEtapa4Intro(): void {
+  speakPuntoCeroSequence(PUNTO_CERO_ETAPAS.etapa4.voz, "calm");
 }
 
-export function mensajeReactivacionDia(): string {
-  return "Punto Cero completado. Energía restaurada. Retomá el vehículo.";
+export function speakColorInmersion(zona: string, indice = 0, opts?: { incluirIntroEtapa4?: boolean }): void {
+  const phrases: string[] = [];
+  if (opts?.incluirIntroEtapa4) {
+    phrases.push(...PUNTO_CERO_ETAPAS.etapa4.voz);
+  }
+  phrases.push(...colorInmersionVoz(zona, indice));
+  speakPuntoCeroSequence(phrases, "calm");
 }
 
-export const MENSAJE_PASIVA_DIA: readonly string[] = [
-  "Ancla del alivio consciente.",
-  "Rastreá la fricción corporal…",
-  "Dejá ir… con cada exhalación.",
-];
-
-export const MENSAJE_PASIVA_NOCHE: readonly string[] = [
-  "Modo apagón.",
-  "Silencio profundo…",
-  "Solo la respiración.",
-];
-
-export function mensajePasivaDia(): string {
-  return MENSAJE_PASIVA_DIA.join(" ");
-}
-
-export function mensajePasivaNoche(): string {
-  return MENSAJE_PASIVA_NOCHE.join(" ");
+export function speakReactivacionDia(): void {
+  speakPuntoCeroSequence(MENSAJE_REACTIVACION_DIA, "reactivation");
 }

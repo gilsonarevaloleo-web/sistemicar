@@ -201,14 +201,14 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 ---
 
-### 3.13 Imán de pensamientos
+### 3.13 El Crisol de Pensamientos (MOS)
 
 | Campo | Contenido |
 |-------|-----------|
-| Qué es | Captura con nido (proyecto/inbox), rutas S/E/M. Ordena pensamientos antes de ejecutar. Devolución ruta S desde cronómetro sin perder hilo. |
+| Qué es | Matriz de Ordenamiento Situacional: captura con nido (proyecto/inbox), rutas S/E/M. Ordena pensamientos antes del Taller y el Ring. Devolución ruta S desde cronómetro sin perder hilo. |
 | Dolor | "Ideas que se pierden o me sacan del foco" |
 | Resultado | Primer sistema que **ordena pensamientos** hacia destino |
-| Prueba | Captura → nido → Abrir nido → 1 sub en cronómetro |
+| Prueba | Captura → nido → Abrir nido → 1 sub en Ring |
 | Peldaño | **Soberanía** |
 
 ---
@@ -217,7 +217,7 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 | Campo | Contenido |
 |-------|-----------|
-| Qué es | Cola de subtareas con meta horaria, cupos redistribuidos, cumplido/fallado/reservar al Imán. Bloques de reto. |
+| Qué es | Cola de subtareas con meta horaria, cupos redistribuidos, cumplido/fallado/reservar al Crisol. Bloques de reto (Ring de enfoque real). |
 | Dolor | "Tiempo libre sin foco; imprevistos desordenados" |
 | Resultado | Bloque cerrado con ~60% foco; ganancia de tiempo en bolsa |
 | Prueba | Vehículo situación → activar desglosador → cerrar bloque |
@@ -229,7 +229,7 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 | Campo | Contenido |
 |-------|-----------|
-| Qué es | Escalera de avance; correlativo de pasos ejecutados desde Imán/subs; fe incremental hacia sueños más grandes. |
+| Qué es | Escalera de avance; correlativo de pasos ejecutados desde Crisol/subs; fe incremental hacia sueños más grandes. |
 | Dolor | "Muchas ideas, poco avance visible hacia un norte" |
 | Resultado | Paso #N ejecutado; evidencia de fe, no solo lista |
 | Prueba | Sub con proyecto → cumplir → toast paso #N |
@@ -253,7 +253,7 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 | Campo | Contenido |
 |-------|-----------|
-| Qué es | Tipos de flota para imprevistos, recarga y sinceridad. Base da estructura; premium situacional desbloquea desglosador + Imán. |
+| Qué es | Tipos de flota para imprevistos, recarga y sinceridad. Base da estructura; premium situacional desbloquea Ring + Crisol MOS. |
 | Dolor | "Todo mezclado en una sola lista" |
 | Resultado | Tipo de misión = tipo de cierre y PS distinto |
 | Prueba | Crear vehículo descanso vs situación → cierre distinto |
@@ -307,7 +307,7 @@ Usar en lugar de "Elige stack Estudiante o Producción":
 
 - Actualizar matriz persona → peldaño (no solo Estudiante/Producción).
 - Demo peldaño 2: desglosador tiempo + termo + récord.
-- Demo peldaño 3: Imán → desglosador situación → paso proyecto.
+- Demo peldaño 3: Crisol MOS → Ring situacional → paso proyecto.
 
 ---
 
@@ -331,7 +331,7 @@ Usar en lugar de "Elige stack Estudiante o Producción":
 
 ## 9. Elevator pitch Planificación (solo este componente)
 
-> **Planificación SISTEMICAR** cierra tu día con datos: anillo de conciencia, segmentos, flota y PS en la Base; conquista medible con unidades y récord en Operativo; orden de pensamientos, Imán y proyectos en Soberanía. No es una lista — es un embudo de maduración: primero mides lo que conquistas, después ordenas lo imprevisto hacia fe incremental en tus proyectos.
+> **Planificación SISTEMICAR** cierra tu día con datos: anillo de conciencia, segmentos, flota y PS en la Base; conquista medible con unidades y récord en Operativo; orden de pensamientos, Crisol MOS y proyectos en Soberanía. No es una lista — es un embudo de maduración: primero mides lo que conquistas, después ordenas lo imprevisto hacia fe incremental en tus proyectos.
 
 ---
 

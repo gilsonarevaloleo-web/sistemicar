@@ -6,6 +6,7 @@ import {
   vibrateSituacionCupo,
 } from "./situacionAlertSounds";
 import { isSituacionAlertsEnabled } from "./tikSound";
+import { ringBienvenidaParts, ringTiempoSobraParts } from "./ringEnfoqueReal";
 import { speakUbicacionQueue, speakUbicacionSingle } from "./speechQueue";
 
 function trimSubText(text: string, max = 48): string {
@@ -59,12 +60,22 @@ export function fireSituacionCupoAlert(params: {
   }
 }
 
-/** Anuncia por voz la fila activa del desglose situacional (cronómetro). */
+/** Ritual de entrada al ring de enfoque real (situacional). */
+export function speakRingBienvenida(retoNumero: number): void {
+  speakUbicacionQueue(ringBienvenidaParts(retoNumero), true, "situacion");
+}
+
+/** Invitación cuando la cola está vacía y sobra mucho tiempo en la meta. */
+export function speakRingTiempoSobra(minutosSobra: number): void {
+  speakUbicacionQueue(ringTiempoSobraParts(minutosSobra), false, "situacion");
+}
+
+/** Anuncia por voz la fila activa del ring situacional. */
 export function speakSituacionFilaEnFoco(filaTexto: string, opts?: { intro?: boolean }): void {
   const fila = trimSubText(filaTexto, 56);
   if (!fila) return;
   const phrases = opts?.intro
-    ? [fila, "Desglose situacional activo"]
+    ? [fila, "Ring de enfoque real activo"]
     : [fila, "Fila en foco"];
   speakUbicacionQueue(phrases, true, "situacion");
 }

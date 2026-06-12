@@ -81,7 +81,11 @@ function pickSituacionCronometro(
   if (!fb) return local;
   if (!local) return fb;
   if (local.activo === true && fb.activo !== true) return local;
-  if (fb.activo === true && local.activo !== true) return fb;
+  if (fb.activo === true && local.activo !== true) {
+    const localRetos = local.retosCompletados ?? 0;
+    const fbRetos = fb.retosCompletados ?? 0;
+    if (localRetos >= fbRetos) return local;
+  }
   const fbFin = fb.horaFinContratoMs ?? fb.horaFinMs ?? 0;
   const localFin = local.horaFinContratoMs ?? local.horaFinMs ?? 0;
   const picked = localFin >= fbFin ? local : fb;

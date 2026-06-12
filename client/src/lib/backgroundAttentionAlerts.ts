@@ -4,8 +4,10 @@
  * programadas + cola de frases pendientes al volver a la app.
  */
 
-import type { UbicacionVoiceSource } from "./speechQueue";
-import { speakUbicacionSingle } from "./speechQueue";
+import { readNotificationState } from "./notificationState";
+import { getCrossingVehiclesState } from "./segmentCrossEntropyEngine";
+import { getLimaDayStartMs } from "./segmentTime";
+import { speakUbicacionSingle, type UbicacionVoiceSource } from "./speechQueue";
 import { isPuertaVozEnabled } from "./tikSound";
 
 function postAttentionNotification(opts: {
@@ -91,11 +93,60 @@ export function enqueueMissedPuertaVoice(text: string, source: UbicacionVoiceSou
   writeMissedQueue(queue);
 }
 
+export function filterStaleMissedPuertaVoices(items: MissedVoiceItem[]): MissedVoiceItem[] {
+  const state = readNotificationState();
+  if (!state) return items;
+
+  const dayStart = getLimaDayStartMs();
+  const crossingCtx = getCrossingVehiclesState(state.segmentos, state.vehicles, dayStart);
+  const cruceGracePhrase = "Cierre por entropía-atención. Ordena tu jornada, operador.";
+
+  return items.filter(item => {
+    if (item.text === cruceGracePhrase) {
+      return crossingCtx != null;
+    }
+    if (item.text.includes("Cierra vehículos del bloque anterior")) {
+      return crossingCtx != null;
+    }
+
+    const segByPuertaEnd = state.segmentos.find(s =>
+      item.text.startsWith(`Puerta de ${s.nombre} cerrada`)
+    );
+    if (segByPuertaEnd) {
+      return segByPuertaEnd.estado === "pendiente";
+    }
+
+    const segByCierre = state.segmentos.find(s =>
+      item.text.startsWith(`Cierra ${s.nombre} con intención`)
+    );
+    if (segByCierre) {
+      return segByCierre.estado === "activo";
+    }
+
+    const segByEntropia = state.segmentos.find(s =>
+      item.text.startsWith(`Entropía inminente en ${s.nombre}`)
+    );
+    if (segByEntropia) {
+      return segByEntropia.estado !== "entropia" && segByEntropia.estado !== "cerrado_manual";
+    }
+
+    const segByPuertaVoz = state.segmentos.find(s => item.text.startsWith(`${s.nombre}.`));
+    if (segByPuertaVoz) {
+      return segByPuertaVoz.estado === "pendiente" && segByPuertaVoz.vozDisparadaAt == null;
+    }
+
+    return true;
+  });
+}
+
 /** Reproduce frases que no pudieron hablarse en segundo plano. */
 export function flushMissedPuertaVoiceOnVisible(): number {
   if (isAppInBackground()) return 0;
-  const queue = readMissedQueue();
-  if (queue.length === 0) return 0;
+  const queue = filterStaleMissedPuertaVoices(readMissedQueue());
+  if (queue.length === 0) {
+    writeMissedQueue([]);
+    return 0;
+  }
   writeMissedQueue([]);
   for (const item of queue) {
     speakUbicacionSingle(item.text, item.source);

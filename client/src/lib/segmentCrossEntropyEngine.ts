@@ -118,6 +118,18 @@ export function applyOriginSegmentCruceEntropia(
   return { segmentos: next, event, changed };
 }
 
+export function getCrossingVehiclesState(
+  segmentos: SegmentoV5[],
+  vehicles: Vehicle[],
+  dayStartMs: number
+): { activeSegment: SegmentoV5; crossing: Vehicle[] } | null {
+  const activeSegment = getActiveSegment(segmentos);
+  if (!activeSegment) return null;
+  const crossing = vehicles.filter(v => isVehicleFromPreviousSegment(v, activeSegment, dayStartMs));
+  if (crossing.length === 0) return null;
+  return { activeSegment, crossing };
+}
+
 export function evaluateSegmentCrossEntropy(params: {
   vehicles: Vehicle[];
   segmentos: SegmentoV5[];

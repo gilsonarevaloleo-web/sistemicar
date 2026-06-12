@@ -407,6 +407,69 @@ export async function addSituacionReserva(
   return { id: tempId, localSaved: true };
 }
 
+export type ReservaImanReactivacionPatch = Partial<
+  Pick<
+    SituacionReservaItem,
+    | "texto"
+    | "minutosCupo"
+    | "detalles"
+    | "rutaSeguimientoPaso"
+    | "proyectoId"
+    | "proyectoTitulo"
+    | "proyectoEtiqueta"
+    | "ruta"
+  >
+>;
+
+/** Devuelve una fila retomada al Crisol (estado activa, conserva ruta del nido). */
+export async function reactivarReservaImanDesdeSub(
+  userId: string,
+  reservaId: string,
+  patch?: ReservaImanReactivacionPatch
+): Promise<boolean> {
+  const existing = getAllLocalReserva().find(i => i.id === reservaId && i.userId === userId);
+  if (!existing) return false;
+
+  const { retomadaAt: _ra, retomadaEnVehiculoId: _rv, ...base } = existing;
+  const reactivated: SituacionReservaItem = {
+    ...base,
+    ...patch,
+    estado: "activa",
+    reservadaAt: Date.now(),
+  };
+
+  const all = getAllLocalReserva().map(i =>
+    i.id === reservaId && i.userId === userId ? reactivated : i
+  );
+  const localSaved = saveAllLocalReserva(all);
+  if (!localSaved) return false;
+
+  if (isFirebaseConfigured() && db && !isLocalOnlyReservaId(reservaId)) {
+    void (async () => {
+      try {
+        const path = getPrivatePath(userId, "situacionReserva");
+        await updateDoc(doc(db, path, reservaId), {
+          estado: "activa",
+          reservadaAt: reactivated.reservadaAt,
+          retomadaAt: null,
+          retomadaEnVehiculoId: null,
+          ...(patch?.texto != null ? { texto: patch.texto } : {}),
+          ...(patch?.minutosCupo != null ? { minutosCupo: patch.minutosCupo } : {}),
+          ...(patch?.detalles != null ? { detalles: patch.detalles } : {}),
+          ...(patch?.rutaSeguimientoPaso != null ? { rutaSeguimientoPaso: patch.rutaSeguimientoPaso } : {}),
+          ...(patch?.proyectoId != null ? { proyectoId: patch.proyectoId } : {}),
+          ...(patch?.proyectoTitulo != null ? { proyectoTitulo: patch.proyectoTitulo } : {}),
+          ...(patch?.proyectoEtiqueta != null ? { proyectoEtiqueta: patch.proyectoEtiqueta } : {}),
+          ...(patch?.ruta != null ? { ruta: patch.ruta } : {}),
+        });
+      } catch (error) {
+        console.error("[reactivarReservaImanDesdeSub] Firebase sync:", error);
+      }
+    })();
+  }
+  return true;
+}
+
 export async function updateSituacionReservaEstado(
   userId: string,
   reservaId: string,

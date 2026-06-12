@@ -18,6 +18,24 @@ let queue: string[] = [];
 let speaking = false;
 let lastWarmupMs = 0;
 let stuckTimer: ReturnType<typeof setTimeout> | null = null;
+const idleListeners = new Set<() => void>();
+
+function notifySpeechQueueIdle(): void {
+  if (speaking || queue.length > 0) return;
+  idleListeners.forEach(fn => {
+    try {
+      fn();
+    } catch {
+      /* noop */
+    }
+  });
+}
+
+/** Se dispara cuando la cola quedó vacía y no hay utterance activo. */
+export function subscribeSpeechQueueIdle(listener: () => void): () => void {
+  idleListeners.add(listener);
+  return () => idleListeners.delete(listener);
+}
 
 const STUCK_SPEAK_MS = 45_000;
 const WARMUP_REFRESH_MS = 20 * 60_000;
@@ -71,11 +89,13 @@ function processQueue(): void {
       speaking = false;
       clearStuckTimer();
       processQueue();
+      notifySpeechQueueIdle();
     };
     u.onerror = () => {
       speaking = false;
       clearStuckTimer();
       processQueue();
+      notifySpeechQueueIdle();
     };
     window.speechSynthesis.speak(u);
   } catch {
@@ -131,6 +151,7 @@ export function speakUbicacionQueue(
 
   queue.push(...filtered);
   processQueue();
+  if (!speaking && queue.length === 0) notifySpeechQueueIdle();
 }
 
 export function speakUbicacionSingle(

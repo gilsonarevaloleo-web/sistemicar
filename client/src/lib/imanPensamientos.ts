@@ -1,14 +1,29 @@
 import type { ProyectoEtiqueta } from "./claridadDireccion";
 import type { SubTarea, Vehicle } from "./persistence";
 import { registrarPasoEjecutadoEnProyecto } from "./proyectos";
-import { markImanReservaEjecutada, type SituacionReservaItem } from "./situacionReserva";
+import {
+  addSituacionReserva,
+  markImanReservaEjecutada,
+  reactivarReservaImanDesdeSub,
+  type NuevaSituacionReserva,
+  type SituacionReservaItem,
+} from "./situacionReserva";
 
 /** Pensamientos sin proyecto asignado — aterrizar después. */
 export const NIDO_INBOX_ID = "__inbox__";
 
-export const IMAN_PENSAMIENTOS_TITLE = "Imán de pensamientos";
-export const IMAN_PENSAMIENTOS_TAGLINE =
-  "Tus ideas aterrizan en proyectos y centros — no saltan al vacío como en la mente sin sistema.";
+export const CRISOL_TITLE = "El Crisol";
+export const CRISOL_TITLE_LONG = "El Crisol de Pensamientos";
+export const CRISOL_MOS_LABEL = "Matriz de Ordenamiento Situacional";
+export const CRISOL_MOS_HINT =
+  "MOS · S = situación · E = ejecución · M = tener en cuenta · Ordena antes del Ring y del Taller.";
+export const CRISOL_TAGLINE =
+  "Ordena pensamientos en nidos y rutas antes de sellarlos en tiempo.";
+
+/** @deprecated Usa CRISOL_TITLE */
+export const IMAN_PENSAMIENTOS_TITLE = CRISOL_TITLE;
+/** @deprecated Usa CRISOL_TAGLINE */
+export const IMAN_PENSAMIENTOS_TAGLINE = CRISOL_TAGLINE;
 export const NIDO_INBOX_LABEL = "Aterrizaje pendiente";
 
 export type ImanNidoKey = string;
@@ -115,7 +130,7 @@ export function subTareaFromImanItem(item: SituacionReservaItem, idSuffix?: stri
   };
 }
 
-/** Al cumplir sub con proyecto: incrementa correlativo y marca la reserva del imán. */
+/** Al cumplir sub con proyecto: incrementa correlativo y marca la reserva del Crisol (MOS). */
 export async function registrarPasoDesdeSubIman(
   userId: string,
   sub: Pick<SubTarea, "proyectoId" | "origenImanId">
@@ -180,7 +195,81 @@ export function aplicarProyectoHeredadoASub(
   return { ...sub, proyectoId: proyectoId.trim() };
 }
 
-/** Metadatos de proyecto para volcar una sub al Imán (reserva ruta S). */
+/** Metadatos de proyecto para volcar una sub al Crisol (reserva ruta S). */
+export function buildReservaPayloadDesdeSubRing(
+  sub: SubTarea,
+  vehicle: Pick<Vehicle, "id" | "titulo" | "proyectoId" | "subTareas" | "situacionCronometro">,
+  opts: {
+    segmentoProyectoId?: string;
+    proyectos: Array<{ id: string; titulo: string; etiqueta: ProyectoEtiqueta }>;
+    segmento?: { id: string; nombre: string };
+  }
+): NuevaSituacionReserva {
+  return {
+    texto: sub.texto,
+    ruta: "situacion_desglosador",
+    origenVehiculoTitulo: vehicle.titulo,
+    origenVehiculoId: vehicle.id,
+    ...(sub.minutosCupo != null && sub.minutosCupo > 0 ? { minutosCupo: sub.minutosCupo } : {}),
+    ...(sub.detalles?.length ? { detalles: sub.detalles } : {}),
+    ...proyectoMetaParaReservaDesdeSub(sub, vehicle, opts.segmentoProyectoId, opts.proyectos),
+    ...(sub.rutaSeguimientoPaso ? { rutaSeguimientoPaso: sub.rutaSeguimientoPaso } : {}),
+    ...(opts.segmento
+      ? { segmentoId: opts.segmento.id, segmentoNombre: opts.segmento.nombre }
+      : {}),
+  };
+}
+
+/** Auto-cierre del ring: devuelve filas pendientes al Crisol (reactiva o crea reserva). */
+export async function devolverRingPendientesAlIman(
+  userId: string,
+  vehicle: Pick<Vehicle, "id" | "titulo" | "proyectoId" | "subTareas" | "situacionCronometro">,
+  pendingSubs: SubTarea[],
+  opts: {
+    segmentoProyectoId?: string;
+    proyectos: Array<{ id: string; titulo: string; etiqueta: ProyectoEtiqueta }>;
+    segmento?: { id: string; nombre: string };
+  }
+): Promise<{ quitadosIds: string[]; devueltos: number }> {
+  const quitadosIds: string[] = [];
+  let devueltos = 0;
+
+  for (const sub of pendingSubs) {
+    const proyectoMeta = proyectoMetaParaReservaDesdeSub(
+      sub,
+      vehicle,
+      opts.segmentoProyectoId,
+      opts.proyectos
+    );
+
+    if (sub.origenImanId) {
+      const ok = await reactivarReservaImanDesdeSub(userId, sub.origenImanId, {
+        texto: sub.texto,
+        ...(sub.minutosCupo != null && sub.minutosCupo > 0 ? { minutosCupo: sub.minutosCupo } : {}),
+        ...(sub.detalles?.length ? { detalles: sub.detalles } : {}),
+        ...(sub.rutaSeguimientoPaso ? { rutaSeguimientoPaso: sub.rutaSeguimientoPaso } : {}),
+        ...proyectoMeta,
+      });
+      if (ok) {
+        quitadosIds.push(sub.id);
+        devueltos++;
+      }
+      continue;
+    }
+
+    const { localSaved } = await addSituacionReserva(
+      userId,
+      buildReservaPayloadDesdeSubRing(sub, vehicle, opts)
+    );
+    if (localSaved) {
+      quitadosIds.push(sub.id);
+      devueltos++;
+    }
+  }
+
+  return { quitadosIds, devueltos };
+}
+
 export function proyectoMetaParaReservaDesdeSub(
   sub: Pick<SubTarea, "proyectoId">,
   vehicle: Pick<Vehicle, "proyectoId" | "subTareas" | "situacionCronometro">,

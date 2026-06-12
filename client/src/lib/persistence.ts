@@ -502,9 +502,9 @@ export interface SubTarea {
   cerradaAt?: number;
   /** Minutos ganados acumulados (chip dopamina en cola; no infla cupo base). */
   minutosGanadosAcum?: number;
-  /** Proyecto/centro destino (desde Imán de pensamientos). */
+  /** Proyecto/centro destino (desde El Crisol / MOS). */
   proyectoId?: string;
-  /** Reserva del imán que originó esta sub. */
+  /** Reserva del Crisol (MOS) que originó esta sub. */
   origenImanId?: string;
   /** Paso 1–3 de la ruta mental al capturar en el nido. */
   rutaSeguimientoPaso?: 1 | 2 | 3;
@@ -690,6 +690,14 @@ export interface Vehicle {
   /** Hub Proyectos: enlace al proyecto y peldaño en ejecución. */
   proyectoId?: string;
   proyectoPeldanoId?: string;
+  /** Respaldo termodinámico al cerrar — subs/decisiones si Firebase pierde el array. */
+  termoDecisionSnapshot?: {
+    journalDayStartMs: number;
+    subsDesglosadorCumplidos: number;
+    subsSituacionCumplidos: number;
+    misionesDirectas: number;
+    recordedAt: number;
+  };
 }
 
 const VEHICLES_KEY = "sistemicar_vehicles";
@@ -5335,6 +5343,7 @@ function getTodayDateString(): string {
 
 export async function getPlanillaHoy(userId: string): Promise<Planilla> {
   const fecha = getTodayDateString();
+  const local = getLocalPlanilla(fecha);
 
   if (isFirebaseConfigured() && db) {
     try {
@@ -5343,12 +5352,17 @@ export async function getPlanillaHoy(userId: string): Promise<Planilla> {
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
         const data = snapshot.docs[0].data();
+        const fbSegmentos = (data.segmentos || []) as SegmentoV5[];
+        const segmentos =
+          local?.segmentos?.length
+            ? mergePlanillaSegmentosWithLocal(fbSegmentos, local.segmentos)
+            : fbSegmentos;
         const planilla: Planilla = {
           id: snapshot.docs[0].id,
           fecha: data.fecha,
-          segmentos: data.segmentos || [],
+          segmentos,
           createdAt: data.createdAt,
-          updatedAt: data.updatedAt
+          updatedAt: data.updatedAt,
         };
         saveLocalPlanilla(planilla);
         return planilla;
@@ -5358,7 +5372,6 @@ export async function getPlanillaHoy(userId: string): Promise<Planilla> {
     }
   }
 
-  const local = getLocalPlanilla(fecha);
   if (local) return local;
 
   const newPlanilla: Planilla = {
@@ -5417,7 +5430,11 @@ export function mergePlanillaSegmentosWithLocal(
       (fbSeg.estado === "pendiente" &&
         local.estado === "activo" &&
         local.activadoAt != null &&
-        nowMs - local.activadoAt < 120_000);
+        nowMs - local.activadoAt < 120_000) ||
+      (fbSeg.estado === "activo" &&
+        local.estado === "cerrado_manual" &&
+        local.cerradoAt != null &&
+        nowMs - local.cerradoAt < 120_000);
 
     if (pickLocal) {
       return {
@@ -5450,7 +5467,11 @@ export async function updateSegmentoInPlanilla(
         : [...basePlanilla.segmentos],
     };
   } else {
-    planilla = await getPlanillaHoy(userId);
+    const fecha = getTodayDateString();
+    const localFirst = getLocalPlanilla(fecha);
+    planilla = localFirst
+      ? { ...localFirst, segmentos: [...localFirst.segmentos] }
+      : await getPlanillaHoy(userId);
   }
 
   const idx = planilla.segmentos.findIndex(s => s.id === segmentoId);
