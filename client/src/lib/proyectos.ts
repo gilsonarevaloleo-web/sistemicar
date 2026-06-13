@@ -1,3 +1,4 @@
+import type { DecisionKind } from "./decisionesLedger";
 import type { FocusBandId } from "./focusBandLedger";
 import type { SubTarea, SubVehiculo, Vehicle, TipoFlota } from "./persistence";
 import { maxBanda, inferBandaBloque } from "./termodinamicaAtencional";
@@ -13,6 +14,10 @@ import {
   type RutasMentalesSet,
 } from "./claridadDireccion";
 import { safeSetItem } from "./storageHygiene";
+import {
+  buildTranscriptFromVehicles,
+  filterDecisionsForProyecto,
+} from "./ringDecisionTranscript";
 
 export type {
   ClaridadProfundidad,
@@ -37,6 +42,26 @@ export interface ProyectoSubTareaResumen {
   detalles?: ProyectoDetalleResumen[];
 }
 
+/** Decisión ejecutada en ring/taller/desglosador — numerada en el peldaño o proyecto. */
+export interface ProyectoDecisionEnumerada {
+  n: number;
+  key: string;
+  texto: string;
+  kind: DecisionKind;
+  status: "cumplido" | "fallado";
+  ts?: number;
+  pasoEjecutadoNumero?: number;
+  proyectoId?: string;
+  vehicleId?: string;
+  vehicleTitulo?: string;
+  subId?: string;
+  origenImanId?: string;
+}
+
+export interface ProyectoPasoEjecutado extends ProyectoDecisionEnumerada {
+  peldanoId?: string;
+}
+
 export interface ProyectoPeldanoResumen {
   subsCumplidos?: number;
   subsTotal?: number;
@@ -59,6 +84,9 @@ export interface ProyectoPeldanoResumen {
     faseAtencional?: string;
     vehiculosCerrados?: number;
   };
+  /** Transcripción numerada de decisiones ejecutadas (ring, taller, desglosador). */
+  decisionesEnumeradas?: ProyectoDecisionEnumerada[];
+  totalDecisiones?: number;
 }
 
 export interface ProyectoPeldano {
@@ -112,6 +140,8 @@ export interface Proyecto {
   oleadaTitulo?: string;
   /** Pasos ejecutados desde el Crisol (MOS) — subs cumplidas con proyecto vinculado. */
   pasosEjecutadosTotal?: number;
+  /** Registro numerado de pasos ejecutados (Crisol → ring → proyecto). */
+  pasosEjecutadosLog?: ProyectoPasoEjecutado[];
 }
 
 const PROYECTOS_KEY = "sistemicar_proyectos";
@@ -579,6 +609,10 @@ export async function markPeldanoConquistadoTiempo(
       status: sv.status as "cumplido" | "fallado",
       duracionMin: sv.duracionFinal != null ? Math.round(sv.duracionFinal / 60) : undefined,
     }));
+  const decisionesEnumeradas = filterDecisionsForProyecto(
+    buildTranscriptFromVehicles([vehicle]),
+    vehicle.proyectoId
+  );
 
   await updatePeldano(userId, vehicle.proyectoPeldanoId, {
     estado: "conquistado",
@@ -592,6 +626,8 @@ export async function markPeldanoConquistadoTiempo(
       profundidadMaxima,
       psGanados,
       subResumen,
+      decisionesEnumeradas: decisionesEnumeradas.length ? decisionesEnumeradas : undefined,
+      totalDecisiones: decisionesEnumeradas.length || undefined,
     },
   });
   await refreshProyectoStats(userId, vehicle.proyectoId);
@@ -600,7 +636,13 @@ export async function markPeldanoConquistadoTiempo(
 /** Resumen anidado subtarea → detalles para aterrizaje en Hub de Proyectos. */
 export function buildSubTareasResumenFromVehicle(subTareas: SubTarea[]): ProyectoSubTareaResumen[] {
   return subTareas
-    .filter(st => st.enDesgloseCronometro || (st.detalles?.length ?? 0) > 0)
+    .filter(st => {
+      if (st.enDesgloseCronometro) {
+        return st.resultadoSituacion === "cumplido" || st.resultadoSituacion === "fallado";
+      }
+      if (st.completada) return true;
+      return (st.detalles?.length ?? 0) > 0;
+    })
     .map(st => ({
       texto: st.texto,
       resultado:
@@ -692,6 +734,10 @@ export async function markPeldanoConquistadoSituacion(
   const cronometradas = opts.subTareas.filter(st => st.enDesgloseCronometro);
   const cumplidas = cronometradas.filter(st => st.resultadoSituacion === "cumplido").length;
   const subTareasResumen = buildSubTareasResumenFromVehicle(opts.subTareas);
+  const decisionesEnumeradas = filterDecisionsForProyecto(
+    buildTranscriptFromVehicles([{ ...vehicle, subTareas: opts.subTareas }]),
+    vehicle.proyectoId
+  );
 
   await updatePeldano(userId, vehicle.proyectoPeldanoId, {
     estado: "conquistado",
@@ -708,6 +754,8 @@ export async function markPeldanoConquistadoSituacion(
       minutosGanados: opts.minutosGanados,
       minutosGanadosSesion: opts.minutosGanadosSesion,
       retoNumero: opts.retoNumero,
+      decisionesEnumeradas: decisionesEnumeradas.length ? decisionesEnumeradas : undefined,
+      totalDecisiones: decisionesEnumeradas.length || undefined,
     },
   });
   await refreshProyectoStats(userId, vehicle.proyectoId);
@@ -786,16 +834,70 @@ export async function registrarActividadFlotaEnProyecto(
   void syncFirestoreProyecto(userId, updated);
 }
 
-/** Incrementa el correlativo de pasos ejecutados al cumplir una sub del Crisol (MOS). */
+function mergeDecisionIntoList(
+  prev: ProyectoDecisionEnumerada[],
+  entry: ProyectoDecisionEnumerada
+): ProyectoDecisionEnumerada[] {
+  if (prev.some(d => d.key === entry.key)) return prev;
+  const next = [...prev, entry].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+  return next.map((d, i) => ({ ...d, n: i + 1 }));
+}
+
+/** Añade una decisión al transcript del peldaño (idempotente por key). */
+export async function appendDecisionToPeldanoTranscript(
+  userId: string,
+  peldanoId: string,
+  entry: ProyectoDecisionEnumerada
+): Promise<void> {
+  const peldanos = getLocalPeldanos(userId);
+  const idx = peldanos.findIndex(p => p.id === peldanoId);
+  if (idx === -1) return;
+  const pel = peldanos[idx];
+  const prev = pel.resumen?.decisionesEnumeradas ?? [];
+  const decisionesEnumeradas = mergeDecisionIntoList(prev, entry);
+  await updatePeldano(userId, peldanoId, {
+    resumen: {
+      ...pel.resumen,
+      decisionesEnumeradas,
+      totalDecisiones: decisionesEnumeradas.length,
+    },
+  });
+}
+
+/** Incrementa el correlativo y registra el paso en el log del proyecto (Crisol → ring). */
 export async function registrarPasoEjecutadoEnProyecto(
   userId: string,
-  proyectoId: string
+  proyectoId: string,
+  paso?: Omit<ProyectoPasoEjecutado, "n" | "proyectoId"> & { proyectoId?: string }
 ): Promise<{ pasoNumero: number } | null> {
   const list = getLocalProyectos(userId);
   const idx = list.findIndex(p => p.id === proyectoId);
   if (idx === -1) return null;
+  const prevLog = list[idx].pasosEjecutadosLog ?? [];
+  if (paso?.key && prevLog.some(e => e.key === paso.key)) {
+    const existing = prevLog.find(e => e.key === paso.key);
+    return existing?.pasoEjecutadoNumero != null
+      ? { pasoNumero: existing.pasoEjecutadoNumero }
+      : existing
+        ? { pasoNumero: existing.n }
+        : null;
+  }
   const pasoNumero = (list[idx].pasosEjecutadosTotal ?? 0) + 1;
-  await updateProyecto(userId, proyectoId, { pasosEjecutadosTotal: pasoNumero });
+  const logEntry: ProyectoPasoEjecutado | undefined = paso
+    ? {
+        ...paso,
+        n: pasoNumero,
+        pasoEjecutadoNumero: pasoNumero,
+        proyectoId,
+      }
+    : undefined;
+  const pasosEjecutadosLog = logEntry
+    ? [...prevLog, logEntry].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0)).map((e, i) => ({ ...e, n: i + 1 }))
+    : prevLog;
+  await updateProyecto(userId, proyectoId, {
+    pasosEjecutadosTotal: pasoNumero,
+    ...(logEntry ? { pasosEjecutadosLog } : {}),
+  });
   return { pasoNumero };
 }
 

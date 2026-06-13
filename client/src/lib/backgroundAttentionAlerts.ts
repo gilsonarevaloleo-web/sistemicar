@@ -101,6 +101,22 @@ export function filterStaleMissedPuertaVoices(items: MissedVoiceItem[]): MissedV
   const crossingCtx = getCrossingVehiclesState(state.segmentos, state.vehicles, dayStart);
   const cruceGracePhrase = "Cierre por entropía-atención. Ordena tu jornada, operador.";
 
+  const matchesSegment = (text: string, nombre: string): boolean => {
+    if (!text.includes(nombre)) return false;
+    return (
+      text.includes("Abre la puerta de atención") ||
+      text.includes("ventana de apertura cierra") ||
+      text.includes("Cierra este segmento con intención") ||
+      text.includes("Entropía inminente") ||
+      text.includes("Puerta abierta por el sistema") ||
+      text.includes("puerta de ") ||
+      text.startsWith(`Puerta de ${nombre} cerrada`) ||
+      text.startsWith(`Cierra ${nombre} con intención`) ||
+      text.startsWith(`Entropía inminente en ${nombre}`) ||
+      text.startsWith(`${nombre}.`)
+    );
+  };
+
   return items.filter(item => {
     if (item.text === cruceGracePhrase) {
       return crossingCtx != null;
@@ -109,30 +125,32 @@ export function filterStaleMissedPuertaVoices(items: MissedVoiceItem[]): MissedV
       return crossingCtx != null;
     }
 
-    const segByPuertaEnd = state.segmentos.find(s =>
-      item.text.startsWith(`Puerta de ${s.nombre} cerrada`)
-    );
-    if (segByPuertaEnd) {
-      return segByPuertaEnd.estado === "pendiente";
-    }
+    const seg = state.segmentos.find(s => matchesSegment(item.text, s.nombre));
+    if (!seg) return true;
 
-    const segByCierre = state.segmentos.find(s =>
-      item.text.startsWith(`Cierra ${s.nombre} con intención`)
-    );
-    if (segByCierre) {
-      return segByCierre.estado === "activo";
+    if (
+      item.text.includes("Abre la puerta de atención") ||
+      (item.text.startsWith(`${seg.nombre}.`) && item.text.includes("segmento de"))
+    ) {
+      return seg.estado === "pendiente" && seg.vozDisparadaAt == null;
     }
-
-    const segByEntropia = state.segmentos.find(s =>
-      item.text.startsWith(`Entropía inminente en ${s.nombre}`)
-    );
-    if (segByEntropia) {
-      return segByEntropia.estado !== "entropia" && segByEntropia.estado !== "cerrado_manual";
+    if (
+      item.text.includes("ventana de apertura cierra") ||
+      item.text.startsWith(`Puerta de ${seg.nombre} cerrada`)
+    ) {
+      return seg.estado === "pendiente";
     }
-
-    const segByPuertaVoz = state.segmentos.find(s => item.text.startsWith(`${s.nombre}.`));
-    if (segByPuertaVoz) {
-      return segByPuertaVoz.estado === "pendiente" && segByPuertaVoz.vozDisparadaAt == null;
+    if (
+      item.text.includes("Cierra este segmento con intención") ||
+      item.text.startsWith(`Cierra ${seg.nombre} con intención`)
+    ) {
+      return seg.estado === "activo";
+    }
+    if (
+      item.text.includes("Entropía inminente") ||
+      item.text.startsWith(`Entropía inminente en ${seg.nombre}`)
+    ) {
+      return seg.estado !== "entropia" && seg.estado !== "cerrado_manual";
     }
 
     return true;

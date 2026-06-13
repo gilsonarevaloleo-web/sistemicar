@@ -1,33 +1,74 @@
 import { deliverPuertaVoice } from "./backgroundAttentionAlerts";
 import { isPuertaVozEnabled } from "./tikSound";
+import { getJournalDateString } from "./segmentTime";
 
-const ORDINALES: Record<number, string> = {
-  1: "primer",
-  2: "segundo",
-  3: "tercer",
-  4: "cuarto",
-  5: "quinto",
-  6: "sexto",
-  7: "séptimo",
-  8: "octavo",
-  9: "noveno",
-  10: "décimo",
-  11: "undécimo",
-  12: "duodécimo",
+const ORDINALES_PUERTA: Record<number, string> = {
+  1: "primera",
+  2: "segunda",
+  3: "tercera",
+  4: "cuarta",
+  5: "quinta",
+  6: "sexta",
+  7: "séptima",
+  8: "octava",
+  9: "novena",
+  10: "décima",
+  11: "undécima",
+  12: "duodécima",
 };
 
-function ordinalEs(n: number): string {
-  return ORDINALES[n] ?? `${n}º`;
+function ordinalPuertaFem(n: number): string {
+  return ORDINALES_PUERTA[n] ?? `${n}.ª`;
 }
 
+/** «Tercera puerta de 8 del día» — ubicación en el escalamiento diario. */
+export function buildPuertaEscalamientoLabel(ordinal: number, total: number): string {
+  if (total <= 1) return "Única puerta del día";
+  return `${ordinalPuertaFem(ordinal)} puerta de ${total} del día`;
+}
+
+export type PuertaVozPreventionKind =
+  | "recordatorio_apertura"
+  | "puerta_cierra"
+  | "cierre_intencion"
+  | "entropia_inminente"
+  | "puerta_perdida_sistema";
+
+export function buildPuertaVozPreventionPhrase(params: {
+  nombre: string;
+  ordinal: number;
+  total: number;
+  kind: PuertaVozPreventionKind;
+}): string {
+  const ctx = buildPuertaEscalamientoLabel(params.ordinal, params.total);
+  const { nombre, kind } = params;
+
+  switch (kind) {
+    case "recordatorio_apertura":
+      return `${ctx}. ${nombre}. Abre la puerta de atención ahora, operador. Te queda un minuto en la ventana consciente.`;
+    case "puerta_cierra":
+      return `${ctx}. ${nombre}. La ventana de apertura cierra pronto. Abre atención consciente ya o caerás en entropía.`;
+    case "cierre_intencion":
+      return `${ctx}. ${nombre}. Cierra este segmento con intención. Estás en la ventana de cierre consciente.`;
+    case "entropia_inminente":
+      return `${ctx}. ${nombre}. Entropía inminente. Cierra ahora o pierdes los puntos del segmento.`;
+    case "puerta_perdida_sistema":
+      return `${ctx}. ${nombre}. Puerta abierta por el sistema. Marca cierre consciente para recuperar soberanía.`;
+    default:
+      return `${ctx}. ${nombre}.`;
+  }
+}
+
+/** Voz del minuto 4 — escalamiento + prevención de apertura. */
 export function buildPuertaVozPhrase(params: {
   nombre: string;
   ordinal: number;
   total: number;
 }): string {
-  const ord = ordinalEs(params.ordinal);
-  const totalLabel = params.total === 1 ? "único segmento" : `${params.total} del día`;
-  return `${params.nombre}. ${ord} segmento de ${totalLabel}.`;
+  return buildPuertaVozPreventionPhrase({
+    ...params,
+    kind: "recordatorio_apertura",
+  });
 }
 
 export function speakPuertaSegmento(params: {
@@ -39,13 +80,11 @@ export function speakPuertaSegmento(params: {
   const phrase = buildPuertaVozPhrase(params);
   deliverPuertaVoice(phrase, {
     source: "puerta",
-    notifyTitle: `Puerta: ${params.nombre}`,
+    notifyTitle: `Puerta ${params.ordinal}/${params.total}: ${params.nombre}`,
     notifyBody: phrase,
     notifyTag: `puerta-live-${params.nombre}`,
   });
 }
-
-import { getJournalDateString } from "./segmentTime";
 
 const CRUCE_GRACE_VOZ_PREFIX = "sistemicar_cruce_grace_voz_";
 
@@ -82,4 +121,17 @@ export function speakEntropiaAtencionCruce(activeSegId?: string): void {
     notifyBody: "Cierra el vehículo del segmento anterior y abre otro en esta zona.",
     notifyTag: "entropia-cruce-live",
   });
+}
+
+/** Identifica frases de puerta por segmento (cola en segundo plano). */
+export function missedPuertaVoiceMatchesSegment(text: string, nombre: string): boolean {
+  if (!text.includes(nombre)) return false;
+  return (
+    text.includes("Abre la puerta de atención") ||
+    text.includes("ventana de apertura cierra") ||
+    text.includes("Cierra este segmento con intención") ||
+    text.includes("Entropía inminente") ||
+    text.includes("Puerta abierta por el sistema") ||
+    text.includes("puerta de ") // escalamiento label
+  );
 }

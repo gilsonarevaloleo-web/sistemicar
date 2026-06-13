@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Brain, Check, Circle, Clock, Sparkles, Sun, Moon, Volume2, VolumeX, Wind } from "lucide-react";
+import { Brain, Check, Circle, Clock, Power, Sparkles, Sun, Moon, Volume2, VolumeX, Wind } from "lucide-react";
 import type { Vehicle } from "@/lib/persistence";
 import type { PuntoCeroSession } from "@/lib/puntoCeroTypes";
 import {
@@ -9,12 +9,11 @@ import {
 } from "@/lib/puntoCeroTypes";
 import {
   confirmColor,
-  etapasConColoresCompletos,
   faseDuracionesMin,
   getFaseEfectiva,
   initPuntoCeroSession,
   parsePuntoCeroDuracionMin,
-  shouldEnterPasiva,
+  todosColoresConfirmados,
   transitionToPasiva,
 } from "@/engines/PuntoCeroEngine";
 import { usePuntoCeroOrchestrator } from "@/hooks/usePuntoCeroOrchestrator";
@@ -112,6 +111,37 @@ function PuntoCeroAudioControls({
   );
 }
 
+function PuntoCeroCloseButton({
+  vehicleId,
+  flotaColor,
+  onClick,
+  dark = false,
+  label = "Cerrar sesión",
+}: {
+  vehicleId: string;
+  flotaColor: string;
+  onClick: () => void;
+  dark?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center justify-center gap-1.5 w-full min-h-[2.75rem] px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.18em] border transition-transform active:scale-[0.98]"
+      style={{
+        backgroundColor: dark ? "rgba(255,255,255,0.06)" : `${flotaColor}12`,
+        borderColor: dark ? "rgba(255,255,255,0.18)" : `${flotaColor}45`,
+        color: dark ? "rgba(255,255,255,0.55)" : flotaColor,
+      }}
+      data-testid={`punto-cero-cerrar-${vehicleId}`}
+    >
+      <Power size={12} />
+      {label}
+    </button>
+  );
+}
+
 export type PuntoCeroPanelProps = {
   vehicle: Vehicle;
   flotaColor: string;
@@ -122,6 +152,11 @@ export type PuntoCeroPanelProps = {
   onColorConfirm: (vehicleId: string, idx: number, session: PuntoCeroSession) => void;
   onSessionPersist: (vehicleId: string, session: PuntoCeroSession) => void;
   onAutoClose: (vehicleId: string) => void;
+  onConfirmManualClose: (
+    vehicleId: string,
+    etiqueta: "recuperado" | "parcial" | "fragmentado",
+    nota: string
+  ) => void;
 };
 
 export function PuntoCeroPanel({
@@ -134,7 +169,11 @@ export function PuntoCeroPanel({
   onColorConfirm,
   onSessionPersist,
   onAutoClose,
+  onConfirmManualClose,
 }: PuntoCeroPanelProps) {
+  const [closeFlow, setCloseFlow] = useState(false);
+  const [etiquetaLocal, setEtiquetaLocal] = useState<"recuperado" | "parcial" | "fragmentado" | null>(null);
+  const [notaLocal, setNotaLocal] = useState("");
   const session = vehicle.puntoCero;
   const ep = vehicle.etapasPuntoCero ?? etapasPuntoCeroVacias();
   const colores = session?.coloresConfirmados ?? Array(7).fill(false);
@@ -155,6 +194,19 @@ export function PuntoCeroPanel({
       onSessionPersist(vehicle.id, next);
     },
     [onSessionPersist, vehicle.id]
+  );
+
+  const confirmColorInmersion = useCallback(
+    (idx: number) => {
+      if (!session) return;
+      const nextSession = confirmColor(session, idx);
+      onColorConfirm(vehicle.id, idx, nextSession);
+      if (todosColoresConfirmados(nextSession.coloresConfirmados)) {
+        onSessionPersist(vehicle.id, transitionToPasiva(nextSession, Date.now()));
+      }
+      setColorInmersion(null);
+    },
+    [onColorConfirm, onSessionPersist, session, vehicle.id]
   );
 
   const audioEnabled = vehicle.status === "activo" && !!session;
@@ -201,23 +253,15 @@ export function PuntoCeroPanel({
     void puntoCeroAudio.playSolfeggio(PUNTO_CERO_ARCOIRIS[colorInmersion.idx]!.solfeggioHz);
     setInmersionCount(3);
     const iv = setInterval(() => setInmersionCount(c => (c > 1 ? c - 1 : c)), 1000);
-    const to = setTimeout(() => {
-      if (!session) return;
-      const nextSession = confirmColor(session, colorInmersion.idx);
-      onColorConfirm(vehicle.id, colorInmersion.idx, nextSession);
-      if (shouldEnterPasiva(nextSession, Date.now(), nextSession.coloresConfirmados)) {
-        onSessionPersist(vehicle.id, transitionToPasiva(nextSession, Date.now()));
-      }
-      setColorInmersion(null);
-    }, 3000);
+    const to = setTimeout(() => confirmColorInmersion(colorInmersion.idx), 3000);
     return () => {
       clearInterval(iv);
       clearTimeout(to);
     };
-  }, [colorInmersion, onColorConfirm, onSessionPersist, session, vehicle.id]);
+  }, [colorInmersion, confirmColorInmersion, puntoCeroAudio]);
 
   const epCompletados = [ep.etapa1, ep.etapa2, ep.etapa3, ep.etapa4].filter(Boolean).length;
-  const todosColoresConfirmados = colores.every(Boolean);
+  const coronaCompletada = todosColoresConfirmados(colores);
   const { activaMin, pasivaMin } = session
     ? faseDuracionesMin(session.duracionTotalMin)
     : { activaMin: 5, pasivaMin: 10 };
@@ -229,12 +273,83 @@ export function PuntoCeroPanel({
     Icon: key === "etapa1" ? Circle : key === "etapa2" ? Brain : key === "etapa3" ? Wind : Sparkles,
   }));
 
+  const closeEtiquetaOverlay = closeFlow ? (
+    <div
+      className="fixed inset-0 z-[205] flex items-end sm:items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.92)" }}
+      data-testid={`punto-cero-cierre-${vehicle.id}`}
+    >
+      <div className="w-full max-w-sm rounded-2xl border p-4 space-y-3" style={{ backgroundColor: PIZARRA, borderColor: `${flotaColor}35` }}>
+        <p className="text-[10px] font-black uppercase tracking-wider text-center" style={{ color: flotaColor }}>
+          ¿Cómo saliste del Punto Cero?
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { key: "recuperado" as const, label: "RECUPERADO", color: "#10b981" },
+            { key: "parcial" as const, label: "PARCIAL", color: "#f59e0b" },
+            { key: "fragmentado" as const, label: "FRAGMENTADO", color: "#ef4444" },
+          ]).map(opt => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setEtiquetaLocal(opt.key)}
+              className="p-2 rounded-xl border text-center transition-all"
+              style={{
+                backgroundColor: etiquetaLocal === opt.key ? `${opt.color}20` : "rgba(255,255,255,0.03)",
+                borderColor: etiquetaLocal === opt.key ? opt.color : "rgba(255,255,255,0.1)",
+              }}
+            >
+              <p className="text-[8px] font-black" style={{ color: etiquetaLocal === opt.key ? opt.color : "#64748b" }}>
+                {opt.label}
+              </p>
+            </button>
+          ))}
+        </div>
+        <input
+          value={notaLocal}
+          onChange={e => setNotaLocal(e.target.value.slice(0, 80))}
+          placeholder="Nota opcional"
+          className="w-full bg-black/30 text-white text-[9px] p-2 rounded-lg border border-white/10 focus:outline-none"
+        />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={!etiquetaLocal}
+            onClick={() => {
+              if (!etiquetaLocal) return;
+              onConfirmManualClose(vehicle.id, etiquetaLocal, notaLocal);
+              setCloseFlow(false);
+              setEtiquetaLocal(null);
+              setNotaLocal("");
+            }}
+            className="flex-1 py-2.5 rounded-lg text-[10px] font-black uppercase disabled:opacity-40"
+            style={{ backgroundColor: flotaColor, color: "#000" }}
+          >
+            Cerrar vehículo
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCloseFlow(false);
+              setEtiquetaLocal(null);
+              setNotaLocal("");
+            }}
+            className="px-3 py-2 rounded-lg text-slate-500 bg-white/5 text-[9px]"
+          >
+            Volver
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (enPasiva && session) {
     return (
       <>
+        {closeEtiquetaOverlay}
         <div
-          className="fixed inset-0 flex flex-col items-center justify-center px-6"
-          style={{ zIndex: 9998, backgroundColor: "#000000" }}
+          className="fixed inset-0 z-[200] flex flex-col items-center justify-center px-6"
+          style={{ backgroundColor: "#000000" }}
           data-testid={`punto-cero-pasiva-${vehicle.id}`}
         >
           <div className="absolute top-4 left-4 right-4 max-w-[14rem] ml-auto">
@@ -270,25 +385,35 @@ export function PuntoCeroPanel({
               </p>
             )}
             {enCompletada && (
-              <div className="space-y-5 pt-2">
-                <p className="text-[10px] font-bold" style={{ color: flotaColor }}>
-                  Punto Cero completado
-                </p>
-                <button
-                  type="button"
-                  onClick={() => onAutoClose(vehicle.id)}
-                  className="w-full min-h-[3rem] px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-[0.2em] border-2 transition-transform active:scale-[0.98]"
-                  style={{
-                    backgroundColor: `${flotaColor}22`,
-                    borderColor: flotaColor,
-                    color: flotaColor,
-                    boxShadow: `0 0 24px ${flotaColor}30`,
-                  }}
-                  data-testid={`punto-cero-cerrar-${vehicle.id}`}
-                >
-                  Cerrar y retomar
-                </button>
-              </div>
+              <p className="text-[10px] font-bold pt-2" style={{ color: flotaColor }}>
+                Punto Cero completado
+              </p>
+            )}
+          </div>
+          <div className="absolute bottom-6 left-4 right-4 max-w-xs mx-auto space-y-2">
+            {enCompletada ? (
+              <button
+                type="button"
+                onClick={() => onAutoClose(vehicle.id)}
+                className="w-full min-h-[3rem] px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-[0.2em] border-2 transition-transform active:scale-[0.98]"
+                style={{
+                  backgroundColor: `${flotaColor}22`,
+                  borderColor: flotaColor,
+                  color: flotaColor,
+                  boxShadow: `0 0 24px ${flotaColor}30`,
+                }}
+                data-testid={`punto-cero-cerrar-completado-${vehicle.id}`}
+              >
+                Cerrar y retomar
+              </button>
+            ) : (
+              <PuntoCeroCloseButton
+                vehicleId={vehicle.id}
+                flotaColor={flotaColor}
+                dark
+                label="Apagar y cerrar"
+                onClick={() => setCloseFlow(true)}
+              />
             )}
           </div>
         </div>
@@ -298,6 +423,7 @@ export function PuntoCeroPanel({
 
   return (
     <>
+      {closeEtiquetaOverlay}
       <AnimatePresence>
         {colorInmersion && (
           <motion.div
@@ -306,16 +432,22 @@ export function PuntoCeroPanel({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: 0.8 } }}
             transition={{ duration: 0.25 }}
-            onClick={() => {
-              if (!session) return;
-              const nextSession = confirmColor(session, colorInmersion.idx);
-              onColorConfirm(vehicle.id, colorInmersion.idx, nextSession);
-              setColorInmersion(null);
-            }}
-            className="fixed inset-0 flex flex-col items-center justify-center"
-            style={{ zIndex: 9999, backgroundColor: `${colorInmersion.color}E0`, cursor: "pointer" }}
+            onClick={() => confirmColorInmersion(colorInmersion.idx)}
+            className="fixed inset-0 z-[205] flex flex-col items-center justify-center"
+            style={{ backgroundColor: `${colorInmersion.color}E0`, cursor: "pointer" }}
             data-testid={`overlay-inmersion-${vehicle.id}`}
           >
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                setColorInmersion(null);
+              }}
+              className="absolute top-4 right-4 px-3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider border border-white/25 text-white/70 bg-black/20"
+              data-testid={`overlay-inmersion-cancel-${vehicle.id}`}
+            >
+              Volver
+            </button>
             <motion.div
               initial={{ scale: 0.7, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -382,6 +514,14 @@ export function PuntoCeroPanel({
           {eficienciaSec !== null && (
             <p className="text-[8px] mt-1" style={{ color: flotaColor }}>⚡ Primera etapa: {eficienciaSec < 60 ? `${eficienciaSec}s` : `${Math.round(eficienciaSec / 60)}m`} desde apertura</p>
           )}
+          <div className="mt-2">
+            <PuntoCeroCloseButton
+              vehicleId={vehicle.id}
+              flotaColor={flotaColor}
+              label="Cerrar descanso"
+              onClick={() => setCloseFlow(true)}
+            />
+          </div>
         </div>
 
         {showMicroPasos ? (
@@ -390,7 +530,7 @@ export function PuntoCeroPanel({
               const checked = ep[key];
               const isColorEtapa = key === "etapa4";
               const colorCount = colores.filter(Boolean).length;
-              const prevRequired = key === "etapa2" ? !ep.etapa1 : key === "etapa3" ? !ep.etapa2 : key === "etapa4" ? (!ep.etapa3 || !todosColoresConfirmados) : false;
+              const prevRequired = key === "etapa2" ? !ep.etapa1 : key === "etapa3" ? !ep.etapa2 : key === "etapa4" ? (!ep.etapa3 || !coronaCompletada) : false;
               const isLocked = !checked && prevRequired;
               return (
                 <div key={key}>
@@ -422,7 +562,7 @@ export function PuntoCeroPanel({
                     {checked
                       ? <span className="text-[8px] font-bold flex-shrink-0" style={{ color: flotaColor }}>+1 PS</span>
                       : isColorEtapa && ep.etapa3
-                        ? <span className="text-[8px] flex-shrink-0" style={{ color: todosColoresConfirmados ? flotaColor : "#64748b" }}>{colorCount}/7</span>
+                        ? <span className="text-[8px] flex-shrink-0" style={{ color: coronaCompletada ? flotaColor : "#64748b" }}>{colorCount}/7</span>
                         : <span className="text-[8px] text-slate-600 flex-shrink-0">activar</span>
                     }
                   </button>

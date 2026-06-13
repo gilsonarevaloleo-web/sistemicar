@@ -9,6 +9,7 @@ import {
   agruparImanPorNido,
   dominanteProyectoIdEnSubs,
   imanItemsParaDesglosador,
+  reservaEsEnviabeASituacion,
   nidoKeyFromReserva,
   resolveProyectoIdEnfoqueSituacion,
   subTareaConPasoEjecutado,
@@ -51,6 +52,14 @@ describe("imanPensamientos", () => {
     assert.deepEqual(grupos.map(g => g.nidoId), ["p_b", "p_a", NIDO_INBOX_ID]);
     assert.equal(grupos[0].items.length, 1);
     assert.ok(grupos[2].titulo.includes("Aterrizaje"));
+  });
+
+  it("reservaEsEnviabeASituacion excluye consideracion", () => {
+    assert.equal(reservaEsEnviabeASituacion(reserva({ id: "1", texto: "e", ruta: "ejecucion" })), true);
+    assert.equal(
+      reservaEsEnviabeASituacion(reserva({ id: "2", texto: "m", ruta: "consideracion" })),
+      false
+    );
   });
 
   it("imanItemsParaDesglosador excluye consideracion", () => {

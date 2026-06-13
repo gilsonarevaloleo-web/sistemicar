@@ -307,6 +307,47 @@ describe("computeAnilloEstado", () => {
     assert.equal(st.mode, "entropia");
   });
 
+  it("varios segmentos acumulan entropía en todos los huecos planificados", () => {
+    const now = limaAt(2026, 4, 18, 15, 0);
+    const segmentos = [
+      { horaInicio: "08:00", horaFin: "10:00" },
+      { horaInicio: "11:00", horaFin: "12:00" },
+      { horaInicio: "14:00", horaFin: "16:00" },
+    ];
+    const stats = computeTimelineDayStats({ vehiculos: [], segmentos, now });
+    assert.equal(stats.entropiaMin, 240, "2h + 1h + 1h vividos hasta las 15:00");
+    const st = computeAnilloEstado({ segmentos, vehiculos: [], now });
+    assert.equal(st.mode, "entropia");
+  });
+
+  it("desglosador pausado no bloquea entropía ni puntero rojo", () => {
+    const now = limaAt(2026, 4, 18, 9, 30);
+    const journalStart = getJournalDayStartMs(now);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const paused = {
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      tipoReloj: "desglosador",
+      status: "activo",
+      aperturaAt: journalStart,
+      interrupcionActiva: true,
+      desglosadorPausa: { motivo: "test" },
+    };
+    const stats = computeTimelineDayStats({ segmentos, vehiculos: [paused], now });
+    assert.ok(stats.entropiaMin >= 89, "todo el segmento vivido cuenta como entropía");
+    const st = computeAnilloEstado({ segmentos, vehiculos: [paused], now });
+    assert.equal(st.mode, "entropia");
+  });
+
+  it("modo entropía implica minutos inconscientes > 0", () => {
+    const now = limaAt(2026, 4, 18, 9, 0);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const st = computeAnilloEstado({ segmentos, vehiculos: [], now });
+    const stats = computeTimelineDayStats({ segmentos, vehiculos: [], now });
+    assert.equal(st.mode, "entropia");
+    assert.ok(stats.entropiaMin > 0);
+  });
+
   it("activo cruzando 05:00 sin filtro de anillo aún muestra conquista en motor", () => {
     const now = limaAt(2026, 4, 18, 9, 0);
     const journalStart = getJournalDayStartMs(now);

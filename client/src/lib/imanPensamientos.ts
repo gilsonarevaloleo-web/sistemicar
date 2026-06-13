@@ -1,6 +1,7 @@
 import type { ProyectoEtiqueta } from "./claridadDireccion";
 import type { SubTarea, Vehicle } from "./persistence";
 import { registrarPasoEjecutadoEnProyecto } from "./proyectos";
+import { enumerateRingDecisions, rawDecisionFromSubTarea, type DecisionStatus } from "./ringDecisionTranscript";
 import {
   addSituacionReserva,
   markImanReservaEjecutada,
@@ -108,6 +109,11 @@ export function imanItemsParaDesglosador(items: SituacionReservaItem[]): Situaci
   return items.filter(i => (i.ruta ?? "ejecucion") !== "consideracion");
 }
 
+/** Pensamiento que puede volver al vehículo situacional (ruta S o E). */
+export function reservaEsEnviabeASituacion(item: SituacionReservaItem): boolean {
+  return (item.ruta ?? "ejecucion") !== "consideracion";
+}
+
 export function subTareaFromImanItem(item: SituacionReservaItem, idSuffix?: string): SubTarea {
   const suffix = idSuffix ?? `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   return {
@@ -133,10 +139,29 @@ export function subTareaFromImanItem(item: SituacionReservaItem, idSuffix?: stri
 /** Al cumplir sub con proyecto: incrementa correlativo y marca la reserva del Crisol (MOS). */
 export async function registrarPasoDesdeSubIman(
   userId: string,
-  sub: Pick<SubTarea, "proyectoId" | "origenImanId">
+  sub: Pick<SubTarea, "proyectoId" | "origenImanId" | "texto" | "id">,
+  opts?: {
+    vehicle?: Pick<Vehicle, "id" | "titulo" | "proyectoId">;
+    status?: DecisionStatus;
+    ts?: number;
+  }
 ): Promise<number | null> {
   if (!sub.proyectoId?.trim()) return null;
-  const result = await registrarPasoEjecutadoEnProyecto(userId, sub.proyectoId);
+  const status = opts?.status ?? "cumplido";
+  const ts = opts?.ts ?? Date.now();
+  const vehicle = opts?.vehicle ?? { id: "unknown", titulo: "" };
+  const raw = rawDecisionFromSubTarea(
+    { ...vehicle, proyectoId: sub.proyectoId },
+    { ...sub, completada: status === "cumplido", enDesgloseCronometro: true, resultadoSituacion: status } as SubTarea,
+    status,
+    ts
+  );
+  const [enumerated] = enumerateRingDecisions([raw]);
+  const result = await registrarPasoEjecutadoEnProyecto(
+    userId,
+    sub.proyectoId,
+    enumerated ? { ...enumerated, pasoEjecutadoNumero: undefined } : undefined
+  );
   if (!result) return null;
   if (sub.origenImanId) {
     await markImanReservaEjecutada(userId, sub.origenImanId, result.pasoNumero);

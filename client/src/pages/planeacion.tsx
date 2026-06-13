@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import {
   Target,
   Zap,
-  Footprints,
   Shield,
   ChevronRight,
   ChevronLeft,
@@ -88,7 +87,6 @@ import {
   awardSovereigntyPoints,
   deductSovereigntyPoints,
   incrementModulePoints,
-  saveIntrospectionEntry,
   getPlanillaHoy,
   savePlanilla,
   updateSegmentoInPlanilla,
@@ -117,7 +115,6 @@ import {
   subscribeToDailyPoints,
   getLimaDateString,
   getLimaDayStart,
-  getIntrospectionPsForDay,
   saveVehicleHistoryFirebase,
   loadVehicleHistoryFromFirebase,
   mergeVehicleHistories,
@@ -142,6 +139,8 @@ import {
   notifyVehicleClosed,
   wasVehicleRecentlyClosed,
   mergeActiveVehicleSessionState,
+  resolveLocalVehicleMatch,
+  findLocalClosedOverride,
   isOrphanDesglosadorInterrupt,
   reconcileGhostActiveVehicles,
   reconcileStaleCentinelaInFirestore,
@@ -168,6 +167,11 @@ import {
   sumDesglosadorSubsPsAlreadyGranted,
   estimateDesglosadorSessionPs,
 } from "@/lib/desglosadorPointsAward";
+import {
+  computeDesglosadorTiempoCloseSummary,
+  fmtDesgloseSec,
+  type DesglosadorTiempoCloseSummary,
+} from "@/lib/desglosadorTiempoCelebration";
 import { hasJournalSpExactSource, hasJournalSpSourcePrefix } from "@/lib/spLogHygiene";
 import { clearStuckDesglosadorPause } from "@/lib/situacionSessionMerge";
 import {
@@ -200,7 +204,7 @@ import {
   clearCruceWarnedIds,
   runSegmentAttentionTickNow,
 } from "@/lib/segmentAttentionCycle";
-import { CONCIENCIA_CLOCK_TICK_EVENT } from "@/lib/concienciaClock";
+import { useConcienciaClockTick } from "@/lib/concienciaClock";
 import {
   isTikSoundEnabled,
   setTikSoundEnabled,
@@ -411,11 +415,12 @@ import {
   NIDO_INBOX_ID,
   nidoKeyFromReserva,
   proyectoMetaParaReservaDesdeSub,
-  registrarPasoDesdeSubIman,
+  reservaEsEnviabeASituacion,
   resolveProyectoIdEnfoqueSituacion,
   subTareaConPasoEjecutado,
   subTareaFromImanItem,
 } from "@/lib/imanPensamientos";
+import { syncRingDecisionToProyectoHub } from "@/lib/syncRingDecisionToProyectoHub";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
@@ -732,9 +737,15 @@ function computeSituacionDesgloseSummary(vehicle: Vehicle): SituacionDesgloseSum
     0
   );
   const sc = vehicle.situacionCronometro;
-  const minutosBloque = sc?.bloqueInicioAt
-    ? Math.max(1, Math.round((Date.now() - sc.bloqueInicioAt) / 60000))
-    : 0;
+  const bloqueInicio = sc?.bloqueInicioAt ?? vehicle.aperturaAt ?? Date.now();
+  const bloqueFin =
+    sc?.activo === true
+      ? Date.now()
+      : (() => {
+          const cerradasAt = subs.map(s => s.cerradaAt).filter((t): t is number => t != null);
+          return cerradasAt.length > 0 ? Math.max(...cerradasAt) : Date.now();
+        })();
+  const minutosBloque = Math.max(1, Math.round((bloqueFin - bloqueInicio) / 60000));
   const bolsa = computeSituacionBolsaGanancia(vehicle.subTareas || [], sc);
   const minutosGanados = bolsa.minutosGanadosReto;
   const minutosReales = sumMinutosRealesCronometro(vehicle.subTareas || []);
@@ -784,11 +795,15 @@ function computeSituacionDesgloseSummary(vehicle: Vehicle): SituacionDesgloseSum
   };
 }
 
-function situacionDesgloseBloqueListo(subTareas: SubTarea[], sc: Vehicle["situacionCronometro"]): boolean {
-  if (sc?.activo !== true) return false;
+function situacionDesgloseBloqueTerminado(subTareas: SubTarea[]): boolean {
   const cronSubs = subTareas.filter(s => s.enDesgloseCronometro);
   if (cronSubs.length === 0) return false;
   return !cronSubs.some(situacionFilaCronometroPendiente);
+}
+
+function situacionDesgloseBloqueListo(subTareas: SubTarea[], sc: Vehicle["situacionCronometro"]): boolean {
+  if (sc?.activo !== true) return false;
+  return situacionDesgloseBloqueTerminado(subTareas);
 }
 
 /** Timbres decrecientes al marcar cumplido — delegado a situacionAlertSounds. */
@@ -997,49 +1012,6 @@ function PlanModuleMilestoneBar({ pts }: { pts: number }) {
 
 const STUB_EJES = { enfoque: { text: "", trifecta: "omitir" as const }, conflicto: { text: "", trifecta: "omitir" as const }, pasos: { text: "", trifecta: "omitir" as const }, limite: { text: "", trifecta: "omitir" as const } };
 
-const PREGUNTAS_INTROSPECTION: Record<number, string[]> = {
-  1: [
-    "¿Qué distracción específica intentó retenerte?",
-    "¿Qué pensamiento exacto te permitió romper la inercia?",
-    "¿En qué parte del cuerpo sentiste la pesadez?",
-    "¿Del 1 al 10, qué tan nublado estaba el objetivo?"
-  ],
-  2: [
-    "¿Qué evento disparó la sensación de pérdida de control?",
-    "¿Tu impulso fue abandonar o forzar el resultado?",
-    "¿La frustración era externa o por una expectativa propia?",
-    "¿Cómo recalibraste el segmento para seguir?"
-  ],
-  3: [
-    "¿A qué mundo imaginario intentó escaparse tu mente?",
-    "¿En qué momento sentiste que lo que hacías no tenía sentido?",
-    "¿Qué valor del Master Plan recordaste para seguir?",
-    "¿El tiempo pasó lento o dejaste de estar presente?"
-  ],
-  4: [
-    "¿En qué minuto exacto se degradó tu lógica?",
-    "¿Usaste el \"tic-tap\" o la culpa para el sprint final?",
-    "¿La última tarea se hizo con excelencia o solo por cumplir?",
-    "¿Te sientes vaciado con orgullo o agotado?"
-  ]
-};
-
-function selectRandomQuestion(capa: number): string {
-  const preguntas = PREGUNTAS_INTROSPECTION[capa];
-  if (!preguntas || preguntas.length === 0) return "";
-  return preguntas[Math.floor(Math.random() * preguntas.length)];
-}
-
-function getCapasActivas(duracionMin: number): number[] {
-  if (duracionMin >= 120) return [1, 2, 3, 4];
-  return [1, 2];
-}
-
-function calcularMultiplicador(charCount: number): number {
-  if (charCount > 150) return 1.5;
-  return 1.0;
-}
-
 function parseTimeString(t: string): { h: number; m: number } | null {
   const match = t.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
@@ -1210,7 +1182,7 @@ export default function Planeacion() {
   const [puertaVozEnabled, setPuertaVozEnabledState] = useState(() => isPuertaVozEnabled());
   const [desglosadorVozEnabled, setDesglosadorVozEnabledState] = useState(() => isDesglosadorVoiceEnabled());
 
-  const [anilloTick, setAnilloTick] = useState(0);
+  const anilloTick = useConcienciaClockTick();
   const [conquistaPulse, setConquistaPulse] = useState(false);
   const conquistaPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1263,7 +1235,6 @@ export default function Planeacion() {
   const [showCrearSegmento, setShowCrearSegmento] = useState(false);
   const [segmentoProgramando, setSegmentoProgramando] = useState(false);
   const segmentosListEndRef = useRef<HTMLDivElement | null>(null);
-  const labIntroTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [nuevoSegNombre, setNuevoSegNombre] = useState("");
   const [nuevoSegHoraInicio, setNuevoSegHoraInicio] = useState("");
   const [nuevoSegHoraFin, setNuevoSegHoraFin] = useState("");
@@ -1286,9 +1257,6 @@ export default function Planeacion() {
   const [rutinaResaltadaId, setRutinaResaltadaId] = useState<string | null>(null);
   const rutinaItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [notifPermission, setNotifPermission] = useState<string>(getNotificationPermission());
-  const [showLabIntrospeccion, setShowLabIntrospeccion] = useState(false);
-  const [closedSegmentDuration, setClosedSegmentDuration] = useState(0);
-  const [closedSegmentName, setClosedSegmentName] = useState("");
   const [segmentTick, setSegmentTick] = useState(0);
   const [activandoSegId, setActivandoSegId] = useState<string | null>(null);
   const [cerrandoSegId, setCerrandoSegId] = useState<string | null>(null);
@@ -1305,6 +1273,11 @@ export default function Planeacion() {
     titulo: string;
     summary: SituacionDesgloseSummary;
   } | null>(null);
+  const [desglosadorTiempoCelebration, setDesglosadorTiempoCelebration] = useState<{
+    vehicleId: string;
+    titulo: string;
+    summary: DesglosadorTiempoCloseSummary;
+  } | null>(null);
   const situacionBloqueCelebratedRef = useRef<Set<string>>(new Set());
   const [situacionBloqueSummaries, setSituacionBloqueSummaries] = useState<
     Record<string, SituacionDesgloseSummary>
@@ -1316,6 +1289,22 @@ export default function Planeacion() {
       setSituacionDesgloseCelebration({ vehicleId, titulo, summary });
     },
     []
+  );
+
+  const openDesglosadorTiempoCelebration = useCallback(
+    (vehicleId: string, titulo: string, summary: DesglosadorTiempoCloseSummary) => {
+      setDesglosadorTiempoCelebration({ vehicleId, titulo, summary });
+    },
+    []
+  );
+
+  const presentSituacionDesgloseCelebration = useCallback(
+    (vehicleId: string, titulo: string, vehicleForSummary: Vehicle) => {
+      const summary = computeSituacionDesgloseSummary(vehicleForSummary);
+      openSituacionDesgloseCelebration(vehicleId, titulo, summary);
+      return summary;
+    },
+    [openSituacionDesgloseCelebration]
   );
 
   const safeAwardPS = useCallback(async (amount: number, source: string): Promise<boolean> => {
@@ -1417,21 +1406,8 @@ export default function Planeacion() {
     return () => clearInterval(interval);
   }, [user]);
 
-  useEffect(() => {
-    const onClock = () => setAnilloTick(t => t + 1);
-    window.addEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
-    return () => window.removeEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
-  }, []);
-
   useEffect(() => () => {
     if (conquistaPulseTimerRef.current) clearTimeout(conquistaPulseTimerRef.current);
-  }, []);
-
-  useEffect(() => () => {
-    if (labIntroTimeoutRef.current) {
-      clearTimeout(labIntroTimeoutRef.current);
-      labIntroTimeoutRef.current = null;
-    }
   }, []);
 
   useEffect(() => {
@@ -1581,15 +1557,22 @@ export default function Planeacion() {
       // For ANY vehicle: if locally closed but Firebase still shows "activo", use local status.
       // For desglosador: also preserve in-session subVehiculos.
       const protectedData = data.map(v => {
-        const local =
-          vehiclesRef.current.find(lv => lv.id === v.id) ??
-          getLocalVehicles().find(lv => lv.id === v.id);
+        const localSources = [...vehiclesRef.current, ...getLocalVehicles()];
+        const local = resolveLocalVehicleMatch(v, localSources);
         let merged = mergeActiveVehicleSessionState(v, local);
-        if (wasVehicleRecentlyClosed(v.id) && merged.status === "activo") {
+        const closedOverride = findLocalClosedOverride(v, localSources);
+        if (closedOverride) {
+          merged = mergeActiveVehicleSessionState(v, closedOverride);
+        } else if (wasVehicleRecentlyClosed(v.id, v.clientRequestId) && merged.status === "activo") {
           const closedLocal =
             local && local.status !== "activo"
               ? local
-              : getLocalVehicles().find(lv => lv.id === v.id && lv.status !== "activo");
+              : localSources.find(
+                  lv =>
+                    lv.status !== "activo" &&
+                    (lv.id === v.id ||
+                      (v.clientRequestId && lv.clientRequestId === v.clientRequestId))
+                );
           if (closedLocal) {
             merged = mergeActiveVehicleSessionState(v, closedLocal);
           }
@@ -1610,16 +1593,27 @@ export default function Planeacion() {
       const localClosedIds = new Set(
         getLocalVehicles().filter(lv => lv.status !== "activo").map(lv => lv.id)
       );
+      const isLocallyClosedVehicle = (v: Vehicle) => {
+        if (localClosedIds.has(v.id)) return true;
+        if (
+          v.clientRequestId &&
+          getLocalVehicles().some(
+            lv => lv.clientRequestId === v.clientRequestId && lv.status !== "activo"
+          )
+        ) {
+          return true;
+        }
+        return wasVehicleRecentlyClosed(v.id, v.clientRequestId);
+      };
       const rescueFrom = (list: Vehicle[]) =>
         list.filter(
           v =>
             v.status === "activo" &&
             !v.autoVerdad &&
             !mergedIds.has(v.id) &&
-            !localClosedIds.has(v.id) &&
-            !(v.clientRequestId && merged.some(m => m.clientRequestId === v.clientRequestId)) &&
+            !isLocallyClosedVehicle(v) &&
+            !(v.clientRequestId && merged.some(m => m.clientRequestId === v.clientRequestId && m.status !== "activo")) &&
             !isCloseBlocked(v.id) &&
-            !wasVehicleRecentlyClosed(v.id) &&
             !isOrphanDesglosadorInterrupt(v, mergedById) &&
             shouldPreserveLocalActivo(v, nowMs)
         );
@@ -1632,7 +1626,7 @@ export default function Planeacion() {
         merged = [...rescued, ...merged];
       }
       const parkedForRecover = getParkedActiveVehicles().filter(
-        p => !localClosedIds.has(p.id) && !wasVehicleRecentlyClosed(p.id)
+        p => !isLocallyClosedVehicle(p)
       );
       merged = recoverMissingJournalDayActives(
         merged,
@@ -1746,15 +1740,16 @@ export default function Planeacion() {
   }, [user, planillaFecha, dailyPS, vehicles]);
 
   const todayTermoLive = useMemo(() => {
-    const dayStartMs = getJournalDayStartMs();
-    const jornadaVehicles = filterVehiclesForEntropy(
+    const nowMs = Date.now();
+    const dayStartMs = getJournalDayStartMs(nowMs);
+    const jornadaVehicles = filterVehiclesForAnilloCoverage(
       vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs)),
-      Date.now()
+      nowMs
     );
     const balance = calcularBalanceConquistaJornada({
       segmentos: planilla?.segmentos || [],
       vehiculos: jornadaVehicles,
-      now: Date.now(),
+      now: nowMs,
       dayStartMs,
     });
     return buildDailySnapshot({
@@ -2024,8 +2019,12 @@ export default function Planeacion() {
       const localRaw = getLocalVehicles();
       const localById = new Map(localRaw.map(v => [v.id, v]));
       const parked = getParkedActiveVehicles().filter(p => {
-        const local = localById.get(p.id);
-        return !(local && local.status !== "activo") && !wasVehicleRecentlyClosed(p.id);
+        const local = localById.get(p.id) ??
+          (p.clientRequestId
+            ? localRaw.find(l => l.clientRequestId === p.clientRequestId)
+            : undefined);
+        if (local && local.status !== "activo") return false;
+        return !wasVehicleRecentlyClosed(p.id, p.clientRequestId);
       });
       const sources = [...localRaw, ...parked];
       const byId = new Map(vehiclesRef.current.map(v => [v.id, v]));
@@ -2034,7 +2033,10 @@ export default function Planeacion() {
           v.status === "activo" &&
           !v.autoVerdad &&
           !byId.has(v.id) &&
-          !wasVehicleRecentlyClosed(v.id) &&
+          !wasVehicleRecentlyClosed(v.id, v.clientRequestId) &&
+          !(v.clientRequestId && localRaw.some(
+            l => l.clientRequestId === v.clientRequestId && l.status !== "activo"
+          )) &&
           !(localById.get(v.id) && localById.get(v.id)!.status !== "activo") &&
           shouldPreserveLocalActivo(v, nowMs, dayStart)
       );
@@ -2075,6 +2077,7 @@ export default function Planeacion() {
     setCierreRutaSeleccion(new Set());
     setShowCierreJornada(false);
     setSituacionDesgloseCelebration(null);
+    setDesglosadorTiempoCelebration(null);
     setSaving(false);
     setIsCreating(false);
     setVehicleMode("selector");
@@ -2159,7 +2162,7 @@ export default function Planeacion() {
     );
     for (const o of orphans) {
       orphanInterruptSweepRef.current.add(o.id);
-      notifyVehicleClosed(o.id);
+      notifyVehicleClosed(o.id, o.clientRequestId);
       const patch = patches.get(o.id)!;
       void updateVehicle(user.uid, o.id, patch).catch(e => console.warn("[orphan-interrupt]", o.id, e));
       void updateVehicleStatus(user.uid, o.id, "archivado").catch(e => console.warn("[orphan-interrupt] status", o.id, e));
@@ -2990,9 +2993,6 @@ export default function Planeacion() {
     }
 
     const nowMs = Date.now();
-    const duration = seg.activadoAt ? Math.round((nowMs - seg.activadoAt) / 60000) : 0;
-    setClosedSegmentDuration(duration);
-    setClosedSegmentName(seg.nombre);
 
     const patch = {
       estado: "cerrado_manual" as const,
@@ -3053,14 +3053,6 @@ export default function Planeacion() {
         if (ok) toastDailyPSTotal();
       });
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
-      if (labIntroTimeoutRef.current) {
-        clearTimeout(labIntroTimeoutRef.current);
-        labIntroTimeoutRef.current = null;
-      }
-      labIntroTimeoutRef.current = window.setTimeout(() => {
-        labIntroTimeoutRef.current = null;
-        setShowLabIntrospeccion(true);
-      }, 1800);
       void registrarEvento(COMPONENTES.PLANIFICACION);
     } catch (err) {
       console.error("[cerrarSegmentoManual]", err);
@@ -3169,20 +3161,24 @@ export default function Planeacion() {
       return;
     }
 
+    const persistClose = vehicle.status === "activo";
     const cierreAt = vehicle.cierreAt ?? Date.now();
     const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || cierreAt;
     const duracionFinal = vehicle.duracionFinal ?? Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
-    notifyVehicleClosed(vehicleId);
-    const optimisticClose = {
-      status,
-      cierreAt,
-      duracionFinal,
-      cierreManual: status === "cumplido",
-    };
-    setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v)));
-    vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v));
-    optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
-    saveLocalVehicles(vehiclesRef.current);
+    notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
+
+    if (persistClose) {
+      const optimisticClose = {
+        status,
+        cierreAt,
+        duracionFinal,
+        cierreManual: status === "cumplido",
+      };
+      setVehicles(prev => prev.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v)));
+      vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, ...optimisticClose } : v));
+      optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
+      saveLocalVehicles(vehiclesRef.current);
+    }
 
     const safeFb = async (label: string, fn: () => Promise<any>) => {
       try { await fn(); } catch (e) { console.error(`[handleStatusChange] ${label}:`, e); }
@@ -3212,7 +3208,9 @@ export default function Planeacion() {
       })
     );
 
-    await safeFb("updateStatus", () => updateVehicleStatus(user.uid, vehicleId, status));
+    if (persistClose) {
+      await safeFb("updateStatus", () => updateVehicleStatus(user.uid, vehicleId, status));
+    }
     if (intensidadEnergeticaFin) {
       await safeFb("updateEnergiaFin", () => updateVehicle(user.uid, vehicleId, { intensidadEnergeticaFin }));
       setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, intensidadEnergeticaFin } : v));
@@ -3343,7 +3341,7 @@ export default function Planeacion() {
     const descansoTargetMs = descansoDurMin > 0 ? aperturaAt + (descansoDurMin + 5) * 60000 : 0;
     const dentroVentana = descansoTargetMs === 0 || cierreAt <= descansoTargetMs;
 
-    notifyVehicleClosed(vehicleId);
+    notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
 
     const optimisticClose = {
       status: closingStatus,
@@ -3436,7 +3434,7 @@ export default function Planeacion() {
         ? { situacionCronometro: null as const, situacionCupoAnchor: null as const }
         : {};
 
-    notifyVehicleClosed(vehicleId);
+    notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
 
     const termoDecisionSnapshot = buildTermoDecisionSnapshot(
       { ...vehicle, status, cierreAt, ...situacionCloseExtras },
@@ -3666,7 +3664,7 @@ export default function Planeacion() {
     if (!user) return;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId);
     if (!vehicle || vehicle.status !== "activo") return;
-    notifyVehicleClosed(vehicleId);
+    notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
     const cierreAt = Date.now();
     const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || cierreAt;
     const duracionFinal = Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
@@ -3738,7 +3736,7 @@ export default function Planeacion() {
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) { endClose(vehicleId); return; }
 
-    notifyVehicleClosed(vehicleId);
+    notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
     optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(v => v.id !== vehicleId);
     const closePatch = {
       status: "cumplido" as const,
@@ -4279,7 +4277,7 @@ export default function Planeacion() {
     });
     const psRuta = subsConRuta.reduce((sum, s) => sum + computeRutaPrivilegioPS(s), 0);
 
-    notifyVehicleClosed(vehicleId);
+    notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
 
     // Si quedó una interrupción situacional abierta, archivarla al cerrar el ciclo del padre.
     const childInterrupts = vehiclesRef.current.filter(
@@ -4287,12 +4285,12 @@ export default function Planeacion() {
         v.status === "activo" &&
         !v.autoVerdad &&
         v.vehiculoPadreDesglosadorId === vehicleId &&
-        !wasVehicleRecentlyClosed(v.id)
+        !wasVehicleRecentlyClosed(v.id, v.clientRequestId)
     );
     if (childInterrupts.length > 0) {
       const nowChild = Date.now();
       for (const child of childInterrupts) {
-        notifyVehicleClosed(child.id);
+        notifyVehicleClosed(child.id, child.clientRequestId);
         orphanInterruptSweepRef.current.add(child.id);
       }
       const archiveChild = (v: Vehicle): Vehicle =>
@@ -4451,32 +4449,29 @@ export default function Planeacion() {
       registrarEvento(COMPONENTES.PLANIFICACION);
       setCierreEnergiaPending(null);
       setCierreEnergiaSeleccion(null);
-      toast.success(
-        closeDeltaPs > 0
-          ? `+${closeDeltaPs} PS — Ciclo cerrado`
-          : "Ciclo cerrado",
-        {
-          description: [
-            childInterrupts.length > 0
-              ? "Interrupción situacional cerrada automáticamente con el desglosador."
-              : "",
-            closeDeltaPs > 0 ? "Sumados ahora a tu barra del día." : "",
-            subsPsBefore > 0 && subsPsAwarded === 0
-              ? `${subsPsBefore} PS de subs ya estaban en la barra (${cumplidos} cumplido${cumplidos !== 1 ? "s" : ""}).`
-              : subsPsAwarded > 0
-                ? `+${subsPsAwarded} PS por ${cumplidos} sub${cumplidos !== 1 ? "s" : ""} cumplido${cumplidos !== 1 ? "s" : ""}.`
-                : "",
-            cycleClosePs > 0 ? `+${cycleClosePs} PS cierre de ciclo.` : "",
-            depthPsAwardedNow > 0 ? `+${depthPsAwardedNow} PS profundidad de sesión.` : "",
-            psRutaInSubs > 0 ? `Ruta de enfoque incluida (+${psRutaInSubs} PS en subs).` : "",
-            fallados > 0 ? `${fallados} fallado${fallados !== 1 ? "s" : ""} sin PS.` : "",
-            `Total sesión: ${sessionTotalPs} PS.`,
-            duracionFinal > 0 ? `${duracionFinal} min total.` : "",
-          ].filter(Boolean).join(" "),
+      const closedVehicle: Vehicle = {
+        ...vehicle,
+        ...closePatchFinal,
+        subVehiculos: subsSettled,
+        desglosadorBloqueDepthPsGranted: depthPsGranted,
+      };
+      const celebrationSummary = computeDesglosadorTiempoCloseSummary(closedVehicle, subsSettled, {
+        duracionMin: duracionFinal,
+        psSubs: subsPsTotal,
+        psCierre: cycleClosePs,
+        psProfundidad: depthPsGranted,
+        psRuta: psRutaInSubs,
+        psTotal: sessionTotalPs,
+        psAwardedNow: closeDeltaPs,
+      });
+      openDesglosadorTiempoCelebration(vehicleId, vehicle.titulo, celebrationSummary);
+      if (closeDeltaPs > 0) {
+        toast.success(`+${closeDeltaPs} PS sumados a tu barra`, {
+          description: "Revisa el resumen del ciclo en pantalla.",
           style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
-          duration: 5000,
-        }
-      );
+          duration: 3200,
+        });
+      }
     } catch (err) {
       console.error("[desglosadorGlobalClose] Error:", err);
       toast.error("Error al cerrar ciclo. El cierre local se conservó; reintenta si hace falta.");
@@ -4625,7 +4620,9 @@ export default function Planeacion() {
     );
     let pasoNumero: number | null = null;
     if (isChecking && vehicle.tipoFlota === "situacion" && targetSub) {
-      pasoNumero = await registrarPasoDesdeSubIman(user.uid, targetSub);
+      const updatedSub = subTareas.find(st => st.id === subTareaId)!;
+      const sync = await syncRingDecisionToProyectoHub(user.uid, vehicle, updatedSub, "cumplido", nowMs);
+      pasoNumero = sync.pasoNumero;
       if (pasoNumero != null) {
         subTareas = subTareaConPasoEjecutado(subTareas, subTareaId, pasoNumero);
       }
@@ -4777,7 +4774,6 @@ export default function Planeacion() {
       depthBlockPsGranted: totalDepthPs,
     };
 
-    situacionBloqueCelebratedRef.current.add(bloqueKey);
     const updatedVehicle: Vehicle = { ...vehicleSnapshot, subTareas, situacionCronometro };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? updatedVehicle : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? updatedVehicle : v));
@@ -4791,8 +4787,8 @@ export default function Planeacion() {
       void handleSyncSituacionCupoAnchor(vehicleId);
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
       registrarEvento(COMPONENTES.PLANIFICACION);
-      const summary = computeSituacionDesgloseSummary(updatedVehicle);
-      openSituacionDesgloseCelebration(vehicleId, vehicleSnapshot.titulo, summary);
+      const summary = presentSituacionDesgloseCelebration(vehicleId, vehicleSnapshot.titulo, updatedVehicle);
+      situacionBloqueCelebratedRef.current.add(bloqueKey);
       if (vehicleSnapshot.proyectoId && vehicleSnapshot.proyectoPeldanoId) {
         void markPeldanoConquistadoSituacion(user.uid, updatedVehicle, {
           duracionMin: summary.minutosBloque,
@@ -4823,7 +4819,7 @@ export default function Planeacion() {
       situacionBloqueCelebratedRef.current.delete(bloqueKey);
       return false;
     }
-  }, [user, openSituacionDesgloseCelebration]);
+  }, [user, presentSituacionDesgloseCelebration]);
 
   const handleCerrarSituacionDesglosadorDeGolpe = async (vehicleId: string) => {
     if (!user) return;
@@ -4844,26 +4840,46 @@ export default function Planeacion() {
       { ...sc, depthBlockPsGranted: sc.depthBlockPsGranted ?? 0 },
       now
     );
+    const elapsedSec = Math.floor((now - bloqueInicio) / 1000);
+    const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
+    const prevGranted = sc.depthBlockPsGranted ?? 0;
+    const deltaDepth = totalDepthPs - prevGranted;
+    const situacionCronometroFinal = { ...situacionCronometro, depthBlockPsGranted: totalDepthPs };
     setVehicles(prev =>
-      prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor: null } : v))
+      prev.map(v => (v.id === vehicleId ? { ...v, subTareas, situacionCronometro: situacionCronometroFinal, situacionCupoAnchor: null } : v))
     );
     vehiclesRef.current = vehiclesRef.current.map(v =>
-      v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor: null } : v
+      v.id === vehicleId ? { ...v, subTareas, situacionCronometro: situacionCronometroFinal, situacionCupoAnchor: null } : v
     );
     persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, {
         subTareas,
-        situacionCronometro,
+        situacionCronometro: situacionCronometroFinal,
         situacionCupoAnchor: null,
       });
-      const bolsa = situacionCronometro.bolsaSegundoRetoMin ?? 0;
-      toast.info("Desglosador cerrado", {
+      if (deltaDepth > 0) {
+        await awardSovereigntyPoints(user.uid, deltaDepth, `Profundidad bloque situación: ${vehicle.titulo}`);
+      }
+      incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
+      registrarEvento(COMPONENTES.PLANIFICACION);
+      const closedVehicle: Vehicle = {
+        ...vehicle,
+        subTareas,
+        situacionCronometro: situacionCronometroFinal,
+        situacionCupoAnchor: null,
+      };
+      presentSituacionDesgloseCelebration(vehicleId, vehicle.titulo, closedVehicle);
+      void playSituacionChimes(2);
+      setGoldenFlash(true);
+      setTimeout(() => setGoldenFlash(false), 2500);
+      const bolsa = situacionCronometroFinal.bolsaSegundoRetoMin ?? 0;
+      toast.info("Ronda cerrada de golpe", {
         description:
           bolsa > 0
             ? `Filas pendientes marcadas falladas · ${bolsa} min disponibles para otra ronda`
-            : "Filas pendientes marcadas falladas · cierra la situación cuando quieras",
-        duration: 4000,
+            : "Filas pendientes marcadas falladas · revisa el resumen del bloque",
+        duration: 3500,
       });
     } catch (e) {
       console.error("[handleCerrarSituacionDesglosadorDeGolpe]", e);
@@ -4958,16 +4974,41 @@ export default function Planeacion() {
   };
 
   const handleCerrarSituacionDesgloseBloque = useCallback(async (vehicleId: string) => {
-    const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
+    let vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle?.subTareas) return;
-    const finalized = await tryFinalizeSituacionDesgloseBloque(vehicleId, vehicle.subTareas, vehicle);
-    if (!finalized) {
-      const cached = situacionBloqueSummaries[vehicleId];
-      if (cached) {
-        openSituacionDesgloseCelebration(vehicleId, vehicle.titulo, cached);
+
+    let finalized =
+      vehicle.situacionCronometro?.activo === true &&
+      situacionDesgloseBloqueListo(vehicle.subTareas, vehicle.situacionCronometro)
+        ? await tryFinalizeSituacionDesgloseBloque(vehicleId, vehicle.subTareas, vehicle)
+        : false;
+
+    if (
+      !finalized &&
+      vehicle.situacionCronometro?.activo === true &&
+      situacionDesgloseBloqueListo(vehicle.subTareas, vehicle.situacionCronometro)
+    ) {
+      const bloqueKey = `${vehicleId}_${vehicle.situacionCronometro.bloqueInicioAt ?? 0}`;
+      if (situacionBloqueCelebratedRef.current.has(bloqueKey)) {
+        situacionBloqueCelebratedRef.current.delete(bloqueKey);
+        finalized = await tryFinalizeSituacionDesgloseBloque(vehicleId, vehicle.subTareas, vehicle);
       }
     }
-  }, [vehicles, tryFinalizeSituacionDesgloseBloque, situacionBloqueSummaries, openSituacionDesgloseCelebration]);
+
+    if (finalized) return;
+
+    vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicle;
+    if (!situacionDesgloseBloqueTerminado(vehicle.subTareas || [])) {
+      toast.info("Ring incompleto", {
+        description: "Marca cumplido o fallado en cada fila del desglose antes de cerrar la ronda.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+        duration: 4000,
+      });
+      return;
+    }
+
+    presentSituacionDesgloseCelebration(vehicleId, vehicle.titulo, vehicle);
+  }, [vehicles, tryFinalizeSituacionDesgloseBloque, presentSituacionDesgloseCelebration]);
 
   const handleEnqueueSubTareasToCronometro = async (
     vehicleId: string,
@@ -5290,9 +5331,14 @@ export default function Planeacion() {
       subTareas = reacomodarColaCronometroAMeta(subTareas, contratoFin, now);
     }
     const repartoColaDesc = describeRepartoGananciaEnCola(workingList, subTareas, subTareaId);
-    const pasoNumero = await registrarPasoDesdeSubIman(user.uid, targetSub);
-    if (pasoNumero != null) {
-      subTareas = subTareaConPasoEjecutado(subTareas, subTareaId, pasoNumero);
+    let pasoNumero: number | null = null;
+    const updatedSub = subTareas.find(st => st.id === subTareaId);
+    if (updatedSub) {
+      const sync = await syncRingDecisionToProyectoHub(user.uid, vehicle, updatedSub, "cumplido", now);
+      pasoNumero = sync.pasoNumero;
+      if (pasoNumero != null) {
+        subTareas = subTareaConPasoEjecutado(subTareas, subTareaId, pasoNumero);
+      }
     }
     const elapsedSec = Math.floor((now - bloqueInicio) / 1000);
     const totalDepthPs = computeDesglosadorSessionDepthPS(elapsedSec);
@@ -5692,6 +5738,31 @@ export default function Planeacion() {
         description: "Comprueba que el vehículo situacional siga activo e inténtalo de nuevo.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
+    }
+  };
+
+  const handleEnviarReservaASituacion = async (reservaId: string) => {
+    const item = reservaActivas.find(r => r.id === reservaId);
+    if (!item) return;
+    if (!reservaEsEnviabeASituacion(item)) {
+      toast.info("Ruta M — tener en cuenta", {
+        description: "Esta fila no va al situacional. Cambia a S o E para enviarla.",
+        style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}40`, color: PLATA },
+        duration: 4000,
+      });
+      return;
+    }
+    const ruta = item.ruta ?? "ejecucion";
+    if (ruta === "situacion_desglosador") {
+      await handleReservaACronometro(reservaId);
+    } else {
+      await handleReservaAListaLibre(reservaId);
+    }
+  };
+
+  const handleEnviarReservasSeleccionadas = async (reservaIds: string[]) => {
+    for (const id of reservaIds) {
+      await handleEnviarReservaASituacion(id);
     }
   };
 
@@ -9042,25 +9113,240 @@ export default function Planeacion() {
           );
         })()}
 
-        {showLabIntrospeccion && (
-          <LabIntrospeccionModal
-            segmentoNombre={closedSegmentName}
-            segmentoDuracionMin={closedSegmentDuration}
-            onClose={() => setShowLabIntrospeccion(false)}
-            onSeal={async (totalPS, respuestas, capasActivas) => {
-              if (user && totalPS > 0) {
-                await awardSovereigntyPoints(user.uid, totalPS, "Laboratorio de Introspección: " + closedSegmentName);
-                toast.success(`+${totalPS} PS Introspección`, { style: { backgroundColor: PIZARRA, border: `2px solid ${VIOLET}`, color: VIOLET }, duration: 4000 });
-              }
-              if (user) {
-                try {
-                  await saveIntrospectionEntry(user.uid, { segmentoNombre: closedSegmentName, segmentoDuracionMin: closedSegmentDuration, capasActivas, respuestas, totalPS, ai_feedback_status: "pending" });
-                } catch (e) { console.error("Error saving introspection:", e); }
-              }
-              setShowLabIntrospeccion(false);
-            }}
-          />
-        )}
+        {desglosadorTiempoCelebration && (() => {
+          const { titulo, summary } = desglosadorTiempoCelebration;
+          const hasSugerido = summary.totalSugeridoSec > 0;
+          const deltaColor = summary.deltaGanando ? VERDE : summary.deltaPerdiendo ? BLOOD : GOLD;
+          const deltaLabel = summary.deltaGanando
+            ? `↓ ${fmtDesgloseSec(Math.abs(summary.deltaTotalSec))} ganado`
+            : summary.deltaPerdiendo
+              ? `↑ ${fmtDesgloseSec(summary.deltaTotalSec)} extra`
+              : hasSugerido
+                ? "→ en tiempo"
+                : "Sin referencia";
+          const ratioPct = summary.totalSubs > 0
+            ? Math.round((summary.cumplidos / summary.totalSubs) * 100)
+            : 0;
+          return (
+            <motion.div
+              className="fixed inset-0 z-[225] flex items-center justify-center p-4"
+              style={{ backgroundColor: "rgba(0,0,0,0.88)" }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="desglosador-tiempo-celebracion-titulo"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.88, y: 24 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ type: "spring", stiffness: 220, damping: 22 }}
+                className="w-full max-w-md rounded-2xl border p-5 space-y-4 relative overflow-hidden max-h-[90vh] overflow-y-auto"
+                style={{ backgroundColor: PIZARRA, borderColor: `${GOLD}55`, boxShadow: `0 0 40px ${GOLD}25, inset 0 0 60px ${GOLD}08` }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <motion.div
+                  animate={{ opacity: [0.2, 0.45, 0.2] }}
+                  transition={{ duration: 2.5, repeat: Infinity }}
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ background: `radial-gradient(ellipse at top, ${GOLD}18 0%, transparent 65%)` }}
+                />
+                <div className="relative text-center space-y-2">
+                  <div className="flex justify-center">
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: `${GOLD}20`, boxShadow: `0 0 20px ${GOLD}35` }}>
+                      <Trophy size={22} style={{ color: GOLD }} />
+                    </div>
+                  </div>
+                  <p id="desglosador-tiempo-celebracion-titulo" className="text-sm font-black uppercase tracking-wider" style={{ color: GOLD }}>
+                    Ciclo cerrado
+                  </p>
+                  <p className="text-[9px] font-bold text-slate-500 truncate px-4">{titulo}</p>
+                </div>
+
+                <div
+                  className="relative rounded-xl p-3 space-y-2"
+                  style={{ backgroundColor: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.28)" }}
+                  data-testid="desglosador-celebracion-combustible"
+                >
+                  <p className="text-[8px] font-black uppercase tracking-wider text-center" style={{ color: "#A78BFA" }}>
+                    Combustible de conciencia
+                  </p>
+                  <p className="text-[10px] text-slate-300 leading-relaxed text-center px-1">
+                    {summary.combustibleMensaje}
+                  </p>
+                  <div className="flex justify-center gap-4 text-center">
+                    <div>
+                      <p className="text-[7px] uppercase text-slate-500">Tiempo</p>
+                      <p className="text-sm font-black font-mono" style={{ color: PLATA }}>{summary.minutosSesion} min</p>
+                    </div>
+                    <div>
+                      <p className="text-[7px] uppercase text-slate-500">Decisiones</p>
+                      <p className="text-sm font-black" style={{ color: VERDE }}>{summary.cumplidos}</p>
+                    </div>
+                    <div>
+                      <p className="text-[7px] uppercase text-slate-500">PS sesión</p>
+                      <p className="text-sm font-black" style={{ color: GOLD }}>+{summary.psTotal}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="relative text-[10px] text-slate-400 leading-relaxed px-2 text-center">{summary.mensaje}</p>
+
+                <div className="relative grid grid-cols-3 gap-2 text-center">
+                  <div className="p-2 rounded-xl" style={{ backgroundColor: "rgba(0,200,81,0.08)", border: "1px solid rgba(0,200,81,0.25)" }}>
+                    <p className="text-[7px] uppercase text-slate-500">Cumplidos</p>
+                    <p className="text-lg font-black" style={{ color: VERDE }}>{summary.cumplidos}</p>
+                  </div>
+                  <div className="p-2 rounded-xl" style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                    <p className="text-[7px] uppercase text-slate-500">Fallados</p>
+                    <p className="text-lg font-black" style={{ color: "#f87171" }}>{summary.fallados}</p>
+                  </div>
+                  <div className="p-2 rounded-xl" style={{ backgroundColor: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.22)" }}>
+                    <p className="text-[7px] uppercase text-slate-500">Desglose</p>
+                    <p className="text-sm font-black font-mono" style={{ color: "#38BDF8" }}>{formatElapsedHHMMSS(summary.sessionElapsedSec)}</p>
+                  </div>
+                </div>
+
+                {hasSugerido && (
+                  <div
+                    className="relative rounded-xl p-3 space-y-2"
+                    style={{ backgroundColor: `${deltaColor}10`, border: `1px solid ${deltaColor}35` }}
+                  >
+                    <p className="text-[8px] font-black uppercase tracking-wider text-center" style={{ color: deltaColor }}>
+                      Tiempo vs referencia
+                    </p>
+                    <div className="flex justify-center items-baseline gap-2 flex-wrap">
+                      <span className="text-[9px] text-slate-500">Sugerido {fmtDesgloseSec(summary.totalSugeridoSec)}</span>
+                      <span className="text-[9px] text-slate-600">·</span>
+                      <span className="text-[9px] text-slate-400">Real {fmtDesgloseSec(summary.totalRealSec)}</span>
+                      <span className="text-[9px] font-black uppercase" style={{ color: deltaColor }}>{deltaLabel}</span>
+                    </div>
+                  </div>
+                )}
+
+                {summary.totalSubs > 0 && (
+                  <div className="relative">
+                    <div className="flex justify-between text-[8px] text-slate-500 mb-1">
+                      <span>Conquista del ciclo</span>
+                      <span style={{ color: ratioPct >= 70 ? EMERALD : GOLD }}>{ratioPct}%</span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.06)" }}>
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${ratioPct}%` }}
+                        transition={{ duration: 0.9, ease: "easeOut" }}
+                        className="h-full rounded-full"
+                        style={{ background: `linear-gradient(90deg, ${EMERALD}88, ${GOLD})` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {summary.subs.length > 0 && (
+                  <div className="relative space-y-1.5 max-h-36 overflow-y-auto">
+                    {summary.subs.map(sv => {
+                      const subDelta =
+                        sv.duracionFinal !== undefined && sv.tiempoSugeridoSeg !== undefined
+                          ? sv.duracionFinal - sv.tiempoSugeridoSeg
+                          : null;
+                      const subGanando = subDelta !== null && subDelta < -5;
+                      const subPerdiendo = subDelta !== null && subDelta > 5;
+                      const subDeltaColor = subGanando ? VERDE : subPerdiendo ? BLOOD : "#94a3b8";
+                      return (
+                        <div
+                          key={sv.id}
+                          className="flex items-center gap-2 py-1.5 px-2 rounded-lg"
+                          style={{
+                            backgroundColor: sv.status === "cumplido" ? "rgba(0,200,81,0.06)" : "rgba(239,68,68,0.06)",
+                            border: `1px solid ${sv.status === "cumplido" ? "rgba(0,200,81,0.15)" : "rgba(239,68,68,0.15)"}`,
+                          }}
+                        >
+                          {sv.status === "cumplido" ? (
+                            <CheckCircle2 size={10} style={{ color: VERDE }} />
+                          ) : (
+                            <XCircle size={10} className="text-red-400" />
+                          )}
+                          <span className="text-[10px] font-bold text-white flex-1 truncate">{cleanSubTitulo(sv.titulo)}</span>
+                          {sv.cantidadLograda !== undefined && (
+                            <span className="text-[8px] font-mono px-1 rounded" style={{ backgroundColor: `${GOLD}20`, color: GOLD }}>
+                              {sv.cantidadLograda}/{sv.cantidadObjetivo}
+                            </span>
+                          )}
+                          {sv.duracionFinal !== undefined && (
+                            <span className="text-[8px] font-mono text-slate-400">{fmtDesgloseSec(sv.duracionFinal)}</span>
+                          )}
+                          {subDelta !== null && (
+                            <span className="text-[8px] font-black" style={{ color: subDeltaColor }}>
+                              {subGanando ? `−${fmtDesgloseSec(Math.abs(subDelta))}` : subPerdiendo ? `+${fmtDesgloseSec(subDelta)}` : "≈"}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="relative rounded-xl p-3 space-y-1.5" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: `1px solid ${GOLD}25` }}>
+                  <p className="text-[8px] font-black uppercase tracking-wider text-center mb-2" style={{ color: "rgba(212,175,55,0.7)" }}>
+                    <Sparkles size={10} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
+                    Energía ganada en este ciclo
+                  </p>
+                  {summary.psSubs > 0 && (
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-400">Subs cumplidos ({summary.cumplidos})</span>
+                      <span className="font-bold" style={{ color: EMERALD }}>+{summary.psSubs} PS</span>
+                    </div>
+                  )}
+                  {summary.psCierre > 0 && (
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-400">Cierre de ciclo</span>
+                      <span className="font-bold" style={{ color: GOLD }}>+{summary.psCierre} PS</span>
+                    </div>
+                  )}
+                  {summary.psProfundidad > 0 && (
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-400">Profundidad de sesión</span>
+                      <span className="font-bold" style={{ color: GOLD }}>+{summary.psProfundidad} PS</span>
+                    </div>
+                  )}
+                  {summary.psRuta > 0 && (
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-400">Ruta de enfoque (en subs)</span>
+                      <span className="font-bold" style={{ color: CYAN }}>+{summary.psRuta} PS</span>
+                    </div>
+                  )}
+                  {summary.psAwardedNow > 0 && summary.psAwardedNow < summary.psTotal && (
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-400">Sumados ahora a la barra</span>
+                      <span className="font-bold" style={{ color: PLATA }}>+{summary.psAwardedNow} PS</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-1.5 mt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                    <span className="text-[10px] font-black uppercase text-white">Total del esfuerzo</span>
+                    <motion.span
+                      initial={{ scale: 0.8 }}
+                      animate={{ scale: [0.8, 1.15, 1] }}
+                      transition={{ duration: 0.6 }}
+                      className="text-base font-black"
+                      style={{ color: GOLD, textShadow: `0 0 12px ${GOLD}50` }}
+                    >
+                      +{summary.psTotal} PS
+                    </motion.span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDesglosadorTiempoCelebration(null)}
+                  className="relative w-full py-3 rounded-xl text-xs font-black uppercase tracking-wider"
+                  style={{ backgroundColor: GOLD, color: "#000", boxShadow: `0 0 24px ${GOLD}40` }}
+                  data-testid="desglosador-tiempo-absorber"
+                >
+                  Absorber victoria
+                </button>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
 
         {showCierreJornada && (
           <CierreJornadaModal
@@ -9084,13 +9370,12 @@ export default function Planeacion() {
               });
               const balance = calcularBalanceConquistaJornada({
                 segmentos: planilla?.segmentos || [],
-                vehiculos: filterVehiclesForEntropy(vehicles),
+                vehiculos: filterVehiclesForAnilloCoverage(vehicles, Date.now()),
                 now: Date.now(),
                 dayStartMs,
               });
 
               const fresh = getDailyPointsLocalSync(user.uid);
-              const introPs = await safeWithFallback(getIntrospectionPsForDay(user.uid, fecha), 0, 3000);
               const events = await safeWithFallback(getFocusBandEventsRecent(user.uid, 1), [], 3000);
               const todayEvents = events.filter(e => e.fecha === fecha);
 
@@ -9100,7 +9385,6 @@ export default function Planeacion() {
                 vehicles: jornadaVehicles,
                 dayStartMs,
                 logs: fresh.logs,
-                introspeccionPs: introPs,
                 events: todayEvents,
                 conquistaMin: balance.conquistaMin,
                 entropiaMin: balance.entropiaMin,
@@ -9116,7 +9400,7 @@ export default function Planeacion() {
                 psPanoramico: snapshot.psDesglose.panoramico,
                 psEspectro: snapshot.psDesglose.espectro,
                 psVehiculos: snapshot.psDesglose.vehiculos,
-                psIntrospeccion: snapshot.psDesglose.introspeccion,
+                psIntrospeccion: 0,
                 profundidadMaxima: snapshot.profundidadMaxima,
                 bloquesCompletados: snapshot.bloquesCompletados,
                 descansosCuerpo: snapshot.espectroBloques.descansosCuerpo,
@@ -9181,6 +9465,8 @@ export default function Planeacion() {
           proyectos={imanProyectos}
           defaultProyectoId={segmentoActivo?.proyectoVinculadoId ?? ""}
           onQuickAdd={(texto, ruta, proyectoId) => handleReservaTacticaQuickAdd(texto, ruta, proyectoId)}
+          onEnviarUnidad={(id) => void handleEnviarReservaASituacion(id)}
+          onEnviarSeleccion={(ids) => void handleEnviarReservasSeleccionadas(ids)}
           onAbrirNido={(nidoId) => void handleAbrirNidoEnSituacion(nidoId)}
           onDelete={(id) => void handleReservaEliminar(id)}
           onRutaChange={(id, ruta) => void handleReservaRutaChange(id, ruta)}
@@ -10691,7 +10977,13 @@ function VehicleCard({
                             <RotateCcw size={11} /> Nuevo Ciclo
                           </button>
                           <button
-                            onClick={() => onDesglosadorGlobalClose?.(vehicle.id, subs)}
+                            onClick={() => {
+                              if (onOpenCierreEnergia) {
+                                onOpenCierreEnergia({ kind: "desglosador", vehicleId: vehicle.id, subs });
+                              } else {
+                                onDesglosadorGlobalClose?.(vehicle.id, subs);
+                              }
+                            }}
                             className="py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all"
                             style={{ backgroundColor: "#D4AF37", color: "#000", boxShadow: "0 0 16px rgba(212,175,55,0.25)" }}
                             data-testid={`button-desglosador-global-close-${vehicle.id}`}
@@ -12143,6 +12435,19 @@ function VehicleCard({
                       onColorConfirm={(id, idx, session) => onPuntoCeroColorConfirm?.(id, idx, session)}
                       onSessionPersist={(id, session) => onPuntoCeroSessionUpdate?.(id, session)}
                       onAutoClose={id => onPuntoCeroAutoClose?.(id)}
+                      onConfirmManualClose={(id, etiqueta, nota) => {
+                        if (onOpenCierreEnergia) {
+                          onOpenCierreEnergia({
+                            kind: "descanso",
+                            vehicleId: id,
+                            status: "cumplido",
+                            etiqueta,
+                            nota,
+                          });
+                        } else {
+                          onDescansoClose?.(id, "cumplido", etiqueta, nota);
+                        }
+                      }}
                     />
                   );
                 }
@@ -12702,7 +13007,7 @@ function CierreJornadaModal({
     () =>
       calcularBalanceConquistaJornada({
         segmentos,
-        vehiculos: filterVehiclesForEntropy(vehicles),
+        vehiculos: filterVehiclesForAnilloCoverage(vehicles, Date.now()),
         now: Date.now(),
         dayStartMs: segmentDayStartMs,
       }),
@@ -12884,108 +13189,5 @@ function CierreJornadaModal({
       </div>
     </motion.div>,
     document.body
-  );
-}
-
-const CAPA_CONFIG: Record<number, { label: string; icon: typeof Target; color: string }> = {
-  1: { label: "CAPA 1 · INERCIA", icon: Target, color: AZURE },
-  2: { label: "CAPA 2 · FRUSTRACIÓN", icon: Zap, color: EMERALD },
-  3: { label: "CAPA 3 · ABURRIMIENTO", icon: Footprints, color: VIOLET },
-  4: { label: "CAPA 4 · FATIGA", icon: Shield, color: GOLD }
-};
-
-function LabIntrospeccionModal({
-  segmentoNombre, segmentoDuracionMin, onClose, onSeal
-}: {
-  segmentoNombre: string; segmentoDuracionMin: number; onClose: () => void;
-  onSeal: (totalPS: number, respuestas: { capa: number; pregunta: string; respuesta: string; charCount: number; multiplicador: number }[], capasActivas: number[]) => void;
-}) {
-  const capasActivas = getCapasActivas(segmentoDuracionMin);
-  const [selectedQuestions] = useState<Record<number, string>>(() => {
-    const qs: Record<number, string> = {};
-    capasActivas.forEach(capa => { qs[capa] = selectRandomQuestion(capa); });
-    return qs;
-  });
-  const [answers, setAnswers] = useState<Record<number, string>>(() => {
-    const a: Record<number, string> = {};
-    capasActivas.forEach(capa => { a[capa] = ""; });
-    return a;
-  });
-
-  const respuestasData = capasActivas.map(capa => {
-    const text = answers[capa] || "";
-    const charCount = text.length;
-    const multiplicador = calcularMultiplicador(charCount);
-    return { capa, pregunta: selectedQuestions[capa], respuesta: text, charCount, multiplicador };
-  });
-
-  const answeredCount = respuestasData.filter(r => r.charCount > 10).length;
-  const deepCount = respuestasData.filter(r => r.charCount > 25).length;
-  const basePS = answeredCount * 2;
-  const deepBonus = deepCount >= 2 ? 5 : 0;
-  const allDeepBonus = deepCount === capasActivas.length && capasActivas.length >= 4 ? 15 : 0;
-  const densityMultiplier = respuestasData.some(r => r.multiplicador > 1) ? 1.5 : 1.0;
-  const rawPS = basePS + deepBonus + allDeepBonus;
-  const totalPS = Math.round(rawPS * densityMultiplier);
-  const hasAnyDenseResponse = respuestasData.some(r => r.charCount > 150);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.9)" }}>
-      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border p-6 space-y-5" style={{ backgroundColor: PIZARRA, borderColor: `${VIOLET}30` }}>
-        <div className="text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-3" style={{ backgroundColor: `${VIOLET}15` }}>
-            <Zap size={16} style={{ color: VIOLET }} />
-            <span className="text-xs font-bold uppercase tracking-widest" style={{ color: VIOLET }}>Laboratorio de Introspección v3</span>
-          </div>
-          <p className="text-sm text-white font-bold">{segmentoNombre}</p>
-          <p className="text-[10px] text-slate-500 mt-1">Duración: {segmentoDuracionMin} min · {capasActivas.length} capas activas
-            {segmentoDuracionMin < 120 && <span className="text-slate-600 ml-1">(+120 min para Capas 3 y 4)</span>}
-          </p>
-        </div>
-        <div className="space-y-4">
-          {capasActivas.map((capa) => {
-            const config = CAPA_CONFIG[capa];
-            const Icon = config.icon;
-            const text = answers[capa] || "";
-            const charCount = text.length;
-            const mult = calcularMultiplicador(charCount);
-            return (
-              <div key={capa} className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${config.color}20` }}><Icon size={14} style={{ color: config.color }} /></div>
-                  <span className="text-xs font-bold" style={{ color: config.color }}>{config.label}</span>
-                  <div className="ml-auto flex items-center gap-2">
-                    <span className="text-[9px]" style={{ color: charCount > 150 ? GOLD : charCount > 50 ? AZURE : "#6b7280" }}>{charCount} chars</span>
-                    {mult > 1 && <span className="text-[8px] px-1.5 py-0.5 rounded-full font-black" style={{ backgroundColor: `${GOLD}20`, color: GOLD }}>1.5x</span>}
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-400 italic" style={{ fontFamily: "Georgia, serif" }}>{selectedQuestions[capa]}</p>
-                <textarea value={text} onChange={(e) => setAnswers(prev => ({ ...prev, [capa]: e.target.value }))} placeholder="Escribe tu reflexión aquí..." rows={3} className="w-full p-3 rounded-lg bg-black/40 border text-white text-sm placeholder:text-slate-600 focus:outline-none resize-none" style={{ borderColor: charCount > 150 ? config.color : charCount > 50 ? `${config.color}60` : "rgba(255,255,255,0.1)", fontFamily: "Georgia, serif" }} />
-                <div className="flex justify-between text-[9px] text-slate-600">
-                  <span>{charCount < 50 ? `${50 - charCount} chars más para respuesta válida` : charCount < 150 ? `${150 - charCount} chars más para multiplicador 1.5x` : "Multiplicador de Consciencia activo"}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="p-3 rounded-xl border text-center space-y-1" style={{ backgroundColor: `${VIOLET}08`, borderColor: `${VIOLET}20` }}>
-          <div className="flex items-center justify-center gap-2">
-            <span className="text-lg font-black" style={{ color: VIOLET }}>{totalPS} PS</span>
-            {hasAnyDenseResponse && <span className="text-[9px] px-2 py-0.5 rounded-full font-bold" style={{ backgroundColor: `${GOLD}20`, color: GOLD }}>BONIFICACIÓN x1.5</span>}
-          </div>
-          <div className="text-[9px] text-slate-500 space-x-2">
-            <span>Base: {basePS}</span>
-            {deepBonus > 0 && <span>· Profundidad: +{deepBonus}</span>}
-            {allDeepBonus > 0 && <span>· Maestría Total: +{allDeepBonus}</span>}
-            {densityMultiplier > 1 && <span>· Multiplicador: x{densityMultiplier}</span>}
-          </div>
-          <p className="text-[8px] text-slate-600 mt-1">Las respuestas se guardan para análisis del Doctor IA</p>
-        </div>
-        <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 py-3 rounded-lg text-sm text-slate-400 bg-white/5 transition-all">Omitir</button>
-          <button onClick={() => onSeal(totalPS, respuestasData, capasActivas)} disabled={answeredCount === 0} className="flex-1 py-3 rounded-lg text-sm font-bold transition-all disabled:opacity-50" style={{ backgroundColor: VIOLET, color: "#fff" }}>Sellar Introspección</button>
-        </div>
-      </motion.div>
-    </div>
   );
 }

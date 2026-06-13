@@ -1,12 +1,14 @@
-import type { SegmentoV5, Vehicle } from "./persistence";
+import type { SegmentoV5, SubTarea, Vehicle } from "./persistence";
 import {
   getPeldanosByProyectoLocal,
   updatePeldano,
   upsertPeldanoDesdeSegmento,
   refreshProyectoStatsPublic,
+  buildSubTareasResumenFromVehicle,
   type ProyectoPeldanoResumen,
   type RutasMentalesSet,
 } from "./proyectos";
+import { buildTranscriptFromVehicles, filterDecisionsForProyecto } from "./ringDecisionTranscript";
 import {
   buildDefaultClaridadDireccion,
   refreshClaridadPaso1,
@@ -67,13 +69,15 @@ function vehiclesForSegment(vehicles: Vehicle[], segmentoId: string): Vehicle[] 
 function buildResumenFromSegment(
   vehicles: Vehicle[],
   rutasMentales?: RutasMentalesSet,
-  fase?: string
+  fase?: string,
+  proyectoId?: string
 ): ProyectoPeldanoResumen {
   let duracionMin = 0;
   let psGanados = 0;
   let subsCumplidos = 0;
   let subsTotal = 0;
   const subResumen: NonNullable<ProyectoPeldanoResumen["subResumen"]> = [];
+  const subTareasAll: SubTarea[] = [];
 
   for (const v of vehicles) {
     duracionMin += v.duracionFinal ?? 0;
@@ -90,7 +94,23 @@ function buildResumenFromSegment(
         psGanados += sv.psOtorgados ?? 0;
       }
     }
+    if (v.tipoFlota === "situacion" && v.subTareas?.length) {
+      subTareasAll.push(...v.subTareas);
+      const cronometradas = v.subTareas.filter(st => st.enDesgloseCronometro);
+      for (const st of cronometradas) {
+        if (st.resultadoSituacion !== "cumplido" && st.resultadoSituacion !== "fallado") continue;
+        subsTotal++;
+        if (st.resultadoSituacion === "cumplido") subsCumplidos++;
+      }
+    }
   }
+
+  const transcriptAll = buildTranscriptFromVehicles(vehicles);
+  const decisionesEnumeradas = proyectoId
+    ? filterDecisionsForProyecto(transcriptAll, proyectoId)
+    : transcriptAll;
+  const subTareasResumen =
+    subTareasAll.length > 0 ? buildSubTareasResumenFromVehicle(subTareasAll) : undefined;
 
   const rutaActiva = rutasMentales?.rutas[rutasMentales.rutaActiva]?.label;
 
@@ -100,6 +120,9 @@ function buildResumenFromSegment(
     duracionMin,
     psGanados,
     subResumen: subResumen.length ? subResumen : undefined,
+    subTareasResumen,
+    decisionesEnumeradas: decisionesEnumeradas.length ? decisionesEnumeradas : undefined,
+    totalDecisiones: decisionesEnumeradas.length || undefined,
     segmentoResumen: {
       rutaMentalActiva: rutasMentales?.rutaActiva,
       rutaMentalLabel: rutaActiva,
@@ -136,7 +159,12 @@ export async function sealPeldanosFromSegmentos(
     if (peldano?.estado === "conquistado") continue;
 
     const segVehicles = vehiclesForSegment(vehicles, seg.id);
-    const resumen = buildResumenFromSegment(segVehicles, seg.rutasMentales, fase);
+    const resumen = buildResumenFromSegment(
+      segVehicles,
+      seg.rutasMentales,
+      fase,
+      seg.proyectoVinculadoId
+    );
 
     await updatePeldano(userId, seg.proyectoPeldanoId, {
       estado: "conquistado",

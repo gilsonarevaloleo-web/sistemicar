@@ -1,6 +1,10 @@
 import { deliverPuertaVoice, enqueueMissedPuertaVoice, isAppInBackground } from "./backgroundAttentionAlerts";
 import { findSegmentInNotificationState, readNotificationState } from "./notificationState";
-import { buildPuertaVozPhrase, speakEntropiaAtencionCruce } from "./puertaAtencionVoice";
+import {
+  buildPuertaVozPhrase,
+  buildPuertaVozPreventionPhrase,
+  speakEntropiaAtencionCruce,
+} from "./puertaAtencionVoice";
 import {
   CRUCE_GRACE_MIN,
   CRUCE_WARNING_MIN,
@@ -171,7 +175,7 @@ export function scheduleSegmentNotifications(segmentos: SegmentoV5[]): void {
           const segNow = findSegment(segId);
           if (!segNow || segNow.estado !== "pendiente" || segNow.vozDisparadaAt != null) return;
           showScheduledNotification({
-            title: `Puerta de atención: ${segNow.nombre}`,
+            title: `Puerta de atención: ${segNow.nombre} (${ordinal}/${total})`,
             body: phrase,
             tag: `seg-voz-${segId}`,
             voicePhrase: phrase,
@@ -184,11 +188,17 @@ export function scheduleSegmentNotifications(segmentos: SegmentoV5[]): void {
       scheduleIn(segmentTimers, msUntilPuertaEnd, () => {
         const segNow = findSegment(segId);
         if (!segNow || segNow.estado !== "pendiente") return;
+        const phrase = buildPuertaVozPreventionPhrase({
+          nombre: segNow.nombre,
+          ordinal,
+          total,
+          kind: "puerta_cierra",
+        });
         showScheduledNotification({
-          title: `Puerta cierra: ${segNow.nombre}`,
+          title: `Puerta cierra: ${segNow.nombre} (${ordinal}/${total})`,
           body: "Si no abriste la puerta en ±5 min, el segmento puede caer en entropía.",
           tag: `seg-puerta-end-${segId}`,
-          voicePhrase: `Puerta de ${segNow.nombre} cerrada. Abre atención consciente o caerás en entropía.`,
+          voicePhrase: phrase,
         });
       });
     }
@@ -204,11 +214,17 @@ export function scheduleSegmentNotifications(segmentos: SegmentoV5[]): void {
       scheduleIn(segmentTimers, msUntilCierre, () => {
         const segNow = findSegment(segId);
         if (!segNow || segNow.estado !== "activo") return;
+        const phrase = buildPuertaVozPreventionPhrase({
+          nombre: segNow.nombre,
+          ordinal,
+          total,
+          kind: "cierre_intencion",
+        });
         showScheduledNotification({
-          title: `Cierra con intención: ${segNow.nombre}`,
+          title: `Cierra con intención: ${segNow.nombre} (${ordinal}/${total})`,
           body: `Ventana de cierre ±${PUERTA_MARGIN_MIN} min de ${segNow.horaFin}. +2 PS si cierras a tiempo.`,
           tag: `seg-cierre-${segId}`,
-          voicePhrase: `Cierra ${segNow.nombre} con intención. Estás en la ventana de cierre.`,
+          voicePhrase: phrase,
         });
       });
 
@@ -216,11 +232,17 @@ export function scheduleSegmentNotifications(segmentos: SegmentoV5[]): void {
       scheduleIn(segmentTimers, msUntilEntropia, () => {
         const segNow = findSegment(segId);
         if (!segNow || segNow.estado === "entropia" || segNow.estado === "cerrado_manual") return;
+        const phrase = buildPuertaVozPreventionPhrase({
+          nombre: segNow.nombre,
+          ordinal,
+          total,
+          kind: "entropia_inminente",
+        });
         showScheduledNotification({
-          title: `Último aviso: ${segNow.nombre}`,
+          title: `Último aviso: ${segNow.nombre} (${ordinal}/${total})`,
           body: "Si no cerraste, el segmento pasará a entropía automáticamente.",
           tag: `seg-entropia-${segId}`,
-          voicePhrase: `Entropía inminente en ${segNow.nombre}. Cierra ahora o pierdes los puntos.`,
+          voicePhrase: phrase,
         });
       });
     }

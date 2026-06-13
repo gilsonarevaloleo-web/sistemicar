@@ -723,11 +723,10 @@ export default function Analytics() {
                   {ultimoSnapshot && (
                     <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                       <p className="text-[9px] font-bold uppercase text-slate-500 mb-3">PS por origen (último cierre)</p>
-                      <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <div className="grid grid-cols-3 gap-2 text-[10px]">
                         <div><span className="text-slate-500">Panorámico</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.panoramico}</span></div>
                         <div><span className="text-slate-500">Espectro</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.espectro}</span></div>
                         <div><span className="text-slate-500">Vehículos</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.vehiculos}</span></div>
-                        <div><span className="text-slate-500">Introspección</span> <span className="text-white font-bold ml-1">{ultimoSnapshot.psDesglose.introspeccion}</span></div>
                       </div>
                     </div>
                   )}

@@ -59,6 +59,17 @@ export function isGhostActiveVehicle(
 
   if (vehiclesById && isOrphanDesglosadorInterrupt(v, vehiclesById)) return true;
 
+  if (v.tipoFlota === "descanso") {
+    const match = v.criterioDetalle?.match(/([\d.]+)\s*min/i);
+    const plannedMin = match ? parseFloat(match[1]) : v.tipoDescanso === "punto_cero" ? 20 : 15;
+    const graceMin = v.tipoDescanso === "punto_cero" ? 45 : 20;
+    if (apertura > 0 && nowMs - apertura > (plannedMin + graceMin) * 60000) return true;
+    if (v.puntoCero?.fase === "completada") {
+      const since = v.puntoCero.faseInicioAt ?? apertura;
+      if (nowMs - since > 20 * 60_000) return true;
+    }
+  }
+
   return false;
 }
 

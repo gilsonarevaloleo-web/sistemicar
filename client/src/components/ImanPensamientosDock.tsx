@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, FlaskConical, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, FlaskConical, Plus, Send, Trash2 } from "lucide-react";
 import {
   RUTA_TACTICA_META,
   RUTA_TACTICA_ORDER,
@@ -15,6 +15,7 @@ import {
   NIDO_INBOX_ID,
   agruparImanPorNido,
   imanItemsParaDesglosador,
+  reservaEsEnviabeASituacion,
   type ImanProyectoOpcion,
 } from "@/lib/imanPensamientos";
 
@@ -27,7 +28,12 @@ type Props = {
     ruta: ReservaTacticaRuta,
     proyectoId?: string
   ) => void | Promise<void>;
-  onAbrirNido: (nidoId: string) => void | Promise<void>;
+  /** Envía una fila al situacional (S → ring, E → lista libre). */
+  onEnviarUnidad: (reservaId: string) => void | Promise<void>;
+  /** Envía varias filas seleccionadas, una por una. */
+  onEnviarSeleccion: (reservaIds: string[]) => void | Promise<void>;
+  /** @deprecated Preferir selección por unidad. Envía todo el nido ejecutable. */
+  onAbrirNido?: (nidoId: string) => void | Promise<void>;
   onDelete: (reservaId: string) => void | Promise<void>;
   onRutaChange: (reservaId: string, ruta: ReservaTacticaRuta) => void | Promise<void>;
   colors: {
@@ -43,6 +49,8 @@ export default function ImanPensamientosDock({
   proyectos,
   defaultProyectoId = "",
   onQuickAdd,
+  onEnviarUnidad,
+  onEnviarSeleccion,
   onAbrirNido,
   onDelete,
   onRutaChange,
@@ -54,13 +62,28 @@ export default function ImanPensamientosDock({
   const [rutaDraft, setRutaDraft] = useState<ReservaTacticaRuta>(() => getDefaultReservaRuta());
   const [proyectoDraft, setProyectoDraft] = useState(defaultProyectoId);
   const [adding, setAdding] = useState(false);
-  const [abriendoNido, setAbriendoNido] = useState<string | null>(null);
+  const [enviandoId, setEnviandoId] = useState<string | null>(null);
+  const [enviandoLote, setEnviandoLote] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     if (defaultProyectoId) setProyectoDraft(defaultProyectoId);
   }, [defaultProyectoId]);
 
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const activos = new Set(items.map(i => i.id));
+      const next = new Set([...prev].filter(id => activos.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [items]);
+
   const nidos = useMemo(() => agruparImanPorNido(items, proyectos), [items, proyectos]);
+
+  const enviableIds = useMemo(
+    () => new Set(items.filter(reservaEsEnviabeASituacion).map(i => i.id)),
+    [items]
+  );
 
   const preview = useMemo(() => {
     if (nidos.length === 0) return null;
@@ -73,6 +96,27 @@ export default function ImanPensamientosDock({
       short: RUTA_TACTICA_META[ruta].short,
     };
   }, [nidos]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleNidoSelection = (nidoItems: SituacionReservaItem[]) => {
+    const ids = nidoItems.filter(reservaEsEnviabeASituacion).map(i => i.id);
+    if (ids.length === 0) return;
+    const allSelected = ids.every(id => selectedIds.has(id));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) ids.forEach(id => next.delete(id));
+      else ids.forEach(id => next.add(id));
+      return next;
+    });
+  };
 
   const submitQuickAdd = async () => {
     const texto = draft.trim();
@@ -89,15 +133,34 @@ export default function ImanPensamientosDock({
     }
   };
 
-  const handleAbrirNido = async (nidoId: string) => {
-    if (abriendoNido) return;
-    setAbriendoNido(nidoId);
+  const handleEnviarUnidad = async (reservaId: string) => {
+    if (enviandoId || enviandoLote) return;
+    setEnviandoId(reservaId);
     try {
-      await onAbrirNido(nidoId);
+      await onEnviarUnidad(reservaId);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(reservaId);
+        return next;
+      });
     } finally {
-      setAbriendoNido(null);
+      setEnviandoId(null);
     }
   };
+
+  const handleEnviarSeleccion = async () => {
+    const ids = [...selectedIds].filter(id => enviableIds.has(id));
+    if (ids.length === 0 || enviandoLote) return;
+    setEnviandoLote(true);
+    try {
+      await onEnviarSeleccion(ids);
+      setSelectedIds(new Set());
+    } finally {
+      setEnviandoLote(false);
+    }
+  };
+
+  const selectedCount = [...selectedIds].filter(id => enviableIds.has(id)).length;
 
   return (
     <div
@@ -129,7 +192,7 @@ export default function ImanPensamientosDock({
             </span>
             {preview && !open && (
               <span className="ml-1 text-[8px] text-slate-500 truncate min-w-0">
-                {preview.nido} · [{preview.short}] {preview.texto}
+                Nido · {preview.nido} · [{preview.short}] {preview.texto}
               </span>
             )}
             <span className="ml-auto text-slate-500">
@@ -140,7 +203,27 @@ export default function ImanPensamientosDock({
           {open && (
             <div className="border-t px-3 pb-3 pt-2 space-y-2" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
               <p className="text-[7px] text-slate-500 leading-relaxed">{CRISOL_TAGLINE}</p>
-              <p className="text-[7px] text-slate-600 leading-relaxed">{CRISOL_MOS_HINT}</p>
+              <p className="text-[7px] text-slate-600 leading-relaxed">
+                {CRISOL_MOS_HINT} Marca las filas y envíalas al situacional una a una.
+              </p>
+
+              {selectedCount > 0 && (
+                <button
+                  type="button"
+                  disabled={enviandoLote}
+                  onClick={() => void handleEnviarSeleccion()}
+                  className="w-full py-2 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  style={{
+                    backgroundColor: `${colors.gold}18`,
+                    color: colors.gold,
+                    border: `1px solid ${colors.gold}45`,
+                  }}
+                  data-testid="iman-enviar-seleccion"
+                >
+                  <Send size={12} />
+                  {enviandoLote ? "Enviando…" : `Enviar ${selectedCount} al situacional`}
+                </button>
+              )}
 
               <select
                 value={proyectoDraft}
@@ -217,7 +300,10 @@ export default function ImanPensamientosDock({
                 ) : (
                   nidos.map(grupo => {
                     const ejecutables = imanItemsParaDesglosador(grupo.items);
-                    const abriendo = abriendoNido === grupo.nidoId;
+                    const enviablesNido = grupo.items.filter(reservaEsEnviabeASituacion);
+                    const nidoAllSelected =
+                      enviablesNido.length > 0 && enviablesNido.every(i => selectedIds.has(i.id));
+                    const nidoSomeSelected = enviablesNido.some(i => selectedIds.has(i.id));
                     return (
                       <div
                         key={grupo.nidoId}
@@ -226,43 +312,86 @@ export default function ImanPensamientosDock({
                         data-testid={`iman-nido-${grupo.nidoId}`}
                       >
                         <div className="px-2 py-1.5 flex items-center gap-2 border-b" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+                          {enviablesNido.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleNidoSelection(grupo.items)}
+                              className="w-4 h-4 rounded border flex items-center justify-center shrink-0 text-[8px]"
+                              style={{
+                                borderColor: nidoAllSelected || nidoSomeSelected ? colors.gold : "rgba(255,255,255,0.2)",
+                                backgroundColor: nidoAllSelected ? `${colors.gold}25` : "transparent",
+                                color: colors.gold,
+                              }}
+                              title="Seleccionar nido"
+                              data-testid={`iman-nido-select-${grupo.nidoId}`}
+                            >
+                              {nidoAllSelected ? "✓" : nidoSomeSelected ? "−" : ""}
+                            </button>
+                          )}
                           <span
                             className="w-1.5 h-1.5 rounded-full shrink-0"
                             style={{ backgroundColor: grupo.color ?? colors.cyan }}
                           />
                           <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 truncate flex-1">
+                            Nido ·{" "}
                             {grupo.etiqueta === "centro" ? "Centro" : grupo.nidoId === NIDO_INBOX_ID ? "" : "Proyecto"} ·{" "}
                             {grupo.titulo}
                           </span>
                           <span className="text-[8px] font-mono text-slate-600">{grupo.items.length}</span>
-                          {ejecutables.length > 0 && (
+                          {onAbrirNido && ejecutables.length > 1 && (
                             <button
                               type="button"
-                              disabled={abriendo}
-                              onClick={() => void handleAbrirNido(grupo.nidoId)}
-                              className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase disabled:opacity-50"
-                              style={{
-                                backgroundColor: "rgba(212,175,55,0.12)",
-                                color: colors.gold,
-                                border: "1px solid rgba(212,175,55,0.35)",
-                              }}
+                              disabled={enviandoLote}
+                              onClick={() => void onAbrirNido(grupo.nidoId)}
+                              className="px-1.5 py-0.5 rounded text-[6px] font-black uppercase opacity-60 hover:opacity-100 disabled:opacity-30"
+                              style={{ color: colors.plata, border: "1px solid rgba(148,163,184,0.2)" }}
                               data-testid={`iman-abrir-nido-${grupo.nidoId}`}
+                              title="Enviar todo el nido de una vez"
                             >
-                              {abriendo ? "…" : "Abrir nido"}
+                              Todo
                             </button>
                           )}
                         </div>
                         <div className="p-1.5 space-y-1">
                           {grupo.items.map(item => {
                             const itemRuta = item.ruta ?? "ejecucion";
+                            const enviable = reservaEsEnviabeASituacion(item);
+                            const selected = selectedIds.has(item.id);
+                            const enviando = enviandoId === item.id;
+                            const destinoLabel =
+                              itemRuta === "situacion_desglosador"
+                                ? "Ring"
+                                : itemRuta === "ejecucion"
+                                  ? "Lista"
+                                  : "M";
                             return (
                               <div
                                 key={item.id}
                                 className="rounded-lg p-2 flex flex-col gap-1.5"
-                                style={{ backgroundColor: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.04)" }}
+                                style={{
+                                  backgroundColor: selected ? "rgba(212,175,55,0.06)" : "rgba(0,0,0,0.25)",
+                                  border: `1px solid ${selected ? "rgba(212,175,55,0.25)" : "rgba(255,255,255,0.04)"}`,
+                                }}
                                 data-testid={`iman-item-${item.id}`}
                               >
                                 <div className="flex items-start gap-2">
+                                  {enviable ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleSelect(item.id)}
+                                      className="w-4 h-4 mt-0.5 rounded border flex items-center justify-center shrink-0 text-[8px]"
+                                      style={{
+                                        borderColor: selected ? colors.gold : "rgba(255,255,255,0.2)",
+                                        backgroundColor: selected ? `${colors.gold}22` : "transparent",
+                                        color: colors.gold,
+                                      }}
+                                      data-testid={`iman-select-${item.id}`}
+                                    >
+                                      {selected ? "✓" : ""}
+                                    </button>
+                                  ) : (
+                                    <span className="w-4 shrink-0" />
+                                  )}
                                   <span
                                     className="text-[8px] font-black px-1 py-0.5 rounded shrink-0"
                                     style={{ backgroundColor: "rgba(148,163,184,0.12)", color: colors.plata }}
@@ -277,13 +406,13 @@ export default function ImanPensamientosDock({
                                   )}
                                 </div>
                                 {(item.segmentoNombre || item.origenVehiculoTitulo) && (
-                                  <p className="text-[7px] text-slate-600 truncate pl-5">
+                                  <p className="text-[7px] text-slate-600 truncate pl-6">
                                     {item.segmentoNombre ? `seg: ${item.segmentoNombre}` : ""}
                                     {item.segmentoNombre && item.origenVehiculoTitulo ? " · " : ""}
                                     {item.origenVehiculoTitulo ? `de: ${item.origenVehiculoTitulo}` : ""}
                                   </p>
                                 )}
-                                <div className="flex flex-wrap gap-1 pl-5">
+                                <div className="flex flex-wrap gap-1 pl-6">
                                   {RUTA_TACTICA_ORDER.map(r => (
                                     <button
                                       key={r}
@@ -301,12 +430,32 @@ export default function ImanPensamientosDock({
                                       {RUTA_TACTICA_META[r].short}
                                     </button>
                                   ))}
-                                </div>
-                                <div className="flex flex-wrap gap-1 pl-5">
+                                  {enviable && (
+                                    <button
+                                      type="button"
+                                      disabled={enviando || enviandoLote}
+                                      onClick={() => void handleEnviarUnidad(item.id)}
+                                      className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase flex items-center gap-0.5 ml-auto disabled:opacity-50"
+                                      style={{
+                                        backgroundColor: `${colors.gold}15`,
+                                        color: colors.gold,
+                                        border: `1px solid ${colors.gold}40`,
+                                      }}
+                                      data-testid={`iman-enviar-${item.id}`}
+                                      title={
+                                        itemRuta === "situacion_desglosador"
+                                          ? "Enviar al ring situacional"
+                                          : "Enviar a lista libre del situacional"
+                                      }
+                                    >
+                                      <Send size={9} />
+                                      {enviando ? "…" : `→ ${destinoLabel}`}
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => void onDelete(item.id)}
-                                    className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase ml-auto"
+                                    className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase"
                                     style={{
                                       backgroundColor: "rgba(239,68,68,0.08)",
                                       color: "#f87171",

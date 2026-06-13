@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  coloresEnProgreso,
   confirmColor,
   faseDuracionesMin,
   initPuntoCeroSession,
@@ -31,6 +32,14 @@ describe("PuntoCeroEngine", () => {
     const base = 1_700_000_000_000;
     const s = initPuntoCeroSession("dia", 15, base);
     assert.equal(shouldEnterPasiva(s, base + 5 * 60000, s.coloresConfirmados), true);
+  });
+
+  it("no entra a pasiva por tiempo si faltan colores del arcoíris", () => {
+    const base = 1_700_000_000_000;
+    let s = initPuntoCeroSession("dia", 15, base);
+    s = confirmColor(s, 0);
+    assert.equal(coloresEnProgreso(s.coloresConfirmados), true);
+    assert.equal(shouldEnterPasiva(s, base + 10 * 60000, s.coloresConfirmados), false);
   });
 
   it("tickPuntoCero transiciona a pasiva y luego completada", () => {

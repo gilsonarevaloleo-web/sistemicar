@@ -269,17 +269,14 @@ export function classifyPsSource(source: string): keyof Omit<PsDesglose, "total"
   return "otros";
 }
 
-export function computePsDesglose(
-  logs: SovereigntyPointsLog[],
-  introspeccionPs: number = 0
-): PsDesglose {
+export function computePsDesglose(logs: SovereigntyPointsLog[]): PsDesglose {
   const desglose: PsDesglose = {
     panoramico: 0,
     espectro: 0,
     vehiculos: 0,
-    introspeccion: introspeccionPs,
+    introspeccion: 0,
     otros: 0,
-    total: introspeccionPs,
+    total: 0,
   };
 
   for (const log of logs) {
@@ -714,7 +711,6 @@ export function buildDailySnapshot(params: {
   vehicles: Vehicle[];
   dayStartMs: number;
   logs: SovereigntyPointsLog[];
-  introspeccionPs?: number;
   events?: FocusBandEvent[];
   conquistaMin?: number;
   entropiaMin?: number;
@@ -726,7 +722,6 @@ export function buildDailySnapshot(params: {
     vehicles,
     dayStartMs,
     logs,
-    introspeccionPs = 0,
     events = [],
     conquistaMin = 0,
     entropiaMin = 0,
@@ -786,7 +781,7 @@ export function buildDailySnapshot(params: {
     profundidadMaxima,
     resistencia,
     estadoAtencional,
-    psDesglose: computePsDesglose(logs, introspeccionPs),
+    psDesglose: computePsDesglose(logs),
     ratioConquista: Math.round(ratioConquista * 100) / 100,
     segmentosCerradosManual: cerradosManual,
     segmentosEntropia: entropiaSeg,
@@ -1080,7 +1075,7 @@ export function aggregateCartografiaSemanal(
     ratioConquista: Math.round(s.ratioConquista * 100),
     cerradosManual: s.segmentosCerradosManual,
     entropia: s.segmentosEntropia,
-    psPanoramico: s.psDesglose.panoramico + s.psDesglose.introspeccion,
+    psPanoramico: s.psDesglose.panoramico,
   }));
 }
 

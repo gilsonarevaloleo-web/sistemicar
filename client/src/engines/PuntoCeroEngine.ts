@@ -63,15 +63,22 @@ export function coronaConfirmada(colores: boolean[]): boolean {
   return colores.length >= PUNTO_CERO_COLOR_COUNT && colores[PUNTO_CERO_COLOR_COUNT - 1] === true;
 }
 
+/** Algún color confirmado pero aún no los 7 — no interrumpir la secuencia del arcoíris. */
+export function coloresEnProgreso(colores: boolean[]): boolean {
+  return colores.some(Boolean) && !todosColoresConfirmados(colores);
+}
+
 export function shouldEnterPasiva(
   session: PuntoCeroSession,
   now: number,
   colores: boolean[]
 ): boolean {
   if (session.fase === "pasiva" || session.fase === "completada") return false;
+  if (todosColoresConfirmados(colores)) return true;
+  if (coloresEnProgreso(colores)) return false;
   const { activaMin } = faseDuracionesMin(session.duracionTotalMin);
   const elapsed = elapsedSesionMin(session, now);
-  return todosColoresConfirmados(colores) || elapsed >= activaMin;
+  return elapsed >= activaMin;
 }
 
 export function shouldComplete(session: PuntoCeroSession, now: number): boolean {

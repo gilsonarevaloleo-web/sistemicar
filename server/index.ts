@@ -927,7 +927,6 @@ SISTEMICAR es una plataforma de ingeniería personal y alquimia de consciencia. 
 - Monitor de Músculo Atencional: mide fatiga y capas de oposición
 - 4 Capas de Oposición: Pereza → Fractura de Enfoque → Agotamiento → Rendición
 - Motor de Transmutación: +25 PS por completar misiones en capas difíciles
-- Laboratorio de Introspección: reflexión post-segmento con preguntas por capa de fricción
 - Puntos de Soberanía por cada acción (crear, iniciar, cerrar segmentos)
 
 ### 4. Historial Unificado

@@ -737,15 +737,13 @@ function unparkVehicleOnClose(vehicleId: string): void {
 
 /** Nunca dejar que un snapshot remoto (o aparcado stale) reabra un vehículo cerrado localmente. */
 function enforceLocalClosedOverrides(incoming: Vehicle[], current: Vehicle[]): Vehicle[] {
-  const closedById = new Map(
-    current.filter(v => v.status !== "activo").map(v => [v.id, v])
-  );
   return incoming.map(v => {
     if (v.status !== "activo") return v;
-    const closed = closedById.get(v.id);
+    const closed = findLocalClosedOverride(v, current);
     if (closed) return mergeActiveVehicleSessionState(v, closed);
-    if (wasVehicleRecentlyClosed(v.id)) {
-      const fromCurrent = current.find(c => c.id === v.id && c.status !== "activo");
+    if (wasVehicleRecentlyClosed(v.id, v.clientRequestId)) {
+      const fromCurrent = findLocalClosedOverride(v, current) ??
+        current.find(c => c.id === v.id && c.status !== "activo");
       if (fromCurrent) return mergeActiveVehicleSessionState(v, fromCurrent);
     }
     return v;
@@ -860,10 +858,25 @@ async function persistVehicleToFirebase(
     const updatedLocal = latestLocal.map(v =>
       v.id === provisionalId ? { ...v, id: docRef.id } : v
     );
+    const remapped = updatedLocal.find(v => v.id === docRef.id);
     saveLocalVehicles(updatedLocal);
     backupToLocal("vehicles", updatedLocal);
     window.dispatchEvent(new CustomEvent("vehicles-updated"));
     console.log(`[addVehicle] Firebase OK → ${docRef.id}`);
+    if (remapped && remapped.status !== "activo") {
+      notifyVehicleClosed(docRef.id, remapped.clientRequestId);
+      const { updateDoc } = await import("firebase/firestore");
+      await updateDoc(
+        doc(db, path, docRef.id),
+        omitUndefined({
+          status: remapped.status,
+          ...(remapped.cierreAt != null ? { cierreAt: remapped.cierreAt } : {}),
+          ...(remapped.duracionFinal != null ? { duracionFinal: remapped.duracionFinal } : {}),
+          ...(remapped.cierreManual != null ? { cierreManual: remapped.cierreManual } : {}),
+        })
+      );
+      console.log(`[addVehicle] Cierre local sincronizado tras remap → ${docRef.id}`);
+    }
   } catch (error) {
     console.error("[addVehicle] Firebase background error:", error);
     activateSovereignModeGlobal("Guardando vehículo localmente");
@@ -882,7 +895,7 @@ export function mergeMissingLocalActives(sorted: Vehicle[], nowMs = Date.now()):
     if (v.status !== "activo" || v.autoVerdad) return false;
     if (firebaseIds.has(v.id)) return false;
     if (v.clientRequestId && firebaseClientRequestIds.has(v.clientRequestId)) return false;
-    if (wasVehicleRecentlyClosed(v.id)) return false;
+    if (wasVehicleRecentlyClosed(v.id, v.clientRequestId)) return false;
     if (isOrphanDesglosadorInterrupt(v, snapshotById)) return false;
     const snap = snapshotById.get(v.id);
     if (snap && snap.status !== "activo") return false;
@@ -926,7 +939,7 @@ export function saveLocalVehicles(vehicles: Vehicle[]): boolean {
     if (incoming && incoming.status !== "activo") return false;
     if (newIds.has(v.id)) return false;
     if (v.clientRequestId && newClientRequestIds.has(v.clientRequestId)) return false;
-    if (wasVehicleRecentlyClosed(v.id)) return false;
+    if (wasVehicleRecentlyClosed(v.id, v.clientRequestId)) return false;
     return shouldPreserveLocalActivo(v, nowMs);
   });
   if (preserved.length > 0) {
@@ -954,9 +967,11 @@ export function saveLocalVehicles(vehicles: Vehicle[]): boolean {
 // immediately after a close, since its provisional ID isn't in Firebase yet).
 const RECENTLY_CLOSED_MS = 60_000;
 const RECENTLY_CLOSED_SESSION_KEY = "sistemicar_recently_closed_vehicles";
+const RECENTLY_CLOSED_CRQ_SESSION_KEY = "sistemicar_recently_closed_crq";
 const RECENTLY_CLOSED_SESSION_TTL_MS = 5 * 60_000;
 
 const _recentlyClosedIds = new Map<string, number>();
+const _recentlyClosedCrq = new Map<string, number>();
 
 function readClosedIdsFromSession(): Record<string, number> {
   try {
@@ -982,15 +997,122 @@ function writeClosedIdToSession(vehicleId: string): void {
   } catch { /* sessionStorage unavailable */ }
 }
 
-/** True if this vehicle was closed recently (memory or sessionStorage, survives F5). */
-export function wasVehicleRecentlyClosed(vehicleId: string): boolean {
-  const mem = _recentlyClosedIds.get(vehicleId);
-  if (mem != null && Date.now() - mem < RECENTLY_CLOSED_MS) return true;
-  const session = readClosedIdsFromSession()[vehicleId];
-  return session != null && Date.now() - session < RECENTLY_CLOSED_SESSION_TTL_MS;
+function readClosedCrqFromSession(): Record<string, number> {
+  try {
+    const raw = sessionStorage.getItem(RECENTLY_CLOSED_CRQ_SESSION_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
-export function notifyVehicleClosed(vehicleId?: string): void {
+function writeClosedCrqToSession(clientRequestId: string): void {
+  try {
+    const now = Date.now();
+    const data = readClosedCrqFromSession();
+    data[clientRequestId] = now;
+    const cutoff = now - RECENTLY_CLOSED_SESSION_TTL_MS;
+    for (const [id, t] of Object.entries(data)) {
+      if (t < cutoff) delete data[id];
+    }
+    sessionStorage.setItem(RECENTLY_CLOSED_CRQ_SESSION_KEY, JSON.stringify(data));
+  } catch { /* sessionStorage unavailable */ }
+}
+
+/** Cierre local que debe ganar sobre un snapshot remoto aún `activo`. */
+export function findLocalClosedOverride(
+  incoming: Vehicle,
+  locals: Vehicle[]
+): Vehicle | undefined {
+  const byId = locals.find(l => l.id === incoming.id && l.status !== "activo");
+  if (byId) return byId;
+  if (incoming.clientRequestId) {
+    const byCrq = locals.find(
+      l => l.clientRequestId === incoming.clientRequestId && l.status !== "activo"
+    );
+    if (byCrq) return byCrq;
+  }
+  return undefined;
+}
+
+/** Resuelve estado local por id o clientRequestId (p. ej. tras remap provisional → Firebase). */
+export function resolveLocalVehicleMatch(
+  remote: Vehicle,
+  locals: Vehicle[]
+): Vehicle | undefined {
+  const byId = locals.find(l => l.id === remote.id);
+  if (byId) return byId;
+  if (!remote.clientRequestId) return undefined;
+  return locals.find(l => l.clientRequestId === remote.clientRequestId);
+}
+
+function dedupeVehiclesPreferClosed(vehicles: Vehicle[]): Vehicle[] {
+  const byId = new Map<string, Vehicle>();
+  const byCrq = new Map<string, Vehicle>();
+
+  for (const v of vehicles) {
+    const prev = byId.get(v.id);
+    if (!prev) {
+      byId.set(v.id, v);
+    } else if (prev.status === "activo" && v.status !== "activo") {
+      byId.set(v.id, v);
+    } else if (
+      prev.status !== "activo" &&
+      v.status === "activo" &&
+      !wasVehicleRecentlyClosed(v.id, v.clientRequestId)
+    ) {
+      // Mantener cerrado salvo que no haya señal reciente de cierre.
+    } else if (v.status !== "activo") {
+      byId.set(v.id, v);
+    }
+
+    if (v.clientRequestId) {
+      const prevCrq = byCrq.get(v.clientRequestId);
+      if (!prevCrq || (prevCrq.status === "activo" && v.status !== "activo")) {
+        byCrq.set(v.clientRequestId, v);
+      }
+    }
+  }
+
+  const out = [...byId.values()];
+  for (const v of out) {
+    if (v.status !== "activo" || !v.clientRequestId) continue;
+    const closedTwin = byCrq.get(v.clientRequestId);
+    if (
+      closedTwin &&
+      closedTwin.id !== v.id &&
+      closedTwin.status !== "activo" &&
+      wasVehicleRecentlyClosed(closedTwin.id, closedTwin.clientRequestId)
+    ) {
+      const idx = out.findIndex(x => x.id === v.id);
+      if (idx >= 0) out[idx] = { ...closedTwin, id: v.id };
+    }
+  }
+  return out;
+}
+
+/** True if this vehicle was closed recently (memory or sessionStorage, survives F5). */
+export function wasVehicleRecentlyClosed(
+  vehicleId: string,
+  clientRequestId?: string
+): boolean {
+  const now = Date.now();
+  const mem = _recentlyClosedIds.get(vehicleId);
+  if (mem != null && now - mem < RECENTLY_CLOSED_MS) return true;
+  const session = readClosedIdsFromSession()[vehicleId];
+  if (session != null && now - session < RECENTLY_CLOSED_SESSION_TTL_MS) return true;
+  if (clientRequestId) {
+    const memCrq = _recentlyClosedCrq.get(clientRequestId);
+    if (memCrq != null && now - memCrq < RECENTLY_CLOSED_MS) return true;
+    const sessionCrq = readClosedCrqFromSession()[clientRequestId];
+    if (sessionCrq != null && now - sessionCrq < RECENTLY_CLOSED_SESSION_TTL_MS) return true;
+  }
+  return false;
+}
+
+export function notifyVehicleClosed(vehicleId?: string, clientRequestId?: string): void {
   if (vehicleId) {
     const now = Date.now();
     _recentlyClosedIds.set(vehicleId, now);
@@ -999,6 +1121,15 @@ export function notifyVehicleClosed(vehicleId?: string): void {
     const cutoff = now - RECENTLY_CLOSED_MS;
     for (const [id, t] of _recentlyClosedIds) {
       if (t < cutoff) _recentlyClosedIds.delete(id);
+    }
+  }
+  if (clientRequestId) {
+    const now = Date.now();
+    _recentlyClosedCrq.set(clientRequestId, now);
+    writeClosedCrqToSession(clientRequestId);
+    const cutoff = now - RECENTLY_CLOSED_MS;
+    for (const [id, t] of _recentlyClosedCrq) {
+      if (t < cutoff) _recentlyClosedCrq.delete(id);
     }
   }
 }
@@ -1067,12 +1198,14 @@ export async function reconcileGhostActiveVehicles(userId: string): Promise<stri
   const now = Date.now();
   const dayStartMs = getJournalDayStartMs(now);
   const closedIds: string[] = [];
+  const local = getLocalVehicles();
+  const byId = new Map(local.map(v => [v.id, v]));
 
-  const closeGhost = async (vehicleId: string, aperturaAt: number) => {
+  const closeGhost = async (vehicleId: string, aperturaAt: number, clientRequestId?: string) => {
     const cierreAt = now;
     const duracionFinal = Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));
     try {
-      notifyVehicleClosed(vehicleId);
+      notifyVehicleClosed(vehicleId, clientRequestId ?? byId.get(vehicleId)?.clientRequestId);
       await updateVehicle(userId, vehicleId, { cierreAt, duracionFinal, cierreManual: false });
       await updateVehicleStatus(userId, vehicleId, "archivado");
       closedIds.push(vehicleId);
@@ -1082,14 +1215,11 @@ export async function reconcileGhostActiveVehicles(userId: string): Promise<stri
     }
   };
 
-  const local = getLocalVehicles();
-  const byId = new Map(local.map(v => [v.id, v]));
-
   for (const v of local) {
-    if (wasVehicleRecentlyClosed(v.id)) continue;
+    if (wasVehicleRecentlyClosed(v.id, v.clientRequestId)) continue;
     if (!isGhostActiveVehicle(v, now, dayStartMs, byId)) continue;
     const apertura = v.aperturaAt || v.createdAt?.getTime?.() || now - 60000;
-    await closeGhost(v.id, apertura);
+    await closeGhost(v.id, apertura, v.clientRequestId);
   }
 
   if (isFirebaseConfigured() && db) {
@@ -1100,10 +1230,10 @@ export async function reconcileGhostActiveVehicles(userId: string): Promise<stri
         if (closedIds.includes(d.id)) continue;
         const r = d.data() as Vehicle;
         const vehicle: Vehicle = { ...r, id: d.id, createdAt: r.createdAt ? new Date(r.createdAt as unknown as number) : new Date() };
-        if (wasVehicleRecentlyClosed(d.id)) continue;
+        if (wasVehicleRecentlyClosed(d.id, vehicle.clientRequestId)) continue;
         if (!isGhostActiveVehicle(vehicle, now, dayStartMs, byId)) continue;
         const apertura = vehicle.aperturaAt || 0;
-        await closeGhost(d.id, apertura || now - 60000);
+        await closeGhost(d.id, apertura || now - 60000, vehicle.clientRequestId);
       }
     } catch (e) {
       console.warn("[Centinela] reconcileGhostActiveVehicles Firebase:", e);
@@ -1148,23 +1278,23 @@ export function subscribeToVehicles(
       const journalStartMs = getJournalDayStartMs();
       const thirtyDaysAgoMs = journalStartMs - 30 * 24 * 60 * 60 * 1000;
       const existingLocalForFilter = getLocalVehicles();
-      const localById = new Map(existingLocalForFilter.map(v => [v.id, v]));
 
       const activos = data.filter(v => {
         if (v.status !== "activo") return false;
-        if (wasVehicleRecentlyClosed(v.id)) return false;
-        const localV = localById.get(v.id);
+        if (wasVehicleRecentlyClosed(v.id, v.clientRequestId)) return false;
+        const localV = resolveLocalVehicleMatch(v, existingLocalForFilter);
         if (localV && localV.status !== "activo") return false;
+        if (findLocalClosedOverride(v, existingLocalForFilter)) return false;
         return true;
       });
 
       const cerradosLocalesPendientesSync = data
         .filter(v => {
           if (v.status !== "activo" || v.autoVerdad) return false;
-          const localV = localById.get(v.id);
+          const localV = resolveLocalVehicleMatch(v, existingLocalForFilter);
           return !!localV && localV.status !== "activo";
         })
-        .map(v => mergeActiveVehicleSessionState(v, localById.get(v.id)));
+        .map(v => mergeActiveVehicleSessionState(v, resolveLocalVehicleMatch(v, existingLocalForFilter)!));
 
       const completadosRecientes = data.filter(v => {
         if (v.status !== "cumplido" && v.status !== "archivado") return false;
@@ -1212,7 +1342,7 @@ export function subscribeToVehicles(
       // never destroy in-progress sub-vehicle state (subVehiculos are session-local only)
       const existingLocal = getLocalVehicles();
       let sortedWithSubs = sorted.map(v => {
-        const localV = existingLocal.find(lv => lv.id === v.id);
+        const localV = resolveLocalVehicleMatch(v, existingLocal);
         return mergeActiveVehicleSessionState(v, localV);
       });
 
@@ -1255,6 +1385,7 @@ export function subscribeToVehicles(
 
       // Archiva interrupciones huérfanas (no las elimina — deben aparecer en historial).
       sortedWithSubs = archiveOrphanDesglosadorInterrupts(sortedWithSubs);
+      sortedWithSubs = dedupeVehiclesPreferClosed(sortedWithSubs);
 
       // Persist the merged result locally (always save the fullest result)
       if (sortedWithSubs.length > 0) {
@@ -1314,7 +1445,7 @@ export async function updateVehicleStatus(
 ): Promise<void> {
   console.log(`[updateVehicleStatus] vehicleId: ${vehicleId} → status: ${status}`);
   if (status !== "activo" && status !== "pendiente") {
-    notifyVehicleClosed(vehicleId);
+    notifyVehicleClosed(vehicleId, localVehicle?.clientRequestId);
   }
   const localVehicle = getLocalVehicles().find(v => v.id === vehicleId);
   const closeFields =
@@ -1394,7 +1525,8 @@ export async function updateVehicle(
       const { updateDoc } = await import("firebase/firestore");
       await updateDoc(doc(db, path, vehicleId), omitUndefined(updates as Record<string, unknown>));
       if (updates.status === "cumplido" || updates.status === "archivado") {
-        notifyVehicleClosed(vehicleId);
+        const localV = getLocalVehicles().find(v => v.id === vehicleId);
+        notifyVehicleClosed(vehicleId, localV?.clientRequestId);
       }
     } catch (error) {
       console.warn("[updateVehicle] Firebase falló; cambios conservados en local:", error);
@@ -5210,78 +5342,6 @@ export async function addWeeklyAuditLog(
     const locals = getLocalWeeklyAudit();
     locals.push(entry);
     saveLocalWeeklyAudit(locals);
-  }
-}
-
-export interface IntrospectionEntry {
-  id: string;
-  segmentoNombre: string;
-  segmentoDuracionMin: number;
-  capasActivas: number[];
-  respuestas: { capa: number; pregunta: string; respuesta: string; charCount: number; multiplicador: number }[];
-  totalPS: number;
-  ai_feedback_status: "pending" | "processed";
-  timestamp: Date;
-}
-
-/** Suma PS de introspecciones de un día (fecha Lima YYYY-MM-DD). */
-export async function getIntrospectionPsForDay(userId: string, fecha: string): Promise<number> {
-  const inDay = (ts: Date | string | number) => getLimaDateString(new Date(ts).getTime()) === fecha;
-  let total = 0;
-
-  try {
-    const locals = JSON.parse(localStorage.getItem("local_introspection") || "[]") as IntrospectionEntry[];
-    for (const e of locals) {
-      if (inDay(e.timestamp)) total += e.totalPS || 0;
-    }
-  } catch {
-    // ignore
-  }
-
-  if (isFirebaseConfigured() && db) {
-    try {
-      const path = getPrivatePath(userId, "introspection_logs");
-      const { query: fbQuery, where, getDocs } = await import("firebase/firestore");
-      const q = fbQuery(collection(db, path), where("fecha", "==", fecha));
-      const snap = await getDocs(q);
-      snap.docs.forEach(d => {
-        total += (d.data().totalPS as number) || 0;
-      });
-    } catch {
-      // local total
-    }
-  }
-
-  return total;
-}
-
-export async function saveIntrospectionEntry(
-  userId: string,
-  data: Omit<IntrospectionEntry, "id" | "timestamp">
-): Promise<void> {
-  const entry: IntrospectionEntry = {
-    id: `intro_${Date.now()}`,
-    ...data,
-    timestamp: new Date()
-  };
-
-  if (isFirebaseConfigured() && db) {
-    try {
-      const path = getPrivatePath(userId, "introspection_logs");
-      await addDoc(collection(db, path), {
-        ...entry,
-        timestamp: serverTimestamp()
-      });
-    } catch (error) {
-      console.error("Error saving introspection:", error);
-      const locals = JSON.parse(localStorage.getItem("local_introspection") || "[]");
-      locals.push(entry);
-      localStorage.setItem("local_introspection", JSON.stringify(locals));
-    }
-  } else {
-    const locals = JSON.parse(localStorage.getItem("local_introspection") || "[]");
-    locals.push(entry);
-    localStorage.setItem("local_introspection", JSON.stringify(locals));
   }
 }
 

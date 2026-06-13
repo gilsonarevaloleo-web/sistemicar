@@ -10,6 +10,7 @@ import {
   type Planilla,
   type UserProgression,
   type Vehicle,
+  reconcileGhostActiveVehicles,
 } from "@/lib/persistence";
 import { getJournalDateString } from "@/lib/segmentTime";
 import {
@@ -29,7 +30,7 @@ import {
   scheduleSegmentNotifications,
 } from "@/lib/notifications";
 import { registerNotificationStateProvider } from "@/lib/notificationState";
-import { dispatchConcienciaClockTick } from "@/lib/concienciaClock";
+import { dispatchConcienciaClockTick, burstConcienciaClockTick } from "@/lib/concienciaClock";
 import { recoverSpeechQueue, warmupSpeechSynthesis } from "@/lib/speechQueue";
 
 const TICK_MS_FOREGROUND = 10_000;
@@ -128,6 +129,7 @@ export function SegmentAttentionBackground() {
         if (result.changed) {
           dispatchSegmentAttentionTick();
         }
+        dispatchConcienciaClockTick();
       } catch (e) {
         console.error("[SegmentAttentionBackground] tick", e);
       } finally {
@@ -166,7 +168,9 @@ export function SegmentAttentionBackground() {
         console.log(`[Voz] Reproduciendo ${flushed} aviso(s) de segundo plano`);
       }
       resetInterval();
+      burstConcienciaClockTick();
       void runTick();
+      if (user) void reconcileGhostActiveVehicles(user.uid);
     };
 
     document.addEventListener("visibilitychange", onVisible);

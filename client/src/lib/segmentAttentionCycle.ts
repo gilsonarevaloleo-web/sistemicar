@@ -18,6 +18,7 @@ import {
   applyDayRolloverEntropia,
   applySegmentAttentionTick,
   collectVozPuertaEvents,
+  segmentOrdinalIndex,
   type SegmentAttentionEvent,
 } from "./segmentAttentionEngine";
 import {
@@ -26,7 +27,7 @@ import {
   getActiveSegment,
 } from "./segmentCrossEntropyEngine";
 import { deliverSegmentEntropiaAlert, isAppInBackground } from "./backgroundAttentionAlerts";
-import { speakEntropiaAtencionCruce, speakPuertaSegmento } from "./puertaAtencionVoice";
+import { buildPuertaVozPreventionPhrase, speakEntropiaAtencionCruce, speakPuertaSegmento } from "./puertaAtencionVoice";
 import { setActiveSegmento } from "./evento-universal";
 import { getJournalDateString, getLimaDayStartMs } from "./segmentTime";
 
@@ -141,7 +142,19 @@ export async function runSegmentAttentionCycle(
         `ENTROPÍA: ${ev.nombre}`,
         "Puerta abierta por el sistema. −2 PS. Cierra la puerta para recuperar +2 PS."
       );
-      deliverSegmentEntropiaAlert({ nombre: ev.nombre, reason: "missed_puerta" });
+      const segsForOrdinal = segChanged ? segmentosAfterVoz : planilla.segmentos;
+      const ordinal = segmentOrdinalIndex(segsForOrdinal, ev.segId);
+      const total = segsForOrdinal.length;
+      deliverSegmentEntropiaAlert({
+        nombre: ev.nombre,
+        reason: "missed_puerta",
+        voicePhrase: buildPuertaVozPreventionPhrase({
+          nombre: ev.nombre,
+          ordinal,
+          total,
+          kind: "puerta_perdida_sistema",
+        }),
+      });
       setActiveSegmento(userId, ev.segId);
       void deductSovereigntyPoints(userId, 2, "Puerta sistema (entropía): " + ev.nombre).catch(e =>
         console.error("[auto_apertura] deductPS", e)
@@ -218,7 +231,7 @@ export async function runSegmentAttentionCycle(
   for (const vehicleId of autoCloseIds) {
     const vehicle = vehicles.find(v => v.id === vehicleId);
     if (!vehicle || vehicle.status !== "activo") continue;
-    notifyVehicleClosed(vehicleId);
+    notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
     const cierreAt = Date.now();
     const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || cierreAt;
     const duracionFinal = Math.max(1, Math.round((cierreAt - aperturaAt) / 60000));

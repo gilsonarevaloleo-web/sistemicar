@@ -46,6 +46,7 @@ import { RUTA_BANDA_META } from "@/lib/rutaEnfoque";
 import { RutasMentalesGrafo } from "@/components/RutasMentalesGrafo";
 import { RutasMentalesEditor } from "@/components/RutasMentalesEditor";
 import { PeldanoSituacionArbol } from "@/components/PeldanoSituacionArbol";
+import { PeldanoDecisionesEnumeradas } from "@/components/PeldanoDecisionesEnumeradas";
 
 const PIZARRA = "#0a0a0a";
 const CYAN = "#00FFC3";
@@ -400,6 +401,15 @@ export default function ProyectosPage() {
           />
         </div>
 
+        {(proyecto.pasosEjecutadosLog?.length ?? 0) > 0 && (
+          <div className="mb-4 p-3 rounded-xl border border-white/10" style={{ backgroundColor: PIZARRA }}>
+            <PeldanoDecisionesEnumeradas
+              decisiones={proyecto.pasosEjecutadosLog!}
+              titulo="Pasos desde el Crisol"
+            />
+          </div>
+        )}
+
         {enCursoPlan.length > 0 && (
           <div className="mb-4">
             <p className="text-[10px] font-black uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: CYAN }}>
@@ -574,6 +584,13 @@ export default function ProyectosPage() {
                             <p>
                               Bloques: {pel.resumen.subsCumplidos}/{pel.resumen.subsTotal} ·{" "}
                               {pel.resumen.duracionMin ?? 0} min · {pel.resumen.psGanados ?? 0} PS
+                              {(pel.resumen.totalDecisiones ?? 0) > 0 && (
+                                <span style={{ color: CYAN }}>
+                                  {" "}
+                                  · {pel.resumen.totalDecisiones} decisión
+                                  {pel.resumen.totalDecisiones !== 1 ? "es" : ""}
+                                </span>
+                              )}
                               {(pel.resumen.minutosGanados ?? 0) > 0 && (
                                 <span style={{ color: CYAN }}>
                                   {" "}
@@ -581,6 +598,12 @@ export default function ProyectosPage() {
                                 </span>
                               )}
                             </p>
+                          )}
+                          {pel.resumen?.decisionesEnumeradas && pel.resumen.decisionesEnumeradas.length > 0 && (
+                            <PeldanoDecisionesEnumeradas
+                              decisiones={pel.resumen.decisionesEnumeradas}
+                              compact
+                            />
                           )}
                           {pel.resumen?.subResumen?.map((s, j) => (
                             <p key={j} className="pl-2 text-slate-500">
