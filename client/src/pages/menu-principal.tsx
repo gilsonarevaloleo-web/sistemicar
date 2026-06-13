@@ -59,13 +59,14 @@ import { useAuthContext } from "@/App";
 import logoSistemicar from "@/assets/logo-sistemicar.png";
 import { PageContainer } from "@/components/page-container";
 import { isOwner } from "@/lib/owner";
+import { JORNADA_MODULE } from "@/lib/jornadaBrand";
 
 // ESPECTRO CROMÁTICO DE CONCIENCIA
 const SPECTRUM = {
   ROJO: "#EF4444",      // Base - Espejo
   NARANJA: "#F97316",   // Fuego - Depósito  
   AMARILLO: "#EAB308",  // Oro - Alquimia
-  VERDE: "#22C55E",     // Corazón - Planificación
+  VERDE: "#22C55E",     // Corazón - Jornada
   AZUL: "#3B82F6",      // Voz - IA/Diagnóstico
   VIOLETA: "#8B5CF6",   // Espíritu - Perfil/Alianza
 };
@@ -110,8 +111,8 @@ function buildMenuItems(progression: UserProgression | null, email: string | nul
   if (hasPlanificacionBaseAccess(...accessArgs)) {
     items.push({
       id: "planificacion",
-      title: "PLANIFICACIÓN",
-      subtitle: "La Flota y segmentos",
+      title: JORNADA_MODULE.titleUpper,
+      subtitle: JORNADA_MODULE.tagline,
       icon: Heart,
       route: "/planeacion",
       color: SPECTRUM.VERDE,
@@ -963,7 +964,7 @@ export default function MenuPrincipal() {
             const navItems = [
               { icon: Eye, color: SPECTRUM.ROJO, route: "/espejo", label: "Espejo" },
               ...(hasPlanificacionBaseAccess(...accessArgs)
-                ? [{ icon: Heart, color: SPECTRUM.VERDE, route: "/planeacion", label: "Plan" }]
+                ? [{ icon: Heart, color: SPECTRUM.VERDE, route: "/planeacion", label: JORNADA_MODULE.title }]
                 : [{ icon: CreditCard, color: GOLD, route: "/pagos", label: "Módulos" }]),
               ...(hasSoberaniaDiaAccess(...accessArgs)
                 ? [{ icon: Layers, color: "#38BDF8", route: "/proyectos", label: "Proyectos" }]

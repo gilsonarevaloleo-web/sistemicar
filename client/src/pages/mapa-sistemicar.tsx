@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Map, Shield, Brain, Zap, Heart, BookOpen, BarChart3, Settings, Users, FileText, Eye, Compass, Clock, Star, Target, Radio, Scroll, Lock, HelpCircle, Home, Sparkles, ShoppingCart, ExternalLink, Flame, Layers } from "lucide-react";
 import { useLocation } from "wouter";
 import { BADGE_EN_CAMINO } from "@shared/moduleCatalog";
+import { JORNADA_MODULE } from "@/lib/jornadaBrand";
 
 const GOLD = "#D4AF37";
 const EMERALD = "#10B981";
@@ -25,7 +26,7 @@ const CATEGORIAS: { titulo: string; color: string; rutas: Ruta[] }[] = [
     color: GOLD,
     rutas: [
       { path: "/menu", nombre: "Menú Principal", desc: "Panel central de navegación", icon: Home, color: GOLD, acceso: "usuario" },
-      { path: "/planeacion", nombre: "Planificación v5.5", desc: "Segmentos, vehículos, La Flota — requiere Planificación Base", icon: Zap, color: ORANGE, acceso: "planificacion_base" },
+      { path: "/planeacion", nombre: JORNADA_MODULE.title, desc: `${JORNADA_MODULE.tagline} — requiere Planificación Base`, icon: Zap, color: ORANGE, acceso: "planificacion_base" },
       { path: "/proyectos", nombre: "Proyectos y Peldaños", desc: "Hub anti-planificación — requiere Soberanía del día", icon: Layers, color: "#38BDF8", acceso: "soberania_dia" },
       { path: "/espejo", nombre: "Espejo Soberano", desc: "El Corazón Sabio™ — $17 pago único", icon: Heart, color: "#ef4444", acceso: "libre" },
       { path: "/proyector", nombre: "Proyector", desc: "Arquitectura de realidad futura — 4 ejes × 5 niveles", icon: Target, color: VIOLET, acceso: "en_camino" },

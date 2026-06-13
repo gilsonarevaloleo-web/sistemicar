@@ -59,6 +59,7 @@ import {
   type PlanillaDailySnapshot,
 } from "@/lib/termodinamicaAtencional";
 import { RUTA_BANDA_META } from "@/lib/rutaEnfoque";
+import { JORNADA_MODULE } from "@/lib/jornadaBrand";
 
 type TabType = "soberania" | "tendencias" | "circadiano" | "logros" | "coach" | "atencional";
 
@@ -540,7 +541,7 @@ export default function Analytics() {
 
             const MODULES = [
               { key: "espejo", label: "Espejo",        pts: ptsEspejo,        color: "#FF3131", bg: "from-red-900/20 to-red-950/10",   border: "border-red-500/20",   icon: "🧪" },
-              { key: "plan",   label: "Planificación", pts: ptsPlanificacion, color: "#D4AF37", bg: "from-amber-900/20 to-amber-950/10", border: "border-amber-500/20", icon: "🗓" },
+              { key: "plan",   label: JORNADA_MODULE.title, pts: ptsPlanificacion, color: "#D4AF37", bg: "from-amber-900/20 to-amber-950/10", border: "border-amber-500/20", icon: "🗓" },
               { key: "dep",    label: "Depósito",      pts: ptsDeposito,      color: "#10B981", bg: "from-emerald-900/20 to-emerald-950/10", border: "border-emerald-500/20", icon: "💎" },
             ];
 
@@ -643,7 +644,7 @@ export default function Analytics() {
                   <Layers size={28} className="mx-auto mb-3 text-slate-600" />
                   <p className="text-sm text-slate-400">Sin snapshots aún</p>
                   <p className="text-[10px] text-slate-600 mt-2">
-                    Sella la jornada en Planificación para guardar Cartografía Panorámica y Espectro de Enfoque.
+                    Sella la jornada en {JORNADA_MODULE.title} para guardar Cartografía Panorámica y Espectro de Enfoque.
                   </p>
                 </div>
               ) : (

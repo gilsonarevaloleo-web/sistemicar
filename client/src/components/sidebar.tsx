@@ -30,6 +30,7 @@ import { useAuthContext } from "@/App";
 import { subscribeToProgression, UserProgression } from "@/lib/persistence";
 import { isOwner } from "@/lib/owner";
 import { getUserEmail } from "@/lib/firebase";
+import { JORNADA_MODULE } from "@/lib/jornadaBrand";
 
 type NavItem = { path: string; icon: React.ElementType; label: string };
 
@@ -113,7 +114,7 @@ export function Sidebar() {
     { path: "/espejo", icon: Terminal, label: "Espejo" },
     { path: "/radar", icon: Radio, label: "Radar" },
     { path: "/alquimia", icon: Flame, label: "Sabiduría" },
-    { path: "/planeacion", icon: Compass, label: "Planificación" },
+    { path: "/planeacion", icon: Compass, label: JORNADA_MODULE.title },
     { path: "/proyectos", icon: Layers, label: "Proyectos" },
     { path: "/esperanza", icon: Sparkles, label: "Esperanza" },
     { path: "/analytics", icon: TrendingUp, label: "Analytics" },

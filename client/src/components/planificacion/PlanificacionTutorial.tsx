@@ -7,6 +7,7 @@ import {
   profileLabel,
   type PlanificacionPlanProfile,
 } from "@/lib/planificacionOnboarding";
+import { JORNADA_MODULE } from "@/lib/jornadaBrand";
 
 const GOLD = "#D4AF37";
 const BLOOD = "#FF3131";
@@ -118,7 +119,7 @@ export function PlanificacionTutorial({ uid, profile, onComplete, onAskDoctor }:
             type="button"
             onClick={() => {
               finish();
-              onAskDoctor("¿Por dónde empiezo hoy en Planificación?");
+              onAskDoctor(`¿Por dónde empiezo hoy en ${JORNADA_MODULE.title}?`);
             }}
             className="w-full mt-3 py-2 rounded-xl border text-[11px] text-slate-300 flex items-center justify-center gap-2"
             style={{ borderColor: `${BLOOD}40` }}

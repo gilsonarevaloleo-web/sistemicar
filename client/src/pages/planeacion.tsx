@@ -421,6 +421,7 @@ import {
   subTareaFromImanItem,
 } from "@/lib/imanPensamientos";
 import { syncRingDecisionToProyectoHub } from "@/lib/syncRingDecisionToProyectoHub";
+import { JORNADA_MODULE } from "@/lib/jornadaBrand";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
@@ -6215,13 +6216,13 @@ export default function Planeacion() {
           <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center pt-4">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-3" style={{ backgroundColor: `${BLOOD}20` }}>
               <Rocket size={16} style={{ color: BLOOD }} />
-              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: BLOOD }}>Planificación v5.5</span>
+              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: BLOOD }}>{JORNADA_MODULE.title}</span>
             </div>
             <div className="flex items-center justify-center gap-3">
-              <h1 className="text-2xl font-black text-white tracking-tight">PLANIFICACIÓN</h1>
+              <h1 className="text-2xl font-black text-white tracking-tight">{JORNADA_MODULE.titleUpper}</h1>
               <ManualTriggerButton manualType="planificacion" />
             </div>
-            <p className="text-[10px] text-slate-600 mt-1 uppercase tracking-widest">Sistema de Segmentos · Puerta de Atención</p>
+            <p className="text-[10px] text-slate-600 mt-1 uppercase tracking-widest">{JORNADA_MODULE.tagline}</p>
           </motion.div>
         )}
 
@@ -6247,6 +6248,8 @@ export default function Planeacion() {
         )}
 
         <PlanificacionCockpit
+            title={JORNADA_MODULE.title}
+            tagline={JORNADA_MODULE.tagline}
             compact={compactLayout}
             onToggleCompact={() => setPlanLayout(v => (v === "compact" ? "full" : "compact"))}
             tab={planTab}
@@ -6800,7 +6803,7 @@ export default function Planeacion() {
             data-testid="sound-controls-bar"
           >
             <div className="min-w-0">
-              <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · Planificación</p>
+              <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · {JORNADA_MODULE.title}</p>
               <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
                 Alertas = cupo situacional · Puerta = voz min 4 · Tick = pitido del reloj
               </p>
@@ -8211,7 +8214,7 @@ export default function Planeacion() {
                                   <ListTodo size={11} style={{ color: cfg.color }} />
                                   <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: cfg.color }}>Plan de Ataque</span>
                                 </div>
-                                <span className="text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider" style={{ backgroundColor: `${cfg.color}15`, color: cfg.color, opacity: 0.7 }}>Planificación</span>
+                                <span className="text-[8px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider" style={{ backgroundColor: `${cfg.color}15`, color: cfg.color, opacity: 0.7 }}>{JORNADA_MODULE.title}</span>
                               </div>
                               <p className="text-[8px] text-slate-500 leading-snug">
                                 Duración del desglose en vivo: fortalece tu resistencia atencional. Profundidad: {formatDepthAwardPreview()} PS por cada hora completa en el desglosador (curva suave).

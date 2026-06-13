@@ -1,3 +1,5 @@
+import { JORNADA_MODULE } from "./jornadaBrand";
+
 export type PlanificacionPlanProfile = "base" | "estudiante" | "produccion";
 
 export type PrimerDiaCheckKey =
@@ -37,9 +39,9 @@ export function profileLabel(profile: PlanificacionPlanProfile): string {
 
 const STEPS_BASE: TutorialStep[] = [
   {
-    title: "Bienvenido a Planificación",
+    title: `Bienvenido a ${JORNADA_MODULE.title}`,
     description:
-      "Aquí no guardas listas infinitas: estructuras el día en segmentos, lanzas misiones en La Flota y cierras con datos (cumplido o archivado).",
+      "Aquí no guardas listas infinitas: estructuras el día en segmentos, operas en La Flota y cierras la jornada con conciencia (cumplido o archivado).",
     action: "Siguiente: entender el monitor del día.",
   },
   {
@@ -63,7 +65,7 @@ const STEPS_BASE: TutorialStep[] = [
   {
     title: "Tu guía: Doctor IA",
     description:
-      "En Planificación el Doctor responde en modo guía: «¿qué es un segmento?», «¿por dónde empiezo?». Pregunta con tu duda concreta.",
+      `En ${JORNADA_MODULE.title} el Doctor responde en modo guía: «¿qué es un segmento?», «¿por dónde empiezo?». Pregunta con tu duda concreta.`,
     action: "Abre el chat flotante y escribe: «¿Por dónde empiezo hoy?»",
   },
 ];
@@ -253,7 +255,7 @@ export function buildPrimerDiaSummaryForDoctor(
     .join("\n");
 }
 
-/** Preguntas rápidas para el Doctor en Planificación */
+/** Preguntas rápidas para el Doctor en Jornada */
 export const PLANIFICACION_DOCTOR_QUICK_PROMPTS = [
   "¿Por dónde empiezo hoy?",
   "¿Qué es un segmento?",

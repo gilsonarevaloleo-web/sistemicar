@@ -47,6 +47,7 @@ import { RutasMentalesGrafo } from "@/components/RutasMentalesGrafo";
 import { RutasMentalesEditor } from "@/components/RutasMentalesEditor";
 import { PeldanoSituacionArbol } from "@/components/PeldanoSituacionArbol";
 import { PeldanoDecisionesEnumeradas } from "@/components/PeldanoDecisionesEnumeradas";
+import { JORNADA_MODULE } from "@/lib/jornadaBrand";
 
 const PIZARRA = "#0a0a0a";
 const CYAN = "#00FFC3";
@@ -413,7 +414,7 @@ export default function ProyectosPage() {
         {enCursoPlan.length > 0 && (
           <div className="mb-4">
             <p className="text-[10px] font-black uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: CYAN }}>
-              <Clock size={12} /> Desde planificación hoy
+              <Clock size={12} /> Desde {JORNADA_MODULE.title.toLowerCase()} hoy
             </p>
             <div className="space-y-2">
               {enCursoPlan.map(pel => (
@@ -424,7 +425,7 @@ export default function ProyectosPage() {
                 >
                   <p className="text-sm font-bold text-white">{pel.titulo}</p>
                   <p className="text-[8px] text-slate-500 mt-0.5">
-                    {pel.horaInicio} – {pel.horaFin} · opera en Planificación
+                    {pel.horaInicio} – {pel.horaFin} · opera en {JORNADA_MODULE.title}
                   </p>
                   {pel.rutasMentales && (
                     <div className="mt-2 pt-2 border-t border-white/5">

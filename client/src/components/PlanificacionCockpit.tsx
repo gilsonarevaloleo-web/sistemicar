@@ -5,6 +5,7 @@ type PlanTab = "operar" | "metricas" | "meta";
 
 type Props = {
   title?: string;
+  tagline?: string;
   compact: boolean;
   onToggleCompact: () => void;
   tab: PlanTab;
@@ -16,7 +17,8 @@ type Props = {
 };
 
 export default function PlanificacionCockpit({
-  title = "Planificación",
+  title = "Jornada",
+  tagline = "Cierre de jornada con conciencia",
   compact,
   onToggleCompact,
   tab,
@@ -36,6 +38,9 @@ export default function PlanificacionCockpit({
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest truncate">{title}</p>
+            {tagline && (
+              <p className="text-[8px] text-slate-600 truncate mt-0.5">{tagline}</p>
+            )}
             <div className="mt-0.5">{psLine}</div>
             {combustibleLine && <div className="mt-0.5">{combustibleLine}</div>}
           </div>
