@@ -1,5 +1,6 @@
 /** Cola secuencial para speechSynthesis — evita que utterances se cancelen entre sí. */
 
+import { applyCalmSpanishUtterance, primeSpanishVoices } from "./spanishTtsVoice";
 import {
   isDesglosadorVoiceEnabled,
   isPuertaVozEnabled,
@@ -48,11 +49,9 @@ function getSynth(): SpeechSynthesis | null {
 }
 
 function primeVoicesOnce(): void {
-  const synth = getSynth();
-  if (!synth || voicesPrimed) return;
+  if (voicesPrimed) return;
   voicesPrimed = true;
-  synth.getVoices();
-  synth.addEventListener("voiceschanged", () => synth.getVoices(), { once: true });
+  primeSpanishVoices();
 }
 
 function resumeSynthIfPaused(): void {
@@ -88,7 +87,12 @@ function armStuckReset(): void {
 
 function isBackground(): boolean {
   if (typeof document === "undefined") return false;
-  return document.hidden || !document.hasFocus();
+  /** Solo pestaña oculta: !hasFocus() mandaba voz al buffer sin reproducir en desktop. */
+  return document.hidden;
+}
+
+function applySpanishVoice(u: SpeechSynthesisUtterance): void {
+  applyCalmSpanishUtterance(u);
 }
 
 function enqueueForBackground(phrases: string[], source: UbicacionVoiceSource): void {
@@ -143,29 +147,52 @@ function processQueue(): void {
   const text = queue.shift()!;
   speaking = true;
   armStuckReset();
+  let phraseRetries = 0;
+  const maxPhraseRetries = 2;
+
+  const speakPhrase = () => {
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "es-ES";
+      applySpanishVoice(u);
+      u.onstart = () => {
+        if (pendingOnPhraseStarted) {
+          const cb = pendingOnPhraseStarted;
+          pendingOnPhraseStarted = null;
+          cb();
+        }
+      };
+      u.onend = () => {
+        speaking = false;
+        clearStuckTimer();
+        processQueue();
+        notifySpeechQueueIdle();
+      };
+      u.onerror = () => {
+        if (phraseRetries < maxPhraseRetries) {
+          phraseRetries += 1;
+          speaking = false;
+          clearStuckTimer();
+          warmupSpeechSynthesis(true);
+          resumeSynthIfPaused();
+          window.setTimeout(speakPhrase, 280);
+          return;
+        }
+        speaking = false;
+        clearStuckTimer();
+        processQueue();
+        notifySpeechQueueIdle();
+      };
+      synth.speak(u);
+    } catch {
+      speaking = false;
+      clearStuckTimer();
+      processQueue();
+    }
+  };
+
   try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "es-ES";
-    u.onstart = () => {
-      if (pendingOnPhraseStarted) {
-        const cb = pendingOnPhraseStarted;
-        pendingOnPhraseStarted = null;
-        cb();
-      }
-    };
-    u.onend = () => {
-      speaking = false;
-      clearStuckTimer();
-      processQueue();
-      notifySpeechQueueIdle();
-    };
-    u.onerror = () => {
-      speaking = false;
-      clearStuckTimer();
-      processQueue();
-      notifySpeechQueueIdle();
-    };
-    synth.speak(u);
+    speakPhrase();
   } catch {
     speaking = false;
     clearStuckTimer();
@@ -213,7 +240,7 @@ export function speakUbicacionQueue(
     return;
   }
 
-  warmupSpeechSynthesis();
+  warmupSpeechSynthesis(source === "desglosador" || source === "situacion");
 
   if (cancelPrevious) {
     try {

@@ -195,6 +195,7 @@ import {
   rutaSeguimientoPickerCanConfirm,
 } from "@/components/RutaSeguimientoPicker";
 import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis, recoverSpeechQueue, subscribeSpeechQueueIdle } from "@/lib/speechQueue";
+import { speakDesglosadorVoiceReliable } from "@/lib/desglosadorVoice";
 import {
   flushMissedPuertaVoiceOnVisible,
 } from "@/lib/backgroundAttentionAlerts";
@@ -422,6 +423,7 @@ import {
 } from "@/lib/imanPensamientos";
 import { syncRingDecisionToProyectoHub } from "@/lib/syncRingDecisionToProyectoHub";
 import { JORNADA_MODULE } from "@/lib/jornadaBrand";
+import { FLOTA_BRAND, FLOTA_SELECTOR_DISCRIMINATOR, flotaLabelUpper, flotaLabelsRecord } from "@/lib/flotaBrand";
 import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
@@ -443,10 +445,10 @@ const GRIS = "#6b7280";
 const CYAN = "#00FFC3";
 
 const FLOTA_CONFIG: Record<TipoFlota, { label: string; sublabel: string; color: string; icon: typeof Target; relojVisible: boolean; relojLabel: string; psBase: number; psCierre: string }> = {
-  tiempo: { label: "TIEMPO", sublabel: "Conquista de objetivos", color: NARANJA, icon: Clock, relojVisible: true, relojLabel: "Reloj Proyectivo", psBase: 0, psCierre: "PS al cumplir objetivo" },
-  situacion: { label: "SITUACIÓN", sublabel: "Gestión de imprevistos", color: PLATA, icon: Flag, relojVisible: true, relojLabel: "Cronómetro", psBase: 0, psCierre: "3-7 PS por esfuerzo activo" },
-  descanso: { label: "DESCANSO", sublabel: "Recarga consciente", color: VERDE, icon: Coffee, relojVisible: false, relojLabel: "Oculto", psBase: 0, psCierre: "PS por conciencia de recarga" },
-  verdad: { label: "VERDAD", sublabel: "Sinceridad ante el vacío", color: GRIS, icon: MessageSquare, relojVisible: false, relojLabel: "Oculto", psBase: 0, psCierre: "PS por consciencia de verdad" }
+  tiempo: { label: FLOTA_BRAND.tiempo.labelUpper, sublabel: FLOTA_BRAND.tiempo.sublabel, color: NARANJA, icon: Clock, relojVisible: true, relojLabel: FLOTA_BRAND.tiempo.relojLabel, psBase: 0, psCierre: FLOTA_BRAND.tiempo.psCierre },
+  situacion: { label: FLOTA_BRAND.situacion.labelUpper, sublabel: FLOTA_BRAND.situacion.sublabel, color: PLATA, icon: Flag, relojVisible: true, relojLabel: FLOTA_BRAND.situacion.relojLabel, psBase: 0, psCierre: FLOTA_BRAND.situacion.psCierre },
+  descanso: { label: FLOTA_BRAND.descanso.labelUpper, sublabel: FLOTA_BRAND.descanso.sublabel, color: VERDE, icon: Coffee, relojVisible: false, relojLabel: FLOTA_BRAND.descanso.relojLabel, psBase: 0, psCierre: FLOTA_BRAND.descanso.psCierre },
+  verdad: { label: FLOTA_BRAND.verdad.labelUpper, sublabel: FLOTA_BRAND.verdad.sublabel, color: GRIS, icon: MessageSquare, relojVisible: false, relojLabel: FLOTA_BRAND.verdad.relojLabel, psBase: 0, psCierre: FLOTA_BRAND.verdad.psCierre },
 };
 
 const getHistoricalVehicleData = (missionTitle: string): { lastMinPerUnit?: number; bestMinPerUnit?: number; lastTotalMin?: number; count: number } => {
@@ -4525,7 +4527,7 @@ export default function Planeacion() {
     const byType: Record<string, number> = {};
     incumplidos.forEach(g => { const t = g.tipoReloj || "otro"; byType[t] = (byType[t] || 0) + 1; });
     const tipoDom = Object.entries(byType).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-    const tipoLabel: Record<string, string> = { produccion: "Producción", situacional: "Situacional", descanso: "Descanso", verdad: "Verdad", desglosador: "Desglosador", desglosador_ciclo: "Ciclo" };
+    const tipoLabel: Record<string, string> = { produccion: "Producción", situacional: "Enfoque", conquista: "Conquista", descanso: "Descanso", verdad: "Verdad", desglosador: "Desglosador", desglosador_ciclo: "Ciclo" };
     return { cumplidos: cumplidos.length, incumplidos: incumplidos.length, total, ratioPct, tipoDom: tipoDom ? (tipoLabel[tipoDom] || tipoDom) : null, suficiente: total >= 5 };
   }, [gordaHistory]);
 
@@ -5218,7 +5220,7 @@ export default function Planeacion() {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor: situacionCupoAnchor ?? null });
       if (firstActivation) {
         void requestNotificationPermission();
-        speakRingBienvenida(retoNumero);
+        speakRingBienvenida(retoNumero, `ring-bienvenida-${vehicleId}-${bloqueInicioAt}`);
       }
       void handleSyncSituacionCupoAnchor(vehicleId);
       toast.success(retoNumero > 1 ? RING_COPY.siguienteRonda : RING_COPY.ring, {
@@ -5328,9 +5330,6 @@ export default function Planeacion() {
       sc.horaFinContratoMs ?? sc.horaFinMs
     );
     const contratoFin = sc.horaFinContratoMs ?? sc.horaFinMs;
-    if (contratoFin != null) {
-      subTareas = reacomodarColaCronometroAMeta(subTareas, contratoFin, now);
-    }
     const repartoColaDesc = describeRepartoGananciaEnCola(workingList, subTareas, subTareaId);
     let pasoNumero: number | null = null;
     const updatedSub = subTareas.find(st => st.id === subTareaId);
@@ -5430,11 +5429,7 @@ export default function Planeacion() {
       now,
       bloqueInicio
     );
-    const contratoFin = sc.horaFinContratoMs ?? sc.horaFinMs;
-    const subTareas =
-      contratoFin != null
-        ? reacomodarColaCronometroAMeta(subTareasRaw, contratoFin, now)
-        : subTareasRaw;
+    const { subTareas, minutosPerdidos } = subTareasRaw;
     const bloqueListo = !subTareas.some(situacionFilaCronometroPendiente);
     const situacionCronometro = sc;
     const situacionCupoAnchor = bloqueListo ? null : vehicle.situacionCupoAnchor;
@@ -5454,7 +5449,10 @@ export default function Planeacion() {
           duration: 4500,
         });
       } else {
-        toast.info("Fallado (sin PS de fila)", { description: targetSub.texto, duration: 2200 });
+        toast.info(
+          minutosPerdidos > 0 ? `Fallado · −${minutosPerdidos} min en cola` : "Fallado (sin PS de fila)",
+          { description: targetSub.texto, duration: 2200 }
+        );
       }
     } catch (e) {
       console.error("[handleSituacionCronometroFallado]", e);
@@ -5632,7 +5630,7 @@ export default function Planeacion() {
     const activos = vehicles.filter(v => v.status === "activo" && v.tipoFlota === "situacion");
     const vehicle = pickSituacionVehicleTarget();
     if (!vehicle) {
-      toast.error(activos.length > 1 ? "Expande el vehículo situacional destino" : "Abre un vehículo situacional activo", {
+      toast.error(activos.length > 1 ? "Expande el vehículo de enfoque destino" : "Abre un vehículo de enfoque activo", {
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
       return;
@@ -5677,7 +5675,7 @@ export default function Planeacion() {
     } catch (e) {
       console.error("[handleReservaAListaLibre]", e);
       toast.error("No se pudo retomar en lista libre", {
-        description: "Comprueba que el vehículo situacional siga activo e inténtalo de nuevo.",
+        description: "Comprueba que el vehículo de enfoque siga activo e inténtalo de nuevo.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
     }
@@ -5692,7 +5690,7 @@ export default function Planeacion() {
       (item.origenVehiculoId ? activos.find(v => v.id === item.origenVehiculoId) : undefined) ??
       pickSituacionVehicleTarget();
     if (!vehicle) {
-      toast.error(activos.length > 1 ? "Expande el vehículo situacional destino" : "Abre un vehículo situacional activo", {
+      toast.error(activos.length > 1 ? "Expande el vehículo de enfoque destino" : "Abre un vehículo de enfoque activo", {
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
       return;
@@ -5736,7 +5734,7 @@ export default function Planeacion() {
     } catch (e) {
       console.error("[handleReservaACronometro]", e);
       toast.error("No se pudo retomar en cronómetro", {
-        description: "Comprueba que el vehículo situacional siga activo e inténtalo de nuevo.",
+        description: "Comprueba que el vehículo de enfoque siga activo e inténtalo de nuevo.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
     }
@@ -5747,7 +5745,7 @@ export default function Planeacion() {
     if (!item) return;
     if (!reservaEsEnviabeASituacion(item)) {
       toast.info("Ruta M — tener en cuenta", {
-        description: "Esta fila no va al situacional. Cambia a S o E para enviarla.",
+        description: "Esta fila no va al vehículo de enfoque. Cambia a S o E para enviarla.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}40`, color: PLATA },
         duration: 4000,
       });
@@ -5781,7 +5779,7 @@ export default function Planeacion() {
     const activos = vehicles.filter(v => v.status === "activo" && v.tipoFlota === "situacion");
     const vehicle = pickSituacionVehicleTarget();
     if (!vehicle) {
-      toast.error(activos.length > 1 ? "Expande el vehículo situacional destino" : "Abre un vehículo situacional activo", {
+      toast.error(activos.length > 1 ? "Expande el vehículo de enfoque destino" : "Abre un vehículo de enfoque activo", {
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
       return;
@@ -5836,7 +5834,7 @@ export default function Planeacion() {
     } catch (e) {
       console.error("[handleAbrirNidoEnSituacion]", e);
       toast.error("No se pudo abrir el nido", {
-        description: "Comprueba el vehículo situacional e inténtalo de nuevo.",
+        description: "Comprueba el vehículo de enfoque e inténtalo de nuevo.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
     }
@@ -5849,7 +5847,7 @@ export default function Planeacion() {
     const focusId = resolveFocusSubTareaId(vehicle.subTareas, vehicle.situacionCupoAnchor);
     if (!focusId) {
       toast.error("Sin tarea en foco", {
-        description: "Activa el cronómetro situacional antes de quitar minutos.",
+        description: "Activa el ring de enfoque antes de quitar minutos.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
       return;
@@ -6045,6 +6043,9 @@ export default function Planeacion() {
       if (localStorage.getItem("sistemicar_puerta_voz") == null) {
         setPuertaVozEnabledState(on);
       }
+      if (localStorage.getItem("sistemicar_desglosador_voz") == null) {
+        setDesglosadorVozEnabledState(on);
+      }
     };
     const onPuertaVozChange = (e: Event) => {
       const on = (e as CustomEvent<{ on: boolean }>).detail?.on ?? isPuertaVozEnabled();
@@ -6102,8 +6103,8 @@ export default function Planeacion() {
         }}
         title={
           situacionAlertsEnabled
-            ? "Silenciar alertas situacionales"
-            : "Activar alertas situacionales (sonido, vibración, notificaciones)"
+            ? "Silenciar alertas de enfoque"
+            : "Activar alertas de enfoque (sonido, vibración, notificaciones)"
         }
         data-testid="button-situacion-alerts-toggle"
       >
@@ -6805,7 +6806,7 @@ export default function Planeacion() {
             <div className="min-w-0">
               <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · {JORNADA_MODULE.title}</p>
               <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
-                Alertas = cupo situacional · Puerta = voz min 4 · Tick = pitido del reloj
+                Alertas = cupo de enfoque · Puerta = voz min 4 · Tick = pitido del reloj
               </p>
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles(true)}</div>
@@ -7834,7 +7835,10 @@ export default function Planeacion() {
           <>
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
               <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-[10px] text-slate-600 uppercase tracking-widest flex-shrink-0">La Flota</p>
+                <div className="min-w-0">
+                  <p className="text-[10px] text-slate-600 uppercase tracking-widest flex-shrink-0">La Flota</p>
+                  <p className="text-[9px] text-slate-500 mt-0.5 leading-snug">{FLOTA_SELECTOR_DISCRIMINATOR}</p>
+                </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles()}</div>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -7871,7 +7875,7 @@ export default function Planeacion() {
               >
                 <p className="text-[10px] text-red-200/90 flex-1 leading-snug">
                   {situacionRetoAtascado
-                    ? "Reto situacional listo pero la pantalla no responde. Usa «Archivar atascados» o «Recibir cierre del bloque» en el vehículo."
+                    ? "Reto de enfoque listo pero la pantalla no responde. Usa «Archivar atascados» o «Recibir cierre del bloque» en el vehículo."
                     : (
                       <>
                         Tienes <span className="font-black">{activeVehicles.length}</span> vehículos activos. Si no puedes cerrarlos uno a uno, libera las sesiones atascadas.
@@ -9678,9 +9682,11 @@ function VehicleCard({
   const situacionCupoFireKeyRef = useRef<string | null>(null);
   const situacion2MinWarnKeyRef = useRef<string | null>(null);
   const situacionFilaVoiceKeysRef = useRef<Set<string>>(new Set());
+  const situacionFilaVoicePendingRef = useRef<Set<string>>(new Set());
   const ringInactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ringInactivityBloqueRef = useRef<string | null>(null);
   const ringSobraVoiceKeyRef = useRef<string | null>(null);
+  const ringSobraVoicePendingRef = useRef<string | null>(null);
   const situacionCupoEscalationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const subVehiculosRef = useRef(vehicle.subVehiculos);
   subVehiculosRef.current = vehicle.subVehiculos;
@@ -9966,11 +9972,19 @@ function VehicleCard({
 
     const voiceKey = `${anchor.subTareaId}-${anchor.startedAt}`;
     if (situacionFilaVoiceKeysRef.current.has(voiceKey)) return;
-    situacionFilaVoiceKeysRef.current.add(voiceKey);
+    if (situacionFilaVoicePendingRef.current.has(voiceKey)) return;
+    situacionFilaVoicePendingRef.current.add(voiceKey);
     situacion2MinWarnKeyRef.current = null;
     situacionCupoFireKeyRef.current = null;
 
-    speakSituacionFilaEnFoco(sub.texto, { intro: false });
+    speakSituacionFilaEnFoco(sub.texto, {
+      intro: false,
+      key: `fila-${voiceKey}`,
+      onSpoken: () => {
+        situacionFilaVoiceKeysRef.current.add(voiceKey);
+        situacionFilaVoicePendingRef.current.delete(voiceKey);
+      },
+    });
   }, [
     vehicle.tipoFlota,
     vehicle.status,
@@ -10079,9 +10093,14 @@ function VehicleCard({
       } else {
         playChime();
       }
-      speakUbicacionQueue(rutaVozPartsForBanda(alert), false, "desglosador", () => {
-        rutaUmbralAlertKeysRef.current.add(key);
-      });
+      speakDesglosadorVoiceReliable(
+        `ruta-${key}`,
+        rutaVozPartsForBanda(alert),
+        false,
+        () => {
+          rutaUmbralAlertKeysRef.current.add(key);
+        }
+      );
     }
     const cruzadoChanged =
       nextRuta.cruzado.concentrado !== activeSub.rutaEnfoque.cruzado.concentrado ||
@@ -10102,33 +10121,16 @@ function VehicleCard({
     if (subStartVoiceRef.current.has(key)) return;
 
     const phrases = rutaVozFluidoParts(cleanSubTitulo(activeSub.titulo));
-    let marked = false;
-    const markSpoken = () => {
-      if (marked) return;
-      marked = true;
-      subStartVoiceRef.current.add(key);
-    };
+    const cleanup = speakDesglosadorVoiceReliable(
+      `intro-${key}`,
+      phrases,
+      true,
+      () => {
+        subStartVoiceRef.current.add(key);
+      }
+    );
 
-    const speakIntro = () => {
-      if (subStartVoiceRef.current.has(key)) return;
-      speakUbicacionQueue(phrases, true, "desglosador", markSpoken);
-    };
-
-    speakIntro();
-
-    const retryTimer = window.setTimeout(() => {
-      if (!subStartVoiceRef.current.has(key)) speakIntro();
-    }, 1500);
-
-    const onGesture = () => {
-      if (!subStartVoiceRef.current.has(key)) speakIntro();
-    };
-    window.addEventListener("pointerdown", onGesture, { capture: true });
-
-    return () => {
-      window.clearTimeout(retryTimer);
-      window.removeEventListener("pointerdown", onGesture, { capture: true });
-    };
+    return cleanup;
   }, [vehicle.subVehiculos, vehicle.status, vehicle.tipoReloj]);
 
   const attemptCloseActiveSub = (
@@ -10341,7 +10343,10 @@ function VehicleCard({
 
     const objSecs = suggestedSec(activeSub);
     setSubTimerIsCountdown(objSecs !== null);
-    if (activeSub.cantidadObjetivo && activeSub.tiempoRecordMinPerUnit) {
+    const clocksInit = computeDesglosadorClocks(Date.now(), vehicle);
+    if (clocksInit.unitsRemaining !== null) {
+      setSubVehicleRestante(clocksInit.unitsRemaining);
+    } else if (activeSub.cantidadObjetivo && activeSub.tiempoRecordMinPerUnit) {
       setSubVehicleRestante(activeSub.cantidadObjetivo);
     } else {
       setSubVehicleRestante(null);
@@ -10501,6 +10506,7 @@ function VehicleCard({
     if (ringInactivityBloqueRef.current !== bloqueKey) {
       ringInactivityBloqueRef.current = bloqueKey;
       ringSobraVoiceKeyRef.current = null;
+      ringSobraVoicePendingRef.current = null;
     }
     const unsubIdle = subscribeSpeechQueueIdle(() => {
       armRingInactivityTimer();
@@ -10541,8 +10547,12 @@ function VehicleCard({
     if (sobraMin < RING_SOBRA_INVITACION_MIN) return;
     const key = `${vehicle.id}_${sc.bloqueInicioAt ?? 0}`;
     if (ringSobraVoiceKeyRef.current === key) return;
-    ringSobraVoiceKeyRef.current = key;
-    speakRingTiempoSobra(sobraMin);
+    if (ringSobraVoicePendingRef.current === key) return;
+    ringSobraVoicePendingRef.current = key;
+    speakRingTiempoSobra(sobraMin, key, () => {
+      ringSobraVoiceKeyRef.current = key;
+      ringSobraVoicePendingRef.current = null;
+    });
   }, [
     vehicle.tipoFlota,
     vehicle.status,
@@ -10739,7 +10749,7 @@ function VehicleCard({
                   <span className="text-[8px] font-bold px-1.5 py-0.5 rounded uppercase" style={{
                     backgroundColor: vehicle.tipoTerminoRapido === "hora" ? "rgba(239, 68, 68, 0.2)" : vehicle.tipoTerminoRapido === "situacion" ? "rgba(168, 85, 247, 0.2)" : "rgba(107, 114, 128, 0.2)",
                     color: vehicle.tipoTerminoRapido === "hora" ? "#ef4444" : vehicle.tipoTerminoRapido === "situacion" ? "#a855f7" : "#6b7280"
-                  }}>{vehicle.tipoTerminoRapido === "hora" ? "HORA" : vehicle.tipoTerminoRapido === "situacion" ? "SITUACIÓN" : "OMITIR"}</span>
+                  }}>{vehicle.tipoTerminoRapido === "hora" ? "HORA" : vehicle.tipoTerminoRapido === "situacion" ? flotaLabelUpper("situacion") : "OMITIR"}</span>
                 )}
                 {vehicle.bonoTemple && <span className="text-[7px] font-black px-1 py-0.5 rounded-full" style={{ backgroundColor: `${NARANJA}20`, color: NARANJA }}>TEMPLE</span>}
                 {vehicle.intensidadEnergetica && (
@@ -11694,6 +11704,7 @@ function VehicleCard({
                       now: nowTick,
                       horaFinContratoMs: contratoMs,
                     });
+                    const focoFinMs = situacionTargetMsReloj(vehicle, nowTick);
                     const gananciaMin = situacionGananciaVsContratoMin(contratoMs, proyMs);
                     const bonusEnCola = sumBonusPreviewEnColaPendiente(
                       vehicle.subTareas || [],
@@ -11701,7 +11712,6 @@ function VehicleCard({
                       nowTick,
                       contratoMs
                     );
-                    const proyEnTopeMeta = contratoMs != null && proyMs != null && proyMs >= contratoMs;
                     const fmtHora = (ms: number | null) =>
                       ms != null
                         ? new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -11719,25 +11729,23 @@ function VehicleCard({
                         )}
                         <div className="grid grid-cols-2 gap-2 mb-2" data-testid={`situacion-reto-relojes-${vehicle.id}`}>
                           <div className="p-2 rounded-lg border text-center" style={{ backgroundColor: "rgba(212,175,55,0.08)", borderColor: "rgba(212,175,55,0.28)" }}>
-                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: GOLD }}>Meta</p>
+                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: GOLD }}>Meta sellada</p>
                             <p className="text-sm font-black font-mono mt-0.5" style={{ color: GOLD }}>{fmtHora(contratoMs)}</p>
                           </div>
                           <div className="p-2 rounded-lg border text-center" style={{
-                            backgroundColor: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? "rgba(0,200,81,0.08)" : "rgba(148,163,184,0.06)",
-                            borderColor: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? "rgba(0,200,81,0.28)" : "rgba(148,163,184,0.2)",
+                            backgroundColor: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? "rgba(0,200,81,0.08)" : gananciaMin != null && gananciaMin < 0 ? "rgba(255,49,49,0.08)" : "rgba(0,255,195,0.06)",
+                            borderColor: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? "rgba(0,200,81,0.28)" : gananciaMin != null && gananciaMin < 0 ? "rgba(255,49,49,0.28)" : "rgba(0,255,195,0.22)",
                           }}>
-                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : PLATA }}>Proyección</p>
-                            <p className="text-sm font-black font-mono mt-0.5" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : PLATA }}>{fmtHora(proyMs)}</p>
+                            <p className="text-[7px] font-black uppercase tracking-wider" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : gananciaMin != null && gananciaMin < 0 ? "#FF3131" : CYAN }}>Termina foco</p>
+                            <p className="text-sm font-black font-mono mt-0.5" style={{ color: bonusEnCola > 0 || (gananciaMin != null && gananciaMin > 0) ? VERDE : gananciaMin != null && gananciaMin < 0 ? "#FF3131" : CYAN }}>{fmtHora(focoFinMs)}</p>
                             {bonusEnCola > 0 ? (
-                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>+{bonusEnCola} min en cola (dentro de meta)</p>
-                            ) : gananciaMin != null && gananciaMin > 0 ? (
-                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>↓ {gananciaMin} min vs meta</p>
-                            ) : proyEnTopeMeta ? (
-                              <p className="text-[7px] font-bold mt-0.5 text-amber-400/90">tope en meta</p>
+                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>+{bonusEnCola} min repartidos en cola</p>
                             ) : gananciaMin != null && gananciaMin < 0 ? (
-                              <p className="text-[7px] font-bold mt-0.5 text-red-400">↑ {Math.abs(gananciaMin)} min ajustando cola</p>
+                              <p className="text-[7px] font-bold mt-0.5 text-red-400">cola −{Math.abs(gananciaMin)} min vs meta</p>
+                            ) : proyMs != null && contratoMs != null && proyMs < contratoMs - 60000 ? (
+                              <p className="text-[7px] font-bold mt-0.5" style={{ color: VERDE }}>cola termina {fmtHora(proyMs)}</p>
                             ) : (
-                              <p className="text-[7px] text-slate-500 mt-0.5">en tiempo</p>
+                              <p className="text-[7px] text-slate-500 mt-0.5">reloj proyectivo del foco vigente</p>
                             )}
                           </div>
                         </div>
@@ -11837,6 +11845,7 @@ function VehicleCard({
                                     anchor: vehicle.situacionCupoAnchor,
                                     now: Date.now(),
                                     previewTiempoGanado: vehicle.situacionCronometro?.activo === true,
+                                    horaFinContratoMs: situacionContratoFinMs(vehicle.situacionCronometro),
                                   })
                                 : [];
                             const horarioById = new Map(horariosCron.map(h => [h.subTareaId, h]));
@@ -12835,7 +12844,7 @@ function DepositoEnergeticoSection({ vehicles, planilla }: { vehicles: Vehicle[]
   const totalAll = vehicles.length;
   const totalCompleted = vehicles.filter(v => v.status === "cumplido").length;
   const flotaColors: Record<TipoFlota, string> = { tiempo: NARANJA, situacion: PLATA, descanso: VERDE, verdad: GRIS };
-  const flotaLabels: Record<TipoFlota, string> = { tiempo: "TIEMPO", situacion: "SITUACIÓN", descanso: "DESCANSO", verdad: "VERDAD" };
+  const flotaLabels = flotaLabelsRecord();
 
   const verdadVehicles = vehicles.filter(v => v.tipoFlota === "verdad");
   const verdadInconsciente = verdadVehicles.filter(v => v.autoVerdad);
@@ -13026,7 +13035,7 @@ function CierreJornadaModal({
   const peldañosListos = countSegmentosListosParaSellar(segmentos);
   const porcentajeCumplidos = cerrados > 0 ? Math.round((cumplidos / cerrados) * 100) : 0;
   const flotaTypes: TipoFlota[] = ["tiempo", "situacion", "descanso", "verdad"];
-  const flotaLabels: Record<TipoFlota, string> = { tiempo: "TIEMPO", situacion: "SITUACIÓN", descanso: "DESCANSO", verdad: "VERDAD" };
+  const flotaLabels = flotaLabelsRecord();
 
   const getMotivationalPhrase = () => {
     if (cumplidos >= 5 || porcentajeCumplidos >= 90) return "Dominio absoluto. El guerrero se forja en la constancia.";

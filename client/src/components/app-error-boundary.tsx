@@ -84,7 +84,7 @@ export class AppErrorBoundary extends Component<Props, State> {
           <p className="text-xs uppercase tracking-widest text-slate-500">SISTEMICAR</p>
           <h1 className="text-lg font-bold text-white">Algo bloqueó la interfaz</h1>
           <p className="text-sm text-slate-400 leading-relaxed">
-            Un vehículo situacional atascado puede provocar este bucle. Prueba la reparación
+            Un vehículo de enfoque atascado puede provocar este bucle. Prueba la reparación
             automática o cierra el desglosador en emergencia.
           </p>
           {this.state.message && (
@@ -109,7 +109,7 @@ export class AppErrorBoundary extends Component<Props, State> {
             className="w-full py-3 rounded-xl text-sm font-bold uppercase tracking-wider"
             style={{ backgroundColor: "rgba(239,68,68,0.2)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.45)" }}
           >
-            Cerrar desglosador situacional (emergencia)
+            Cerrar ring de enfoque (emergencia)
           </button>
           <button
             type="button"

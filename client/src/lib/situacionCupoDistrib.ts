@@ -199,6 +199,68 @@ export function repartirMinutosGanadosACupo(
   return { subTareas: next, minutosRepartidos };
 }
 
+/**
+ * Reparte ganancia (+) o pérdida (−) vs tiempo meta entre TODAS las filas pendientes del ring.
+ * Ganancia: suma cupo proporcional (incluye cupoFijo). Pérdida: resta solo de flexibles.
+ */
+export function repartirDeltaMinutosEnCola(
+  subTareas: SubTarea[],
+  deltaMinutos: number,
+  opts?: { excludeSubTareaIds?: string[] }
+): { subTareas: SubTarea[]; repartido: number } {
+  if (deltaMinutos === 0) return { subTareas, repartido: 0 };
+  const exclude = new Set(opts?.excludeSubTareaIds ?? []);
+
+  const pendingTargets = subTareas
+    .map((st, i) => ({ st, i }))
+    .filter(({ st }) => situacionFilaCronometroPendiente(st) && !exclude.has(st.id));
+  if (pendingTargets.length === 0) return { subTareas, repartido: 0 };
+
+  const next = [...subTareas];
+
+  if (deltaMinutos > 0) {
+    const bonus = repartirProporcional(
+      pendingTargets.map(({ st }) => Math.max(1, st.minutosCupo ?? 1)),
+      deltaMinutos,
+      0
+    );
+    const repartido = bonus.reduce((a, b) => a + b, 0);
+    pendingTargets.forEach(({ st, i }, k) => {
+      if (bonus[k]! <= 0) return;
+      next[i] = { ...st, minutosCupo: (st.minutosCupo ?? 0) + bonus[k]! };
+    });
+    return { subTareas: next, repartido };
+  }
+
+  const loss = Math.abs(deltaMinutos);
+  const flexTargets = pendingTargets.filter(({ st }) => !isCupoFijo(st) && (st.minutosCupo ?? 0) > 0);
+  if (flexTargets.length === 0) return { subTareas, repartido: 0 };
+
+  const disponible = flexTargets.reduce((a, { st }) => a + (st.minutosCupo ?? 0), 0);
+  const toTake = Math.min(loss, disponible);
+  if (toTake <= 0) return { subTareas, repartido: 0 };
+
+  const takeAlloc = repartirProporcional(
+    flexTargets.map(({ st }) => st.minutosCupo ?? 1),
+    toTake,
+    0
+  );
+  flexTargets.forEach(({ st, i }, k) => {
+    const take = takeAlloc[k]!;
+    if (take <= 0) return;
+    const newMin = (st.minutosCupo ?? 0) - take;
+    if (newMin <= 0) {
+      const row = { ...next[i] };
+      delete (row as { minutosCupo?: number }).minutosCupo;
+      delete (row as { cupoFijo?: boolean }).cupoFijo;
+      next[i] = row;
+    } else {
+      next[i] = { ...st, minutosCupo: newMin };
+    }
+  });
+  return { subTareas: next, repartido: -toTake };
+}
+
 /** @deprecated Usar repartirMinutosGanadosACupo — conservado como alias interno. */
 function repartirMinutosGanadosAcum(
   subTareas: SubTarea[],
@@ -371,7 +433,9 @@ function aplicarPreviewTiempoGanado(
     toQueue = Math.min(minutosVirtualesGanados, slack);
   }
   if (toQueue <= 0) return subTareas;
-  return repartirMinutosGanadosACupo(subTareas, toQueue, anchor.subTareaId).subTareas;
+  return repartirDeltaMinutosEnCola(subTareas, toQueue, {
+    excludeSubTareaIds: [anchor.subTareaId],
+  }).subTareas;
 }
 
 /** Suma minutos de preview repartidos en filas pendientes posteriores al foco. */
@@ -417,7 +481,17 @@ export function computeSituacionCronometroHorarios(
   }
 ): SituacionFilaHorario[] {
   const now = opts.now ?? Date.now();
-  const cronRows = filasCronometroOrdenadas(subTareas);
+  let effectiveSubs = subTareas;
+  if (opts.previewTiempoGanado && opts.anchor) {
+    effectiveSubs = aplicarPreviewTiempoGanado(
+      subTareas,
+      opts.anchor,
+      now,
+      opts.horaFinContratoMs
+    );
+  }
+  const cronRows = filasCronometroOrdenadas(effectiveSubs);
+  const cupoById = new Map(effectiveSubs.map(st => [st.id, st.minutosCupo ?? 0]));
   if (cronRows.length === 0) return [];
 
   const metaMs = opts.horaFinContratoMs ?? null;
@@ -428,7 +502,7 @@ export function computeSituacionCronometroHorarios(
   for (const st of cronRows) {
     const pendiente = situacionFilaCronometroPendiente(st);
     const enFoco = pendiente && opts.anchor?.subTareaId === st.id;
-    const minutosCupo = st.minutosCupo ?? 0;
+    const minutosCupo = cupoById.get(st.id) ?? st.minutosCupo ?? 0;
 
     if (!pendiente) {
       const durationSec =
@@ -554,19 +628,18 @@ export function minutosGanadosEnVivoFoco(
   return Math.max(0, cupoMin - elapsedMin);
 }
 
-function calcMinutosGanadosCierre(
+function calcDeltaCierreCronometro(
   target: SubTarea,
   anchor: { subTareaId: string; startedAt: number } | null | undefined,
   now: number,
   bloqueInicioAt: number,
   subTareas: SubTarea[]
-): { duracionRealSec: number; minutosGanados: number } {
+): { duracionRealSec: number; deltaMinutosVsMeta: number } {
   const cupoMin = target.minutosCupo ?? 0;
   let duracionRealSec = Math.max(0, cupoMin * 60);
-  let minutosGanados = 0;
 
   if (cupoMin <= 0) {
-    return { duracionRealSec: 0, minutosGanados: 0 };
+    return { duracionRealSec: 0, deltaMinutosVsMeta: 0 };
   }
 
   if (anchor?.subTareaId === target.id) {
@@ -577,8 +650,7 @@ function calcMinutosGanadosCierre(
   }
 
   const elapsedMin = Math.ceil(duracionRealSec / 60);
-  minutosGanados = Math.max(0, cupoMin - elapsedMin);
-  return { duracionRealSec, minutosGanados };
+  return { duracionRealSec, deltaMinutosVsMeta: cupoMin - elapsedMin };
 }
 
 /**
@@ -599,7 +671,7 @@ export function aplicarTiempoGanadoAlCumplir(
   }
 
   const baseInicio = bloqueInicioAt ?? now;
-  const { duracionRealSec, minutosGanados } = calcMinutosGanadosCierre(
+  const { duracionRealSec, deltaMinutosVsMeta } = calcDeltaCierreCronometro(
     target,
     anchor,
     now,
@@ -619,20 +691,20 @@ export function aplicarTiempoGanadoAlCumplir(
       : st
   );
 
-  if (minutosGanados > 0) {
-    const reparto = repartirGananciaRespetandoMeta(
-      next,
-      minutosGanados,
-      subTareaId,
-      anchor,
-      horaFinContratoMs,
-      now
-    );
-    next = reparto.subTareas;
-    return { subTareas: next, minutosGanados, saldoAdelantoMin: reparto.saldoAdelantoMin };
+  let minutosGanados = 0;
+  let saldoAdelantoMin = 0;
+  if (deltaMinutosVsMeta !== 0) {
+    const { subTareas: repartidas, repartido } = repartirDeltaMinutosEnCola(next, deltaMinutosVsMeta);
+    next = repartidas;
+    if (deltaMinutosVsMeta > 0) {
+      minutosGanados = deltaMinutosVsMeta;
+      if (repartido < deltaMinutosVsMeta) {
+        saldoAdelantoMin = deltaMinutosVsMeta - repartido;
+      }
+    }
   }
 
-  return { subTareas: next, minutosGanados, saldoAdelantoMin: 0 };
+  return { subTareas: next, minutosGanados, saldoAdelantoMin };
 }
 
 /**
@@ -664,7 +736,7 @@ export function cerrarCronometroDeGolpe(
     if (!st.enDesgloseCronometro || (st.resultadoSituacion ?? "pendiente") !== "pendiente") {
       return st;
     }
-    const { duracionRealSec } = calcMinutosGanadosCierre(st, anchor, now, bloqueInicioAt, subTareas);
+    const { duracionRealSec } = calcDeltaCierreCronometro(st, anchor, now, bloqueInicioAt, subTareas);
     return {
       ...st,
       completada: false,
@@ -675,21 +747,27 @@ export function cerrarCronometroDeGolpe(
   });
 }
 
-/** Registra cierre fallado con duración real (sin redistribuir tiempo). */
+/** Registra cierre fallado con duración real; reparte pérdida vs meta en toda la cola. */
 export function registrarCierreFalladoCronometro(
   subTareas: SubTarea[],
   subTareaId: string,
   anchor: { subTareaId: string; startedAt: number } | null | undefined,
   now: number,
   bloqueInicioAt?: number
-): SubTarea[] {
+): { subTareas: SubTarea[]; minutosPerdidos: number } {
   const target = subTareas.find(st => st.id === subTareaId);
-  if (!target) return subTareas;
+  if (!target) return { subTareas, minutosPerdidos: 0 };
 
   const baseInicio = bloqueInicioAt ?? now;
-  const { duracionRealSec } = calcMinutosGanadosCierre(target, anchor, now, baseInicio, subTareas);
+  const { duracionRealSec, deltaMinutosVsMeta } = calcDeltaCierreCronometro(
+    target,
+    anchor,
+    now,
+    baseInicio,
+    subTareas
+  );
 
-  return subTareas.map(st =>
+  let next = subTareas.map(st =>
     st.id === subTareaId
       ? {
           ...st,
@@ -700,6 +778,15 @@ export function registrarCierreFalladoCronometro(
         }
       : st
   );
+
+  let minutosPerdidos = 0;
+  if (deltaMinutosVsMeta < 0) {
+    const { subTareas: repartidas, repartido } = repartirDeltaMinutosEnCola(next, deltaMinutosVsMeta);
+    next = repartidas;
+    minutosPerdidos = Math.abs(repartido);
+  }
+
+  return { subTareas: next, minutosPerdidos };
 }
 
 /**

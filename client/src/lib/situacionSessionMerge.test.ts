@@ -9,6 +9,7 @@ import {
   mergeActiveVehicleSessionState,
   mergeSubTareasById,
   mergeSubVehiculosById,
+  pickMergedAperturaAt,
   shouldPreferLocalSubTareas,
   shouldPreferLocalSubVehiculos,
 } from "./situacionSessionMerge.ts";
@@ -368,5 +369,26 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     };
     const merged = mergeActiveVehicleSessionState(fb, local);
     assert.equal(merged.subTareas?.length, 2);
+  });
+
+  it("prefiere aperturaAt local más reciente sobre Firebase retroactivo", () => {
+    const early = 1_000_000;
+    const late = 1_003_600_000;
+    const fb: Vehicle = { ...baseVehicle(), aperturaAt: early };
+    const local: Vehicle = { ...baseVehicle(), aperturaAt: late };
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.aperturaAt, late);
+  });
+});
+
+describe("pickMergedAperturaAt", () => {
+  it("toma el máximo cuando ambos existen", () => {
+    assert.equal(pickMergedAperturaAt({ aperturaAt: 100 } as Vehicle, { aperturaAt: 200 } as Vehicle), 200);
+    assert.equal(pickMergedAperturaAt({ aperturaAt: 300 } as Vehicle, { aperturaAt: 200 } as Vehicle), 300);
+  });
+
+  it("usa el disponible si falta uno", () => {
+    assert.equal(pickMergedAperturaAt({} as Vehicle, { aperturaAt: 200 } as Vehicle), 200);
+    assert.equal(pickMergedAperturaAt({ aperturaAt: 100 } as Vehicle, {} as Vehicle), 100);
   });
 });

@@ -7,7 +7,7 @@ import {
 } from "./situacionAlertSounds";
 import { isSituacionAlertsEnabled } from "./tikSound";
 import { ringBienvenidaParts, ringTiempoSobraParts } from "./ringEnfoqueReal";
-import { speakUbicacionQueue, speakUbicacionSingle } from "./speechQueue";
+import { speakSituacionVoiceReliable } from "./ubicacionVoiceReliable";
 
 function trimSubText(text: string, max = 48): string {
   const t = text.trim();
@@ -30,7 +30,11 @@ export function fireSituacion2MinAlert(params: {
     tag: `situacion-2m-${params.vehicleId}-${params.tagKey}`,
     vehicleId: params.vehicleId,
   });
-  speakUbicacionSingle(`Dos minutos para la fila: ${fila}`, "situacion");
+  speakSituacionVoiceReliable(
+    `2m-${params.tagKey}`,
+    [`Dos minutos para la fila: ${fila}`],
+    false
+  );
 }
 
 export function fireSituacionCupoAlert(params: {
@@ -55,29 +59,51 @@ export function fireSituacionCupoAlert(params: {
     requireInteraction: !params.escalation,
     vehicleId: params.vehicleId,
   });
-  if (!params.escalation) {
-    speakUbicacionSingle(`Cupo alcanzado. Marca cumplido o incumplido en ${fila}`, "situacion");
-  }
+  const phrase = params.escalation
+    ? `Aún pendiente en ${fila}. Marca cumplido o incumplido.`
+    : `Cupo alcanzado. Marca cumplido o incumplido en ${fila}`;
+  speakSituacionVoiceReliable(
+    `cupo-${params.tagKey}${params.escalation ? "-esc" : ""}`,
+    [phrase],
+    false
+  );
 }
 
 /** Ritual de entrada al ring de enfoque real (situacional). */
-export function speakRingBienvenida(retoNumero: number): void {
-  speakUbicacionQueue(ringBienvenidaParts(retoNumero), true, "situacion");
+export function speakRingBienvenida(retoNumero: number, key?: string): void {
+  speakSituacionVoiceReliable(
+    key ?? `ring-bienvenida-${retoNumero}-${Date.now()}`,
+    ringBienvenidaParts(retoNumero),
+    true
+  );
 }
 
 /** Invitación cuando la cola está vacía y sobra mucho tiempo en la meta. */
-export function speakRingTiempoSobra(minutosSobra: number): void {
-  speakUbicacionQueue(ringTiempoSobraParts(minutosSobra), false, "situacion");
+export function speakRingTiempoSobra(
+  minutosSobra: number,
+  key?: string,
+  onSpoken?: () => void
+): () => void {
+  return speakSituacionVoiceReliable(
+    key ?? `ring-sobra-${minutosSobra}`,
+    ringTiempoSobraParts(minutosSobra),
+    false,
+    onSpoken
+  );
 }
 
 /** Anuncia por voz la fila activa del ring situacional. */
-export function speakSituacionFilaEnFoco(filaTexto: string, opts?: { intro?: boolean }): void {
+export function speakSituacionFilaEnFoco(
+  filaTexto: string,
+  opts?: { intro?: boolean; key?: string; onSpoken?: () => void }
+): () => void {
   const fila = trimSubText(filaTexto, 56);
-  if (!fila) return;
+  if (!fila) return () => {};
   const phrases = opts?.intro
     ? [fila, "Ring de enfoque real activo"]
     : [fila, "Fila en foco"];
-  speakUbicacionQueue(phrases, true, "situacion");
+  const voiceKey = opts?.key ?? `fila-${fila}-${Date.now()}`;
+  return speakSituacionVoiceReliable(voiceKey, phrases, true, opts?.onSpoken);
 }
 
 export const SITUACION_CUPO_ESCALATION_MS = 60_000;

@@ -293,7 +293,7 @@ export const MASTER_MANUALS: Record<ManualType, MasterManual> = {
       {
         title: "TERMODINÁMICA ATENCIONAL",
         instruction:
-          "V2 (desglosador tiempo): compara hoy vs ayer — dominio fluido, subs completados, fricción. Maestría = más fluido y cierres adelantados, no “llegar al límite” siempre.",
+          "V2 (desglosador conquista): compara hoy vs ayer — dominio fluido, subs completados, fricción. Maestría = más fluido y cierres adelantados, no “llegar al límite” siempre.",
         checklist: [
           { key: "plan_termo_1", text: "Revisé la comparativa del día (no solo el total de bloques)" },
           { key: "plan_termo_2", text: "Entiendo fluido vs concentrado vs límite por sub" },

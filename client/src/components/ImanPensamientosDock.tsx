@@ -204,7 +204,7 @@ export default function ImanPensamientosDock({
             <div className="border-t px-3 pb-3 pt-2 space-y-2" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
               <p className="text-[7px] text-slate-500 leading-relaxed">{CRISOL_TAGLINE}</p>
               <p className="text-[7px] text-slate-600 leading-relaxed">
-                {CRISOL_MOS_HINT} Marca las filas y envíalas al situacional una a una.
+                {CRISOL_MOS_HINT} Marca las filas y envíalas al vehículo de enfoque una a una.
               </p>
 
               {selectedCount > 0 && (
@@ -221,7 +221,7 @@ export default function ImanPensamientosDock({
                   data-testid="iman-enviar-seleccion"
                 >
                   <Send size={12} />
-                  {enviandoLote ? "Enviando…" : `Enviar ${selectedCount} al situacional`}
+                  {enviandoLote ? "Enviando…" : `Enviar ${selectedCount} al enfoque`}
                 </button>
               )}
 
@@ -444,8 +444,8 @@ export default function ImanPensamientosDock({
                                       data-testid={`iman-enviar-${item.id}`}
                                       title={
                                         itemRuta === "situacion_desglosador"
-                                          ? "Enviar al ring situacional"
-                                          : "Enviar a lista libre del situacional"
+                                          ? "Enviar al ring de enfoque"
+                                          : "Enviar a lista libre del enfoque"
                                       }
                                     >
                                       <Send size={9} />

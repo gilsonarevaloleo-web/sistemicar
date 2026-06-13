@@ -14,13 +14,13 @@ export const SUBSCRIPTION_PLANS = {
     name: "Planificación Base",
     price: 19.99,
   },
-  /** Desglosador Situacional + Hub Proyectos */
+  /** Desglosador Enfoque + Hub Proyectos */
   soberania_dia: {
     id: "soberania_dia",
     name: "Soberanía del día",
     price: 29.99,
   },
-  /** Desglosador Tiempo (producción) */
+  /** Desglosador Conquista (producción) */
   operativo: {
     id: "operativo",
     name: "Operativo",

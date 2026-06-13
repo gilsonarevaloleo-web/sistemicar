@@ -72,10 +72,10 @@ const STEPS_BASE: TutorialStep[] = [
 
 const STEPS_ESTUDIANTE_EXTRA: TutorialStep[] = [
   {
-    title: "Desglosador situacional",
+    title: "Ring de enfoque (desglosador)",
     description:
-      "Para tiempo libre e ideas sueltas: bloques 3+3, cupos por subtarea, cronómetro. Ideal cuando nadie te marca la agenda.",
-    action: "Crea un desglosador situación y cierra al menos un bloque.",
+      "Para ideas sueltas e imprevistos: bloques 3+3, cupos por subtarea, meta sellada. Ideal cuando nadie te marca la agenda.",
+    action: "Crea un vehículo de enfoque y cierra al menos un bloque del ring.",
   },
   {
     title: "Proyectos y peldaños",
@@ -87,10 +87,10 @@ const STEPS_ESTUDIANTE_EXTRA: TutorialStep[] = [
 
 const STEPS_PRODUCCION_EXTRA: TutorialStep[] = [
   {
-    title: "Desglosador tiempo (unidades)",
+    title: "Desglosador conquista (unidades)",
     description:
       "Para producción repetitiva: defines unidades, el contador baja con pitido, cada sub es un bloque medido.",
-    action: "Abre un desglosador tiempo en La Flota.",
+    action: "Abre un vehículo de conquista con desglosador en La Flota.",
   },
   {
     title: "Ruta fluido → concentrado → límite",
@@ -142,8 +142,8 @@ export function getPrimerDiaItems(profile: PlanificacionPlanProfile): PrimerDiaI
       label: "Usé un desglosador y cerré al menos un sub",
       hint:
         profile === "produccion"
-          ? "Desglosador tiempo → subs por unidades."
-          : "Desglosador situación → bloques 3+3.",
+          ? "Desglosador conquista → subs por unidades."
+          : "Ring de enfoque → bloques 3+3.",
       requires: "desglosador",
     });
   }

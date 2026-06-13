@@ -63,6 +63,8 @@ export interface VehiculoAnilloLite {
   desglosadorPausa?: unknown;
   puntoCero?: { fase?: string };
   aperturaAt?: number;
+  createdAt?: number | Date;
+  primerAccionAt?: number;
   cierreAt?: number;
   duracionFinal?: number;
   completedAt?: number | Date;
@@ -133,12 +135,28 @@ function completedAtMs(v: VehiculoAnilloLite): number | undefined {
   return v.completedAt instanceof Date ? v.completedAt.getTime() : v.completedAt;
 }
 
+function timestampMs(value: number | Date | undefined): number | undefined {
+  if (value == null) return undefined;
+  return value instanceof Date ? value.getTime() : value;
+}
+
+/** Inicio real de cobertura consciente (no antes de creación ni primera acción). */
+export function resolveConsciousSessionStart(v: VehiculoAnilloLite): number | null {
+  const apertura = v.aperturaAt;
+  if (apertura == null || !Number.isFinite(apertura)) return null;
+  let start = apertura;
+  const created = timestampMs(v.createdAt);
+  if (created != null && created > start) start = created;
+  if (v.primerAccionAt != null && v.primerAccionAt > start) start = v.primerAccionAt;
+  return start;
+}
+
 export function vehicleSessionRange(
   v: VehiculoAnilloLite,
   now: number
 ): { start: number; end: number } | null {
-  const start = v.aperturaAt;
-  if (!start) return null;
+  const start = resolveConsciousSessionStart(v);
+  if (start == null) return null;
   let end: number;
   if (v.status === "activo") {
     end = now;

@@ -1,6 +1,6 @@
 # Kit vendedores — Planificación SISTEMICAR
 
-**Versión:** 1.3 · **Actualizado:** junio 2026  
+**Versión:** 1.4 · **Actualizado:** junio 2026  
 **Audiencia:** vendedores afiliados, closers, partners de distribución  
 **Contacto operativo:** Gilson · WhatsApp +51 918 260 514  
 **Documento maestro embudo:** `EMBUDO_PLANIFICACION.md`
@@ -101,9 +101,11 @@ Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**)
 - **Disciplina** — vehículos conscientes en segmento
 - **Visión panorámica** — entrenamiento amplitud/foco
 - **Termodinámica atencional** y **combustible de conciencia** (lectura)
-- Vehículos tiempo, situación, descanso (estructura)
+- Vehículos **conquista**, **enfoque**, descanso y verdad (estructura)
 
-**No incluye (sin add-on):** desglosador tiempo premium, desglosador situacional premium, hub proyectos, Imán completo.
+**Nombres en la app:** la flota ya no se llama «tiempo» vs «situación». **Conquista** = medir unidades y ritmo. **Enfoque** = sellar decisiones con ring y cupos. Ambos usan reloj; la diferencia es *qué* mides.
+
+**No incluye (sin add-on):** desglosador conquista premium, desglosador enfoque premium, hub proyectos, Imán completo.
 
 **Frase de venta:** *"Organiza el día y cierra segmentos con datos, no con culpa."*
 
@@ -117,7 +119,7 @@ Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**)
 
 **Incluye:**
 
-- **Desglosador tiempo** (unidades, pitido, ritmo en vivo)
+- **Desglosador conquista** (unidades, pitido, ritmo en vivo)
 - **Récord / bóveda** + tiempo heredado
 - Ruta fluido ? concentrado ? límite (voz guía)
 - **Producción de decisiones medibles**
@@ -129,7 +131,7 @@ Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**)
 
 **Stack Conquista medible:** Base + Operativo ? **$59.98/mes** ? ~**$18/mes** para ti.
 
-**Demo 5 min:** desglosador tiempo ? 2–3 subs ? panel termodinámica vs ayer.
+**Demo 5 min:** desglosador conquista ? 2–3 subs ? panel termodinámica vs ayer.
 
 ---
 
@@ -142,7 +144,7 @@ Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**)
 **Incluye:**
 
 - **Imán de pensamientos** (captura, nidos, ruta S)
-- **Desglosador situacional** (bloques 3+3, cupos, cronómetro)
+- **Desglosador enfoque** (bloques 3+3, cupos, ring)
 - **Hub Proyectos** y peldaños (pasos de fe)
 - Bolsa de ganancia de tiempo
 
@@ -169,7 +171,7 @@ El **primer sistema que ordena pensamientos** hacia proyectos, tiempo y pasos de
 
 ```
 Mente ? Imán (captura + nido/proyecto)
-     ? Desglosador situacional (foco ~60% con cronómetro)
+     ? Ring de enfoque (decisiones selladas ~60% con cupos)
      ? [no alcanza el bloque] ? Imán otra vez (ruta S, sin perder hilo)
      ? Cumplido ? paso ejecutado en proyecto (fe incremental)
 ```
@@ -211,7 +213,7 @@ Usa **dolor ? resultado ? prueba en la app**, no lista de funciones técnicas.
 | Persona | Dolor | Peldaño | Demo |
 |---------|-------|---------|------|
 | Día sin estructura | "Se me va el día" | 1 Base | Segmento ? flota ? cierre |
-| Producción / unidades | Autoengaño al cerrar | 2 Operativo | Desglosador tiempo ? termo |
+| Producción / unidades | Autoengaño al cerrar | 2 Operativo | Desglosador conquista ? termo |
 | Mente acelerada | Ideas que se pierden | 3 Soberanía | Imán ? nido ? cronómetro |
 | Proyectos largos | Poco avance visible | 3 Soberanía | Hub ? paso #N al cumplir |
 
@@ -254,8 +256,8 @@ El cliente pierde acceso; tú dejas de ganar comisión ese mes.
 ## 8. Guion de venta (embudo)
 
 1. **¿Tu día cierra con estructura?** ? Base.  
-2. **¿Necesitas unidades y ritmo reales?** ? Operativo (primer upsell). Demo desglosador tiempo.  
-3. **¿Ideas sueltas e imprevistos?** ? Soberanía (avanzado). Demo Imán ? bloque situacional.  
+2. **¿Necesitas unidades y ritmo reales?** ? Operativo (primer upsell). Demo desglosador conquista.  
+3. **¿Ideas sueltas e imprevistos?** ? Soberanía (avanzado). Demo Imán ? ring de enfoque.  
 4. **¿Comparas con Notion?** ? Ritmo, cierre y decisiones medidas — no listas.
 
 **Cierre:**  
@@ -290,8 +292,8 @@ El cliente pierde acceso; tú dejas de ganar comisión ese mes.
 | Área | Estado | Comentario vendedor |
 |------|--------|---------------------|
 | Segmentos + Flota + 4 ejes | Producción | Core estable — peldaño 1 |
-| Desglosador tiempo + récord | Producción | Peldaño 2 — vender primero |
-| Desglosador situación + Imán + proyectos | Producción | Peldaño 3 — avanzado |
+| Desglosador conquista + récord | Producción | Peldaño 2 — vender primero |
+| Desglosador enfoque + Imán + proyectos | Producción | Peldaño 3 — avanzado |
 | Termodinámica v2 | Producción | Mejor tras sync de subs |
 | Claridad mental / oleada en proyectos | En despliegue | Solo si el cliente ya lo ve |
 | Pagos recurrentes MP + ref vendedor | Producción | Verificar dominio de producción |

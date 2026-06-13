@@ -7,6 +7,7 @@ import {
   computeTimelineDayStats,
   getUmbralConcienciaMin,
   limaNowToClockDeg,
+  resolveConsciousSessionStart,
   UMBRAL_CONTINGENCIA_MIN,
 } from "./ConcienciaEngine.ts";
 import { getJournalDayStartMs } from "../lib/segmentTime.ts";
@@ -233,6 +234,43 @@ describe("computeTimelineClockArcs", () => {
     });
     assert.ok(arcs.some(a => a.kind === "entropia"));
     assert.equal(arcs.filter(a => a.kind === "conquista").length, 0);
+  });
+
+  it("apertura tardía (6:00) muestra ~60 min entropía antes de conquista", () => {
+    const now = limaAt(2026, 4, 18, 7, 0);
+    const apertura = limaAt(2026, 4, 18, 6, 0);
+    const segmentos = [{ horaInicio: "05:00", horaFin: "10:00" }];
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "activo",
+      aperturaAt: apertura,
+    }];
+    const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
+    assert.ok(stats.entropiaMin >= 55 && stats.entropiaMin <= 65, "~60 min entropía");
+    assert.ok(stats.conquistaMin >= 55 && stats.conquistaMin <= 65, "~60 min conquista");
+    const arcs = computeTimelineClockArcs({ segmentos, vehiculos, now });
+    assert.ok(arcs.some(a => a.kind === "entropia"));
+    assert.ok(arcs.some(a => a.kind === "conquista"));
+    const st = computeAnilloEstado({ segmentos, vehiculos, now });
+    assert.equal(st.mode, "conquista");
+  });
+
+  it("aperturaAt retroactivo se corrige con createdAt posterior", () => {
+    const now = limaAt(2026, 4, 18, 7, 0);
+    const journalStart = getJournalDayStartMs(now);
+    const realOpen = limaAt(2026, 4, 18, 6, 0);
+    const segmentos = [{ horaInicio: "05:00", horaFin: "10:00" }];
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "activo",
+      aperturaAt: journalStart,
+      createdAt: realOpen,
+    }];
+    assert.equal(resolveConsciousSessionStart(vehiculos[0]), realOpen);
+    const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
+    assert.ok(stats.entropiaMin >= 55 && stats.entropiaMin <= 65);
   });
 
   it("activo arrastrado desde 04:00 no pinta morado tras filtro de anillo", () => {

@@ -1,5 +1,8 @@
 import { warmupSpeechSynthesis } from "./speechQueue";
 import { isPuntoCeroVoiceEnabled } from "./tikSound";
+import { pickCalmDeepSpanishVoice } from "./spanishTtsVoice";
+
+export { pickCalmDeepSpanishVoice, pickCalmDeepSpanishVoice as pickPleasantSpanishVoice } from "./spanishTtsVoice";
 import {
   colorInmersionVoz,
   MENSAJE_PASIVA_DIA,
@@ -49,54 +52,10 @@ const VOICE_PROFILES: Record<
   reactivation: { rate: 0.76, pitch: 0.88, volume: 0.54, pauseMs: 560 },
 };
 
-let voicesCache: SpeechSynthesisVoice[] | null = null;
 let pcQueue: string[] = [];
 let pcSpeaking = false;
 let pcPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let pcProfile: PuntoCeroVoiceProfile = "calm";
-
-function loadVoices(): SpeechSynthesisVoice[] {
-  if (typeof window === "undefined" || !window.speechSynthesis) return [];
-  if (voicesCache?.length) return voicesCache;
-  voicesCache = window.speechSynthesis.getVoices();
-  return voicesCache;
-}
-
-if (typeof window !== "undefined" && window.speechSynthesis) {
-  window.speechSynthesis.onvoiceschanged = () => {
-    voicesCache = window.speechSynthesis.getVoices();
-  };
-}
-
-function scoreSpanishVoice(v: SpeechSynthesisVoice): number {
-  let score = 0;
-  const blob = `${v.name} ${v.voiceURI} ${v.lang}`.toLowerCase();
-  if (/^es-es/i.test(v.lang)) score += 50;
-  else if (/^es-/i.test(v.lang)) score += 28;
-  if (/google.*espa(?!.*estados)/i.test(v.name)) score += 35;
-  if (/microsoft.*(laura|elena|sabina|helena|david|pablo)/i.test(blob)) score += 30;
-  if (/natural|neural|premium|online/i.test(blob)) score += 18;
-  if (/male|hombre|diego|jorge|pablo|enrique|carlos|daniel|antonio|david/i.test(blob)) score += 12;
-  if (/female|mujer|helena|laura|sabina|elena/i.test(blob)) score += 8;
-  if (/estados unidos|latino|méxico|mexico|mexican/i.test(blob)) score -= 8;
-  if (/english|en-us|en-gb/i.test(v.lang)) score -= 40;
-  return score;
-}
-
-/** Voz en español calmada — prioriza es-ES y voces neurales del sistema. */
-export function pickCalmDeepSpanishVoice(): SpeechSynthesisVoice | null {
-  const voices = loadVoices();
-  if (!voices.length) return null;
-  const es = voices.filter(v => /^es/i.test(v.lang));
-  const pool = es.length ? es : voices;
-  const ranked = [...pool].sort((a, b) => scoreSpanishVoice(b) - scoreSpanishVoice(a));
-  return ranked[0] ?? voices[0] ?? null;
-}
-
-/** @deprecated Usar pickCalmDeepSpanishVoice */
-export function pickPleasantSpanishVoice(): SpeechSynthesisVoice | null {
-  return pickCalmDeepSpanishVoice();
-}
 
 function clearPuntoCeroPauseTimer(): void {
   if (pcPauseTimer) {

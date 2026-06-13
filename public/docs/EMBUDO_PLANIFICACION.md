@@ -16,8 +16,8 @@ La mecánica de precio debe ser **familiarización progresiva**:
 2. Gana confianza con **resultados medibles** (Operativo — primer upsell).
 3. Escala a **orden mental, imprevistos y fe en proyectos** (Soberanía — segundo upsell, más avanzado).
 
-> **Decisión estratégica:** el desglosador de **tiempo / conquista de objetivos medibles** se vende **antes** que el bloque **situacional**.  
-> No porque situación sea menos valiosa, sino porque exige más capacidad de ordenar pensamientos, tolerar interrupciones y sostener bloques sin jefe externo.
+> **Decisión estratégica:** el desglosador de **conquista** (flota CONQUISTA — unidades y ritmo) se vende **antes** que el de **enfoque** (flota ENFOQUE — ring y cupos).  
+> No porque enfoque sea menos valioso, sino porque exige más capacidad de ordenar pensamientos, tolerar interrupciones y sostener bloques sin jefe externo.
 
 ---
 
@@ -137,7 +137,7 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 | Dolor | "Hoy me fue bien" sin evidencia |
 | Resultado | Datos vs percepción; tendencia de fricción mental |
 | Prueba | Panel termo → 2 días con actividad → flecha vs ayer |
-| Peldaño | **Base** (resumen); **Operativo** (máximo valor con subs de tiempo); **Soberanía** (decisiones situacionales) |
+| Peldaño | **Base** (resumen); **Operativo** (máximo valor con subs de conquista); **Soberanía** (decisiones de enfoque) |
 
 ---
 
@@ -145,7 +145,7 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 | Campo | Contenido |
 |-------|-----------|
-| Qué es | Contador de bloques cerrados y **decisiones** resueltas en la jornada (subs tiempo, subs situación, misiones directas). Metáfora: tanque que se llena al cerrar, no al planificar. |
+| Qué es | Contador de bloques cerrados y **decisiones** resueltas en la jornada (subs conquista, subs enfoque, misiones directas). Metáfora: tanque que se llena al cerrar, no al planificar. |
 | Dolor | "Hago mucho pero no siento que decida" |
 | Resultado | "Hoy resolviste N decisiones en X min" — evidencia de agencia |
 | Prueba | Cerrar 1 sub desglosador → ver combustible subir → mensaje celebración bloque |
@@ -160,19 +160,19 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 | Qué es | Historial de ritmo por misión (min/unidad, mejores marcas). Herencia de tiempo en nuevas misiones similares. |
 | Dolor | "No sé cuál es mi ritmo real ni mi techo" |
 | Resultado | Récord visible; auto-regulación en siguientes misiones |
-| Prueba | Desglosador tiempo → 3 subs → mostrar récord y sugerencia heredada |
+| Prueba | Desglosador conquista → 3 subs → mostrar récord y sugerencia heredada |
 | Peldaño | **Operativo** |
 
 ---
 
-### 3.10 Desglosador tiempo (conquista de objetivos medibles)
+### 3.10 Desglosador conquista (objetivos medibles · flota CONQUISTA)
 
 | Campo | Contenido |
 |-------|-----------|
 | Qué es | Reloj por unidades: cantidad objetivo, pitido por unidad, ritmo en vivo, cierre cumplido/fallado por sub. |
 | Dolor | "Creí que produje mucho y al cerrar faltó" |
 | Resultado | Unidades cerradas con veredicto; ritmo medido |
-| Prueba | Vehículo tiempo + desglosador → 2–3 subs → cerrar con cantidad |
+| Prueba | Vehículo conquista + desglosador → 2–3 subs → cerrar con cantidad |
 | Peldaño | **Operativo** — **primer upsell recomendado** |
 
 ---
@@ -213,14 +213,14 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 ---
 
-### 3.14 Desglosador situacional (bloques 3+3, cupos, cronómetro)
+### 3.14 Desglosador enfoque (bloques 3+3, cupos, cronómetro · flota ENFOQUE)
 
 | Campo | Contenido |
 |-------|-----------|
 | Qué es | Cola de subtareas con meta horaria, cupos redistribuidos, cumplido/fallado/reservar al Crisol. Bloques de reto (Ring de enfoque real). |
 | Dolor | "Tiempo libre sin foco; imprevistos desordenados" |
 | Resultado | Bloque cerrado con ~60% foco; ganancia de tiempo en bolsa |
-| Prueba | Vehículo situación → activar desglosador → cerrar bloque |
+| Prueba | Vehículo enfoque → activar desglosador → cerrar bloque |
 | Peldaño | **Soberanía** — **más avanzado que Operativo** |
 
 ---
@@ -237,7 +237,7 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 ---
 
-### 3.16 Bolsa de ganancia de tiempo (situacional)
+### 3.16 Bolsa de ganancia de tiempo (enfoque)
 
 | Campo | Contenido |
 |-------|-----------|
@@ -249,14 +249,14 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 ---
 
-### 3.17 Vehículos situación / descanso / verdad (capas)
+### 3.17 Vehículos enfoque / descanso / verdad (capas)
 
 | Campo | Contenido |
 |-------|-----------|
-| Qué es | Tipos de flota para imprevistos, recarga y sinceridad. Base da estructura; premium situacional desbloquea Ring + Crisol MOS. |
+| Qué es | Tipos de flota para imprevistos, recarga y sinceridad. Base da estructura; premium enfoque desbloquea Ring + Crisol MOS. |
 | Dolor | "Todo mezclado en una sola lista" |
 | Resultado | Tipo de misión = tipo de cierre y PS distinto |
-| Prueba | Crear vehículo descanso vs situación → cierre distinto |
+| Prueba | Crear vehículo descanso vs enfoque → cierre distinto |
 | Peldaño | Estructura **Base**; desglosador premium **Soberanía** |
 
 ---
@@ -306,8 +306,8 @@ Usar en lugar de "Elige stack Estudiante o Producción":
 ### Kit vendedores
 
 - Actualizar matriz persona → peldaño (no solo Estudiante/Producción).
-- Demo peldaño 2: desglosador tiempo + termo + récord.
-- Demo peldaño 3: Crisol MOS → Ring situacional → paso proyecto.
+- Demo peldaño 2: desglosador conquista + termo + récord.
+- Demo peldaño 3: Crisol MOS → ring de enfoque → paso proyecto.
 
 ---
 

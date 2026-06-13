@@ -1,6 +1,10 @@
 import type { SubTarea, Vehicle } from "./persistence";
 import { getClockDayStartMs, parseSegmentTime, segmentClockMs } from "./segmentTime";
 
+function filaCronPendiente(st: SubTarea): boolean {
+  return !!st.enDesgloseCronometro && (st.resultadoSituacion ?? "pendiente") === "pendiente";
+}
+
 export type SituacionBolsaGanancia = {
   retoNumero: number;
   retosCompletados: number;
@@ -20,8 +24,8 @@ const RETO_ORDINALS: Record<number, string> = {
 
 export function retoSituacionLabel(retoNumero: number): string {
   const ord = RETO_ORDINALS[retoNumero];
-  if (ord) return `${ord} reto de desglosador situacional`;
-  return `Reto ${retoNumero} de desglosador situacional`;
+  if (ord) return `${ord} reto de enfoque`;
+  return `Reto ${retoNumero} de enfoque`;
 }
 
 export function retoSituacionCorto(retoNumero: number): string {
@@ -38,23 +42,16 @@ export function sumMinutosEnColaGanancia(subTareas: SubTarea[]): number {
 export function describeRepartoGananciaEnCola(
   antes: SubTarea[],
   despues: SubTarea[],
-  afterSubTareaId: string
+  _afterSubTareaId: string
 ): string | null {
-  const cronOrder = (subTareas: SubTarea[]) =>
-    subTareas.filter(st => st.enDesgloseCronometro);
-  const order = cronOrder(antes);
-  const afterIdx = order.findIndex(st => st.id === afterSubTareaId);
-  if (afterIdx < 0) return null;
   const partes: string[] = [];
-  for (const st of order.slice(afterIdx + 1)) {
-    const prev = antes.find(s => s.id === st.id);
-    const next = despues.find(s => s.id === st.id);
-    if (!prev || !next) continue;
+  for (const next of despues.filter(st => st.enDesgloseCronometro && filaCronPendiente(st))) {
+    const prev = antes.find(s => s.id === next.id);
+    if (!prev) continue;
     const delta = (next.minutosCupo ?? 0) - (prev.minutosCupo ?? 0);
-    if (delta > 0) {
-      const label = next.texto.length > 22 ? `${next.texto.slice(0, 22)}…` : next.texto;
-      partes.push(`${label} +${delta}′`);
-    }
+    if (delta === 0) continue;
+    const label = next.texto.length > 22 ? `${next.texto.slice(0, 22)}…` : next.texto;
+    partes.push(`${label} ${delta > 0 ? "+" : ""}${delta}′`);
   }
   if (partes.length === 0) return null;
   return partes.join(" · ");

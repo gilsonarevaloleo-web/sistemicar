@@ -30,7 +30,7 @@ const STACKS = [
     modules: "Base + Soberanía del día",
     total: 49.98,
     comisionEjemplo: 15.0,
-    desc: "Imán, desglosador situación, proyectos y pasos de fe.",
+    desc: "Imán, desglosador enfoque, proyectos y pasos de fe.",
   },
   {
     title: "Sistema completo",
@@ -45,19 +45,19 @@ const STACKS = [
 const EMBUDO_PREGUNTAS = [
   { peldao: 1, pregunta: "?Tu día cierra con estructura?", respuesta: "Planificación Base." },
   { peldao: 2, pregunta: "?Necesitas unidades, ritmo y récord reales?", respuesta: "A?ade Operativo ? primer upsell." },
-  { peldao: 3, pregunta: "?Ideas sueltas, imprevistos y proyectos grandes?", respuesta: "A?ade Soberanía ? Imán + situación + pasos de fe." },
+  { peldao: 3, pregunta: "?Ideas sueltas, imprevistos y proyectos grandes?", respuesta: "A?ade Soberanía ? Imán + enfoque + pasos de fe." },
 ];
 
 const PREGUNTAS = [
   "?Tu día cierra con estructura, o necesitas medir unidades, o ordenar ideas sueltas? Eso define el pelda?o.",
-  "?Has perdido días creyendo que produjiste? ? Demo desglosador tiempo + termo vs ayer (Operativo).",
+  "?Has perdido días creyendo que produjiste? ? Demo desglosador conquista + termo vs ayer (Operativo).",
   "?Comparas con Notion? Aquí pagas por ritmo, cierre y decisiones medidas ? no listas.",
   "Operativo antes que Soberanía: primero conquista medible, después orden mental avanzado.",
 ];
 
 const IMAN_FLUJO = [
   "Mente ? Imán (captura + nido/proyecto)",
-  "Desglosador situacional (foco ~60% con cronómetro)",
+  "Desglosador enfoque (ring ~60% con cronómetro)",
   "[no alcanza el bloque] ? Imán otra vez (ruta S)",
   "Cumplido ? paso ejecutado en proyecto",
 ];

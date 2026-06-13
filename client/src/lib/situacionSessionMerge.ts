@@ -230,8 +230,20 @@ function withMergedSubVehiculos(base: Vehicle, firebaseV: Vehicle, localV: Vehic
   return base;
 }
 
+/** Nunca retrocede la apertura consciente al fusionar local ↔ Firebase. */
+export function pickMergedAperturaAt(firebaseV: Vehicle, localV: Vehicle): number | undefined {
+  const fa = firebaseV.aperturaAt;
+  const la = localV.aperturaAt;
+  if (la != null && fa != null) return Math.max(la, fa);
+  return la ?? fa;
+}
+
 function finalizeSessionMerge(base: Vehicle, firebaseV: Vehicle, localV: Vehicle): Vehicle {
-  let merged = withMergedSubVehiculos(base, firebaseV, localV);
+  let merged = withMergedSubVehiculos(
+    { ...base, aperturaAt: pickMergedAperturaAt(firebaseV, localV) },
+    firebaseV,
+    localV
+  );
 
   if (firebaseV.tipoFlota === "situacion" && localV.tipoFlota === "situacion") {
     return applySituacionDesgloseMerge(merged, firebaseV, localV);
@@ -262,6 +274,7 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
     return finalizeSessionMerge(
       {
         ...firebaseV,
+        aperturaAt: pickMergedAperturaAt(firebaseV, localV),
         status: localV.status,
         ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
         ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
@@ -281,7 +294,10 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
     return finalizeSessionMerge(firebaseV, firebaseV, localV);
   }
 
-  let merged: Vehicle = { ...firebaseV };
+  let merged: Vehicle = {
+    ...firebaseV,
+    aperturaAt: pickMergedAperturaAt(firebaseV, localV),
+  };
 
   if (localV.desglosadorBloqueDepthPsGranted != null) {
     merged = { ...merged, desglosadorBloqueDepthPsGranted: localV.desglosadorBloqueDepthPsGranted };

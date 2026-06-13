@@ -19,6 +19,8 @@ import {
   remainingCronometroBudgetMin,
   sumBonusPreviewEnColaPendiente,
   sumMinutosCronometroPendientes,
+  repartirDeltaMinutosEnCola,
+  registrarCierreFalladoCronometro,
 } from "./situacionCupoDistrib.ts";
 
 function st(id: string, minutosCupo: number, cupoFijo?: boolean): SubTarea {
@@ -228,11 +230,11 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     );
     assert.equal(minutosGanados, 5);
     const b = out.find(s => s.id === "b")!;
-    assert.equal(b.minutosCupo, 15);
-    assert.equal(out.find(s => s.id === "c")!.minutosCupo, 30);
+    assert.equal(b.minutosCupo, 12);
+    assert.equal(out.find(s => s.id === "c")!.minutosCupo, 33);
   });
 
-  it("tarea no foco transfiere minutos ganados al foco", () => {
+  it("reparte ganancia entre toda la cola pendiente (incluye foco activo)", () => {
     const subs = [st("a", 10), st("b", 15), st("c", 10)];
     const now = base + 12 * 60000;
     const { subTareas: out, minutosGanados } = aplicarTiempoGanadoAlCumplir(
@@ -243,11 +245,12 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
       base
     );
     assert.equal(minutosGanados, 10);
-    assert.equal(out.find(s => s.id === "a")!.minutosCupo, 20);
+    assert.equal(out.find(s => s.id === "a")!.minutosCupo, 14);
+    assert.equal(out.find(s => s.id === "b")!.minutosCupo, 21);
     assert.equal(out.find(s => s.id === "c")!.resultadoSituacion, "cumplido");
   });
 
-  it("sin cola flexible transfiere ganancia al foco activo", () => {
+  it("sin cola flexible recibe ganancia en cupo fijo", () => {
     const subs = [st("a", 15), st("b", 10, true)];
     const now = base + 5 * 60000;
     const { subTareas: out, minutosGanados, saldoAdelantoMin } = aplicarTiempoGanadoAlCumplir(
@@ -263,7 +266,7 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
     assert.equal(sumMinutosCronometroPendientes(out), 20);
   });
 
-  it("ganancia sin margen hasta meta va a saldoAdelantoMin, no infla cola", () => {
+  it("ganancia reparte en cola sin comprimir proyección al cerrar", () => {
     const meta = base + 12 * 60000;
     const subs = [st("a", 15), st("b", 10), st("c", 10)];
     const now = base + 10 * 60000;
@@ -276,8 +279,14 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
       meta
     );
     assert.equal(minutosGanados, 5);
-    assert.ok(saldoAdelantoMin > 0);
-    assert.equal(sumMinutosCronometroPendientes(out), 20);
+    assert.equal(saldoAdelantoMin, 0);
+    assert.equal(sumMinutosCronometroPendientes(out), 25);
+    const proyAntes = computeSituacionProyeccionFinMs(subs, {
+      bloqueInicioAt: base,
+      anchor: { subTareaId: "a", startedAt: base },
+      now,
+      horaFinContratoMs: meta,
+    });
     const proy = computeSituacionProyeccionFinMs(out, {
       bloqueInicioAt: base,
       anchor: { subTareaId: "b", startedAt: now },
@@ -285,6 +294,37 @@ describe("aplicarTiempoGanadoAlCumplir", () => {
       horaFinContratoMs: meta,
     });
     assert.ok(proy != null && proy <= meta);
+    assert.ok(proyAntes != null && proy != null && proy >= proyAntes - 60000);
+  });
+});
+
+describe("repartirDeltaMinutosEnCola", () => {
+  it("reparte pérdida entre flexibles de toda la cola", () => {
+    const subs = [st("a", 10), st("b", 20), st("c", 10, true)];
+    const { subTareas: out, repartido } = repartirDeltaMinutosEnCola(subs, -8);
+    assert.equal(repartido, -8);
+    assert.equal(out.find(s => s.id === "a")!.minutosCupo, 7);
+    assert.equal(out.find(s => s.id === "b")!.minutosCupo, 15);
+    assert.equal(out.find(s => s.id === "c")!.minutosCupo, 10);
+  });
+});
+
+describe("registrarCierreFalladoCronometro", () => {
+  const base = 1_700_000_000_000;
+
+  it("reparte pérdida vs meta al fallar tarde", () => {
+    const subs = [st("a", 10), st("b", 15)];
+    const now = base + 12 * 60000;
+    const { subTareas: out, minutosPerdidos } = registrarCierreFalladoCronometro(
+      subs,
+      "a",
+      { subTareaId: "a", startedAt: base },
+      now,
+      base
+    );
+    assert.equal(minutosPerdidos, 2);
+    assert.equal(out.find(s => s.id === "b")!.minutosCupo, 13);
+    assert.equal(out.find(s => s.id === "a")!.resultadoSituacion, "fallado");
   });
 });
 

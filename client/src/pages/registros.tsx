@@ -65,7 +65,7 @@ interface AreaConfig {
 const AREAS: AreaConfig[] = [
   { id: "energia",     label: "Energía",              emoji: "🔋", color: "#3B82F6" },
   { id: "flota",       label: "Flota",                emoji: "🚗", color: "#06B6D4" },
-  { id: "situacional", label: "Intel. Situacional",   emoji: "🧠", color: "#A855F7" },
+  { id: "situacional", label: "Intel. Enfoque",   emoji: "🧠", color: "#A855F7" },
   { id: "deposito",    label: "Depósito",             emoji: "💰", color: "#F97316" },
   { id: "adn",         label: "ADN Soberano",         emoji: "🧬", color: CYAN },
   { id: "espejo",      label: "Espejo Clínico",       emoji: "📋", color: GOLD },
@@ -699,7 +699,7 @@ export default function Registros() {
                       {area.id === "situacional" && (
                         <>
                           {filteredSituacionales.length === 0
-                            ? <EmptyMsg text={isSearching ? "Sin coincidencias" : "Sin vehículos situacionales registrados"} />
+                            ? <EmptyMsg text={isSearching ? "Sin coincidencias" : "Sin vehículos de enfoque registrados"} />
                             : (
                               <>
                                 {/* Métricas v6 — 4 capas */}
