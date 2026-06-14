@@ -353,7 +353,8 @@ describe("computeAnilloEstado", () => {
       { horaInicio: "14:00", horaFin: "16:00" },
     ];
     const stats = computeTimelineDayStats({ vehiculos: [], segmentos, now });
-    assert.equal(stats.entropiaMin, 240, "2h + 1h + 1h vividos hasta las 15:00");
+    // 3 huecos (120+60+60) menos 2 min de colchón centinela por hueco = 234.
+    assert.equal(stats.entropiaMin, 234, "2h + 1h + 1h menos colchón de 2 min por hueco");
     const st = computeAnilloEstado({ segmentos, vehiculos: [], now });
     assert.equal(st.mode, "entropia");
   });
@@ -372,9 +373,46 @@ describe("computeAnilloEstado", () => {
       desglosadorPausa: { motivo: "test" },
     };
     const stats = computeTimelineDayStats({ segmentos, vehiculos: [paused], now });
-    assert.ok(stats.entropiaMin >= 89, "todo el segmento vivido cuenta como entropía");
+    assert.ok(stats.entropiaMin >= 87, "casi todo el segmento vivido cuenta como entropía (menos colchón de 2 min)");
     const st = computeAnilloEstado({ segmentos, vehiculos: [paused], now });
     assert.equal(st.mode, "entropia");
+  });
+
+  it("hueco menor de 2 min no enciende rojo (colchón centinela)", () => {
+    const now = limaAt(2026, 4, 18, 9, 1);
+    const journalStart = getJournalDayStartMs(now);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "cumplido",
+      aperturaAt: journalStart,
+      cierreAt: limaAt(2026, 4, 18, 9, 0),
+      duracionFinal: 240,
+    }];
+    const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
+    assert.equal(stats.entropiaMin, 0, "1 min de hueco lo absorbe el colchón");
+    assert.ok(stats.centinelaMin > 0, "el hueco corto cuenta como centinela neutro");
+    const st = computeAnilloEstado({ segmentos, vehiculos, now });
+    assert.equal(st.mode, "libre", "puntero no rojo durante el colchón");
+  });
+
+  it("hueco mayor de 2 min enciende rojo solo el excedente", () => {
+    const now = limaAt(2026, 4, 18, 9, 4);
+    const journalStart = getJournalDayStartMs(now);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "cumplido",
+      aperturaAt: journalStart,
+      cierreAt: limaAt(2026, 4, 18, 9, 0),
+      duracionFinal: 240,
+    }];
+    const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
+    assert.ok(stats.entropiaMin >= 1.5 && stats.entropiaMin <= 2.5, "4 min de hueco - 2 de colchón ≈ 2 rojos");
+    const st = computeAnilloEstado({ segmentos, vehiculos, now });
+    assert.equal(st.mode, "entropia", "tras 2 min el puntero se vuelve rojo");
   });
 
   it("modo entropía implica minutos inconscientes > 0", () => {
