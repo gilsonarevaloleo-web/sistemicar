@@ -111,7 +111,7 @@ describe("archiveOrphanDesglosadorInterrupts", () => {
 });
 
 describe("clearStuckDesglosadorPause", () => {
-  it("libera pausa cuando no hay interrupción activa visible", () => {
+  it("conserva pausa válida tras cerrar interrupción (reanudación manual)", () => {
     const parent = {
       id: "p1",
       titulo: "Desglose",
@@ -119,6 +119,24 @@ describe("clearStuckDesglosadorPause", () => {
       tipoReloj: "desglosador",
       interrupcionActiva: true,
       desglosadorPausa: { pausadoAt: 1, subActivoId: "s1", elapsedSecSnapshot: 10 },
+      criterioFin: "tiempo",
+      criterioDetalle: "",
+      ejes: {},
+      tiempoInicio: new Date(),
+      createdAt: new Date(),
+    } as Vehicle;
+    const out = clearStuckDesglosadorPause([parent], () => false);
+    assert.equal(out[0].interrupcionActiva, true);
+    assert.equal(out[0].desglosadorPausa?.subActivoId, "s1");
+  });
+
+  it("libera pausa corrupta sin snapshot ni interrupción visible", () => {
+    const parent = {
+      id: "p1",
+      titulo: "Desglose",
+      status: "activo",
+      tipoReloj: "desglosador",
+      interrupcionActiva: true,
       criterioFin: "tiempo",
       criterioDetalle: "",
       ejes: {},

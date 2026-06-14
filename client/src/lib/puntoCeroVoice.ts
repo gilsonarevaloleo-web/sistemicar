@@ -1,8 +1,5 @@
 import { warmupSpeechSynthesis } from "./speechQueue";
 import { isPuntoCeroVoiceEnabled } from "./tikSound";
-import { pickCalmDeepSpanishVoice } from "./spanishTtsVoice";
-
-export { pickCalmDeepSpanishVoice, pickCalmDeepSpanishVoice as pickPleasantSpanishVoice } from "./spanishTtsVoice";
 import {
   colorInmersionVoz,
   MENSAJE_PASIVA_DIA,
@@ -46,16 +43,46 @@ const VOICE_PROFILES: Record<
   PuntoCeroVoiceProfile,
   { rate: number; pitch: number; volume: number; pauseMs: number }
 > = {
-  calm: { rate: 0.68, pitch: 0.82, volume: 0.5, pauseMs: 880 },
-  night: { rate: 0.62, pitch: 0.78, volume: 0.42, pauseMs: 1050 },
-  day: { rate: 0.7, pitch: 0.84, volume: 0.5, pauseMs: 820 },
-  reactivation: { rate: 0.76, pitch: 0.88, volume: 0.54, pauseMs: 560 },
+  calm: { rate: 0.82, pitch: 0.95, volume: 0.55, pauseMs: 620 },
+  night: { rate: 0.78, pitch: 0.92, volume: 0.48, pauseMs: 780 },
+  day: { rate: 0.82, pitch: 0.95, volume: 0.55, pauseMs: 580 },
+  reactivation: { rate: 0.88, pitch: 1, volume: 0.58, pauseMs: 420 },
 };
 
+let voicesCache: SpeechSynthesisVoice[] | null = null;
 let pcQueue: string[] = [];
 let pcSpeaking = false;
 let pcPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let pcProfile: PuntoCeroVoiceProfile = "calm";
+
+function loadVoices(): SpeechSynthesisVoice[] {
+  if (typeof window === "undefined" || !window.speechSynthesis) return [];
+  if (voicesCache?.length) return voicesCache;
+  voicesCache = window.speechSynthesis.getVoices();
+  return voicesCache;
+}
+
+if (typeof window !== "undefined" && window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    voicesCache = window.speechSynthesis.getVoices();
+  };
+}
+
+/** Elige voz en español con tono suave (preferencia femenina si existe). */
+export function pickPleasantSpanishVoice(): SpeechSynthesisVoice | null {
+  const voices = loadVoices();
+  if (!voices.length) return null;
+  const es = voices.filter(v => /es/i.test(v.lang));
+  const prefer = es.find(v =>
+    /female|mujer|paulina|helena|lucia|monica|soledad|espa/i.test(`${v.name} ${v.voiceURI}`)
+  );
+  return prefer ?? es[0] ?? voices[0] ?? null;
+}
+
+/** @deprecated Usar pickPleasantSpanishVoice */
+export function pickCalmDeepSpanishVoice(): SpeechSynthesisVoice | null {
+  return pickPleasantSpanishVoice();
+}
 
 function clearPuntoCeroPauseTimer(): void {
   if (pcPauseTimer) {
@@ -147,10 +174,10 @@ export function speakPleasant(
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "es-ES";
-  u.rate = opts?.rate ?? VOICE_PROFILES.calm.rate;
-  u.pitch = opts?.pitch ?? VOICE_PROFILES.calm.pitch;
-  u.volume = opts?.volume ?? VOICE_PROFILES.calm.volume;
-  const voice = pickCalmDeepSpanishVoice();
+  u.rate = opts?.rate ?? 0.82;
+  u.pitch = opts?.pitch ?? 0.95;
+  u.volume = opts?.volume ?? 0.55;
+  const voice = pickPleasantSpanishVoice();
   if (voice) u.voice = voice;
   window.speechSynthesis.speak(u);
 }

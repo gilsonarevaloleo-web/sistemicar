@@ -42,6 +42,7 @@ import {
   recoverMissingJournalDayActives,
   shouldPreserveLocalActivo,
 } from "./ghostVehicleEngine";
+import { reconcileVehicleList } from "./vehicleSessionAuthority";
 import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
 import { sanitizeJournalSpLogs } from "./spLogHygiene";
 import { mergePlantillasRutina } from "./plantillasRutinaMerge";
@@ -1048,7 +1049,7 @@ export function resolveLocalVehicleMatch(
   return locals.find(l => l.clientRequestId === remote.clientRequestId);
 }
 
-function dedupeVehiclesPreferClosed(vehicles: Vehicle[]): Vehicle[] {
+export function dedupeVehiclesPreferClosed(vehicles: Vehicle[]): Vehicle[] {
   const byId = new Map<string, Vehicle>();
   const byCrq = new Map<string, Vehicle>();
 
@@ -1341,10 +1342,6 @@ export function subscribeToVehicles(
       // Preserve subVehiculos for active desglosador vehicles so Firebase snapshots
       // never destroy in-progress sub-vehicle state (subVehiculos are session-local only)
       const existingLocal = getLocalVehicles();
-      let sortedWithSubs = sorted.map(v => {
-        const localV = resolveLocalVehicleMatch(v, existingLocal);
-        return mergeActiveVehicleSessionState(v, localV);
-      });
 
       if (snapshot.metadata.fromCache) {
         // Never let any stale cache snapshot remove vehicles that are confirmed locally active.
@@ -1368,24 +1365,19 @@ export function subscribeToVehicles(
         }
       }
 
-      sortedWithSubs = mergeMissingLocalActives(sortedWithSubs);
-      const localClosedIds = new Set(
-        existingLocal.filter(v => v.status !== "activo").map(v => v.id)
-      );
-      const parkedActives = getParkedActiveVehicles().filter(
-        p => !localClosedIds.has(p.id) && !wasVehicleRecentlyClosed(p.id)
-      );
-      sortedWithSubs = recoverMissingJournalDayActives(
-        sortedWithSubs,
-        [...existingLocal, ...parkedActives],
-        Date.now(),
-        wasVehicleRecentlyClosed,
-        id => localClosedIds.has(id)
-      );
+      let sortedWithSubs = sorted.map(v => {
+        const localV = resolveLocalVehicleMatch(v, existingLocal);
+        return mergeActiveVehicleSessionState(v, localV);
+      });
 
-      // Archiva interrupciones huérfanas (no las elimina — deben aparecer en historial).
-      sortedWithSubs = archiveOrphanDesglosadorInterrupts(sortedWithSubs);
-      sortedWithSubs = dedupeVehiclesPreferClosed(sortedWithSubs);
+      sortedWithSubs = mergeMissingLocalActives(sortedWithSubs);
+      sortedWithSubs = reconcileVehicleList({
+        incoming: sortedWithSubs,
+        localSources: existingLocal,
+        parkedActives: getParkedActiveVehicles().filter(
+          p => !wasVehicleRecentlyClosed(p.id, p.clientRequestId)
+        ),
+      });
 
       // Persist the merged result locally (always save the fullest result)
       if (sortedWithSubs.length > 0) {
@@ -1444,10 +1436,10 @@ export async function updateVehicleStatus(
   status: VehicleStatus
 ): Promise<void> {
   console.log(`[updateVehicleStatus] vehicleId: ${vehicleId} → status: ${status}`);
+  const localVehicle = getLocalVehicles().find(v => v.id === vehicleId);
   if (status !== "activo" && status !== "pendiente") {
     notifyVehicleClosed(vehicleId, localVehicle?.clientRequestId);
   }
-  const localVehicle = getLocalVehicles().find(v => v.id === vehicleId);
   const closeFields =
     status !== "activo" && status !== "pendiente" && localVehicle
       ? {

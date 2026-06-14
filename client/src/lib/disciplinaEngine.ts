@@ -4,6 +4,7 @@ import {
   segmentTimeToMinutes,
   segmentWindowMs,
 } from "./segmentTime";
+import { segmentEffectiveWindowStartMs } from "./segmentVehicleAssign";
 import { vehicleActiveAt } from "./puntualidadEngine";
 
 export type PrimerEntradaTipo = {
@@ -60,14 +61,17 @@ export function isTrabajoConsciente(v: Vehicle): boolean {
 
 function vehiculosEnVentana(
   vehicles: Vehicle[],
+  horaInicio: string,
   start: number,
-  end: number
+  end: number,
+  dayStartMs: number
 ): Vehicle[] {
+  const effectiveStart = segmentEffectiveWindowStartMs(horaInicio, dayStartMs);
   return vehicles.filter(
     v =>
       isTrabajoConsciente(v) &&
       v.aperturaAt != null &&
-      v.aperturaAt >= start &&
+      v.aperturaAt >= effectiveStart &&
       v.aperturaAt <= end
   );
 }
@@ -126,7 +130,7 @@ function buildEstudioTipos(vehicles: Vehicle[], segmentos: SegmentoV5[], dayStar
   const map = new Map<string, number>();
   for (const seg of segmentos) {
     const { start, end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);
-    for (const v of vehiculosEnVentana(vehicles, start, end)) {
+    for (const v of vehiculosEnVentana(vehicles, seg.horaInicio, start, end, dayStartMs)) {
       const key = tipoKey(v);
       map.set(key, (map.get(key) ?? 0) + 1);
     }
@@ -177,7 +181,7 @@ export function computeDisciplinaDia(params: {
         dayStartMs
       );
 
-    const enVentana = vehiculosEnVentana(vehicles, start, end);
+    const enVentana = vehiculosEnVentana(vehicles, seg.horaInicio, start, end, dayStartMs);
     const primer = primerVehiculoPorApertura(enVentana);
     const primerEntradaAt = primer?.aperturaAt ?? null;
 

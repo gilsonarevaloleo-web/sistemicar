@@ -96,7 +96,15 @@ describe("segmentCrossEntropyEngine", () => {
       seg({ id: "a", estado: "activo", horaInicio: "08:00", nombre: "A" }),
       seg({ id: "b", estado: "activo", horaInicio: "10:00", nombre: "B" }),
     ];
-    const vehicles = [vehicle({ id: "v1", segmentoId: "a", segmentoOrigen: "A", titulo: "Tarea A" })];
+    const vehicles = [
+      vehicle({
+        id: "v1",
+        segmentoId: "a",
+        segmentoOrigen: "A",
+        titulo: "Tarea A",
+        aperturaAt: start - 30 * 60000,
+      }),
+    ];
     const warned = new Set<string>();
     const { events } = evaluateSegmentCrossEntropy({
       vehicles,
@@ -118,9 +126,20 @@ describe("segmentCrossEntropyEngine", () => {
   });
 
   it("getCrossingVehiclesState detecta cruce pendiente", () => {
-    const segmentos = [seg({ id: "b", estado: "activo", horaInicio: "10:00", nombre: "Tarde" })];
-    const vehicles = [vehicle({ id: "v1", segmentoId: "a", segmentoOrigen: "Mañana" })];
-    const ctx = getCrossingVehiclesState(segmentos, vehicles, dayStart);
+    const { start } = segmentWindowMs("10:00", "12:00", dayStart);
+    const segmentos = [
+      seg({ id: "a", estado: "activo", horaInicio: "08:00", nombre: "Mañana" }),
+      seg({ id: "b", estado: "activo", horaInicio: "10:00", nombre: "Tarde" }),
+    ];
+    const vehicles = [
+      vehicle({
+        id: "v1",
+        segmentoId: "a",
+        segmentoOrigen: "Mañana",
+        aperturaAt: start - 30 * 60000,
+      }),
+    ];
+    const ctx = getCrossingVehiclesState(segmentos, vehicles, dayStart, start + 60000);
     expect(ctx?.crossing.length).toBe(1);
     expect(ctx?.activeSegment.id).toBe("b");
   });

@@ -304,10 +304,19 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
   }
   // Prefer local pause flags (including explicit clears after cerrar interrupción).
   if (firebaseV.tipoReloj === "desglosador" && localV.tipoReloj === "desglosador") {
+    const keepPause = localV.interrupcionActiva === true && !!localV.desglosadorPausa?.subActivoId;
     merged = {
       ...merged,
-      interrupcionActiva: localV.interrupcionActiva === true,
-      desglosadorPausa: localV.interrupcionActiva ? localV.desglosadorPausa : undefined,
+      interrupcionActiva: keepPause || localV.interrupcionActiva === true,
+      desglosadorPausa: keepPause
+        ? localV.desglosadorPausa
+        : localV.interrupcionActiva
+          ? localV.desglosadorPausa
+          : undefined,
+      subVehiculos:
+        (localV.subVehiculos?.length ?? 0) >= (firebaseV.subVehiculos?.length ?? 0)
+          ? localV.subVehiculos
+          : merged.subVehiculos,
     };
   }
 
@@ -328,6 +337,8 @@ export function isOrphanDesglosadorInterrupt(
   const parent = vehiclesById.get(parentId);
   if (!parent) return true;
   if (parent.status !== "activo") return true;
+  // Pausa válida tras cerrar interrupción: el padre sigue en pausa hasta reanudación manual.
+  if (parent.interrupcionActiva && parent.desglosadorPausa?.subActivoId) return false;
   return !parent.interrupcionActiva;
 }
 
@@ -366,6 +377,10 @@ export function clearStuckDesglosadorPause(
       !v.interrupcionActiva ||
       hasOpenInterrupt(v.id)
     ) {
+      return v;
+    }
+    // Pausa con snapshot = interrupción cerrada, esperando «Reanudar desglosador ahora».
+    if (v.desglosadorPausa?.subActivoId) {
       return v;
     }
     changed = true;

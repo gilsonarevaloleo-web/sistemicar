@@ -1,5 +1,9 @@
 import type { SegmentoV5, Vehicle } from "./persistence";
 import { segmentClockMs, segmentTimeToMinutes, segmentWindowMs } from "./segmentTime";
+import {
+  resolveVehicleSegmentContext,
+  segmentEffectiveWindowStartMs,
+} from "./segmentVehicleAssign";
 
 export type SegmentoPuntualidadEstado =
   | "puntual"
@@ -50,18 +54,19 @@ export function vehicleActiveAt(v: Vehicle, ts: number): boolean {
 
 function cumplimientoEnVentana(
   vehicles: Vehicle[],
-  segmentoNombre: string,
+  segmento: SegmentoV5,
   start: number,
-  end: number
+  end: number,
+  dayStartMs: number,
+  segmentos: SegmentoV5[]
 ): Vehicle[] {
-  return vehicles.filter(
-    v =>
-      isCumplimientoVehicle(v) &&
-      v.segmentoOrigen === segmentoNombre &&
-      v.aperturaAt != null &&
-      v.aperturaAt >= start &&
-      v.aperturaAt <= end
-  );
+  const effectiveStart = segmentEffectiveWindowStartMs(segmento.horaInicio, dayStartMs);
+  return vehicles.filter(v => {
+    if (!isCumplimientoVehicle(v) || v.aperturaAt == null) return false;
+    if (v.aperturaAt < effectiveStart || v.aperturaAt > end) return false;
+    const ctx = resolveVehicleSegmentContext(v, segmentos, dayStartMs);
+    return ctx.id === segmento.id || ctx.nombre === segmento.nombre;
+  });
 }
 
 function detectMontajeInvasores(
@@ -116,7 +121,7 @@ export function computePuntualidadDia(params: {
   const segmentosOut: SegmentoPuntualidad[] = ordered.map(seg => {
     const { start, end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);
     const evaluable = nowMs >= end;
-    const cumplimiento = cumplimientoEnVentana(vehicles, seg.nombre, start, end);
+    const cumplimiento = cumplimientoEnVentana(vehicles, seg, start, end, dayStartMs, ordered);
     const vacio = evaluable && cumplimiento.length === 0;
 
     const invasores =
@@ -131,9 +136,11 @@ export function computePuntualidadDia(params: {
 
     const cumplimientoParcial = cumplimientoEnVentana(
       vehicles,
-      seg.nombre,
+      seg,
       start,
-      Math.min(nowMs, end)
+      Math.min(nowMs, end),
+      dayStartMs,
+      ordered
     );
     const enRiesgoVacio =
       !evaluable && nowMs >= start && cumplimientoParcial.length === 0;

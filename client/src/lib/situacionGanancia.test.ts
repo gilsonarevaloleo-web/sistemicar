@@ -11,6 +11,7 @@ import {
   situacionContratoFinMs,
   situacionMinutosHastaObjetivoHora,
   situacionObjetivoHoraToContratoMs,
+  resolveDefaultObjetivoHoraParaRing,
   sumMinutosEnColaGanancia,
 } from "./situacionGanancia.ts";
 
@@ -77,6 +78,13 @@ describe("situacionGanancia", () => {
     const manana = situacionObjetivoHoraToContratoMs("07:30", now);
     assert.equal(manana, new Date(2026, 5, 7, 7, 30, 0).getTime());
     assert.equal(situacionMinutosHastaObjetivoHora("09:30", now), 90);
+  });
+
+  it("resolveDefaultObjetivoHoraParaRing usa horaFin de segmento o +30 min", () => {
+    const now = new Date(2026, 5, 6, 8, 0, 0).getTime();
+    assert.equal(resolveDefaultObjetivoHoraParaRing("12:00", now), "12:00");
+    const fallback = resolveDefaultObjetivoHoraParaRing(undefined, now);
+    assert.equal(fallback, "08:30");
   });
 
   it("buildSituacionCronometroCierre suma ganancia y tiempo restante en meta", () => {

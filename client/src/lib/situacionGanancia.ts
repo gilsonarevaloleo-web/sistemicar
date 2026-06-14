@@ -158,3 +158,17 @@ export function situacionMinutosHastaObjetivoHora(
   const remaining = Math.round((target - nowMs) / 60000);
   return remaining >= 1 ? remaining : null;
 }
+
+/** Meta para abrir el ring desde el Crisol: fin de segmento activo o +30 min. */
+export function resolveDefaultObjetivoHoraParaRing(
+  segmentoHoraFin?: string,
+  nowMs: number = Date.now()
+): string | null {
+  const fin = segmentoHoraFin?.trim();
+  if (fin && situacionMinutosHastaObjetivoHora(fin, nowMs) != null) {
+    return fin;
+  }
+  const d = new Date(nowMs + 30 * 60000);
+  const candidate = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return situacionMinutosHastaObjetivoHora(candidate, nowMs) != null ? candidate : null;
+}

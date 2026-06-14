@@ -1,6 +1,10 @@
 import type { SegmentoV5, Vehicle } from "./persistence";
 import type { SegmentAttentionEvent } from "./segmentAttentionEngine";
-import { segmentClockMs } from "./segmentTime";
+import { segmentClockMs, getLimaDayStartMs } from "./segmentTime";
+import {
+  EARLY_VEHICLE_MARGIN_MIN,
+  resolveVehicleSegmentContext,
+} from "./segmentVehicleAssign";
 import { isDesglosadorCrossSegmentExempt } from "./vehicleOperationalSlots";
 
 export const CRUCE_GRACE_MIN = 8;
@@ -47,8 +51,27 @@ export function isExcludedFromCrossEntropy(vehicle: Vehicle): boolean {
   return false;
 }
 
-export function getActiveSegment(segmentos: SegmentoV5[]): SegmentoV5 | null {
-  return segmentos.find(s => s.estado === "activo") ?? null;
+/** Segmento activo por estado; si hay varios, el bloque cuya hora de inicio ya pasó y es la más reciente. */
+export function getActiveSegment(
+  segmentos: SegmentoV5[],
+  nowMs: number = Date.now(),
+  dayStartMs?: number
+): SegmentoV5 | null {
+  const activos = segmentos.filter(s => s.estado === "activo");
+  if (activos.length === 0) return null;
+  if (activos.length === 1) return activos[0];
+
+  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
+  let best: SegmentoV5 | null = null;
+  let bestStart = -Infinity;
+  for (const seg of activos) {
+    const start = segmentClockMs(seg.horaInicio, dayStart);
+    if (start <= nowMs && start > bestStart) {
+      bestStart = start;
+      best = seg;
+    }
+  }
+  return best ?? activos[activos.length - 1];
 }
 
 export function getCruceGraceEndMs(horaInicio: string, dayStartMs: number): number {
@@ -60,28 +83,37 @@ export function getCruceGraceEndMs(horaInicio: string, dayStartMs: number): numb
 export function isVehicleFromPreviousSegment(
   vehicle: Vehicle,
   activeSegment: SegmentoV5,
-  dayStartMs: number
+  dayStartMs: number,
+  segmentos?: SegmentoV5[]
 ): boolean {
   if (isExcludedFromCrossEntropy(vehicle)) return false;
   const segmentStartMs = segmentClockMs(activeSegment.horaInicio, dayStartMs);
-  if (vehicle.segmentoId) {
-    return vehicle.segmentoId !== activeSegment.id;
+  const earlyStartMs = segmentStartMs - EARLY_VEHICLE_MARGIN_MIN * 60000;
+
+  const effectiveId = segmentos
+    ? resolveVehicleSegmentContext(vehicle, segmentos, dayStartMs).id
+    : vehicle.segmentoId;
+
+  if (effectiveId) {
+    return effectiveId !== activeSegment.id;
   }
+
   const aperturaAt = vehicle.aperturaAt ?? vehicle.createdAt?.getTime();
   if (!aperturaAt) return false;
-  return aperturaAt < segmentStartMs;
+  return aperturaAt < earlyStartMs;
 }
 
 export function getCruceGraciaState(
   vehicle: Vehicle,
   activeSegment: SegmentoV5 | null,
   nowMs: number,
-  dayStartMs: number
+  dayStartMs: number,
+  segmentos?: SegmentoV5[]
 ): { phase: CruceGraciaPhase; minutesLeft: number; originNombre?: string } {
   if (!activeSegment || isExcludedFromCrossEntropy(vehicle)) {
     return { phase: "none", minutesLeft: 0 };
   }
-  if (!isVehicleFromPreviousSegment(vehicle, activeSegment, dayStartMs)) {
+  if (!isVehicleFromPreviousSegment(vehicle, activeSegment, dayStartMs, segmentos)) {
     return { phase: "none", minutesLeft: 0 };
   }
   const graceEndMs = getCruceGraceEndMs(activeSegment.horaInicio, dayStartMs);
@@ -121,11 +153,14 @@ export function applyOriginSegmentCruceEntropia(
 export function getCrossingVehiclesState(
   segmentos: SegmentoV5[],
   vehicles: Vehicle[],
-  dayStartMs: number
+  dayStartMs: number,
+  nowMs: number = Date.now()
 ): { activeSegment: SegmentoV5; crossing: Vehicle[] } | null {
-  const activeSegment = getActiveSegment(segmentos);
+  const activeSegment = getActiveSegment(segmentos, nowMs, dayStartMs);
   if (!activeSegment) return null;
-  const crossing = vehicles.filter(v => isVehicleFromPreviousSegment(v, activeSegment, dayStartMs));
+  const crossing = vehicles.filter(v =>
+    isVehicleFromPreviousSegment(v, activeSegment, dayStartMs, segmentos)
+  );
   if (crossing.length === 0) return null;
   return { activeSegment, crossing };
 }
@@ -138,7 +173,7 @@ export function evaluateSegmentCrossEntropy(params: {
   warnedVehicleIds: Set<string>;
 }): { events: SegmentCrossEntropyEvent[]; vehicleVozPatches: Array<{ vehicleId: string; cruceEntropiaVozAt: number }> } {
   const { vehicles, segmentos, nowMs, dayStartMs, warnedVehicleIds } = params;
-  const activeSegment = getActiveSegment(segmentos);
+  const activeSegment = getActiveSegment(segmentos, nowMs, dayStartMs);
   if (!activeSegment) return { events: [], vehicleVozPatches: [] };
 
   const graceEndMs = getCruceGraceEndMs(activeSegment.horaInicio, dayStartMs);
@@ -149,7 +184,7 @@ export function evaluateSegmentCrossEntropy(params: {
   const originSegIdsForEntropia = new Set<string>();
 
   for (const vehicle of vehicles) {
-    if (!isVehicleFromPreviousSegment(vehicle, activeSegment, dayStartMs)) continue;
+    if (!isVehicleFromPreviousSegment(vehicle, activeSegment, dayStartMs, segmentos)) continue;
 
     const originSegId = vehicle.segmentoId ?? "";
     const originNombre = vehicle.segmentoOrigen ?? "segmento anterior";

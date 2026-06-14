@@ -280,6 +280,7 @@ import {
   situacionContratoFinMs,
   situacionMinutosHastaObjetivoHora,
   situacionObjetivoHoraToContratoMs,
+  resolveDefaultObjetivoHoraParaRing,
   sumMinutosRealesCronometro,
   describeRepartoGananciaEnCola,
 } from "@/lib/situacionGanancia";
@@ -382,6 +383,10 @@ import {
   getCruceGraciaState,
 } from "@/lib/segmentCrossEntropyEngine";
 import {
+  resolveSegmentoForVehicleAt,
+  resolveVehicleSegmentContext,
+} from "@/lib/segmentVehicleAssign";
+import {
   assertCanOpenVehicle,
   formatOperationalSlotsBlockMessage,
   isDesglosadorCrossSegmentExempt,
@@ -428,7 +433,8 @@ import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
-import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, computeAnilloEstado, computeTimelineClockArcs, computeTimelineDayStats, formatMinutosJornada, nowToHalfDayLap } from "@/engines/ConcienciaEngine";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, formatMinutosJornada, nowToHalfDayLap } from "@/engines/ConcienciaEngine";
+import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
 
 const GOLD = "#D4AF37";
 const AZURE = "#1E90FF";
@@ -1529,23 +1535,24 @@ export default function Planeacion() {
     const segs = planilla?.segmentos || [];
     const nowMs = Date.now();
     const vehiculosAnillo = filterVehiclesForAnilloCoverage(vehicles, nowMs);
-    const metricas = calcularMetricasAnilloConciencia({
+    const centinelas = vehicles.filter(v => v.autoVerdad);
+    const vehiculosTimeline = [
+      ...vehiculosAnillo,
+      ...centinelas.filter(c => !vehiculosAnillo.some(v => v.id === c.id)),
+    ];
+    const timeline = buildConcienciaTimeline({
       segmentos: segs,
-      vehiculos: vehiculosAnillo,
+      vehiculos: vehiculosTimeline,
       now: nowMs,
     });
-    const anilloEstado = computeAnilloEstado({ segmentos: segs, vehiculos: vehiculosAnillo, now: nowMs });
-    const pointerLap = nowToHalfDayLap(nowMs);
-    const timelineArcs = computeTimelineClockArcs({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
-    const dayStats = computeTimelineDayStats({ vehiculos: vehiculosAnillo, segmentos: segs, now: nowMs });
     const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
     return {
       segs,
-      metricas,
-      anilloEstado,
-      pointerLap,
-      timelineArcs,
-      dayStats,
+      metricas: timeline.metricas,
+      anilloEstado: timeline.anilloEstado,
+      pointerLap: nowToHalfDayLap(nowMs),
+      timelineArcs: timeline.timelineArcs,
+      dayStats: timeline.dayStats,
       segConquistados,
     };
   }, [planilla, vehicles, anilloTick]);
@@ -1556,88 +1563,12 @@ export default function Planeacion() {
       const firebaseIds = new Set(data.map(v => v.id));
       optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(ov => !firebaseIds.has(ov.id));
       const pending = optimisticVehiclesRef.current;
-      // Protect against Firebase snapshots arriving after optimistic local close.
-      // For ANY vehicle: if locally closed but Firebase still shows "activo", use local status.
-      // For desglosador: also preserve in-session subVehiculos.
-      const protectedData = data.map(v => {
-        const localSources = [...vehiclesRef.current, ...getLocalVehicles()];
-        const local = resolveLocalVehicleMatch(v, localSources);
-        let merged = mergeActiveVehicleSessionState(v, local);
-        const closedOverride = findLocalClosedOverride(v, localSources);
-        if (closedOverride) {
-          merged = mergeActiveVehicleSessionState(v, closedOverride);
-        } else if (wasVehicleRecentlyClosed(v.id, v.clientRequestId) && merged.status === "activo") {
-          const closedLocal =
-            local && local.status !== "activo"
-              ? local
-              : localSources.find(
-                  lv =>
-                    lv.status !== "activo" &&
-                    (lv.id === v.id ||
-                      (v.clientRequestId && lv.clientRequestId === v.clientRequestId))
-                );
-          if (closedLocal) {
-            merged = mergeActiveVehicleSessionState(v, closedLocal);
-          }
-        }
-        return merged;
+      const localSources = [...getLocalVehicles(), ...vehiclesRef.current];
+      const merged = reconcileVehicleList({
+        incoming: data,
+        localSources,
+        optimisticPending: pending,
       });
-      let merged = pending.length > 0 ? [...pending, ...protectedData] : protectedData;
-      if (pending.length > 0) {
-        console.log(`[Vehicles] Fusionando ${pending.length} vehículo(s) optimista(s) con ${data.length} de Firebase`);
-      }
-      // Final safety net: if a vehicle was active in the last known state but is now
-      // completely absent from merged (not even as cumplido), keep it. This handles the
-      // edge case where a stale snapshot bypasses the persistence-layer guards and would
-      // otherwise silently erase a vehicle from the UI.
-      const mergedIds = new Set(merged.map(v => v.id));
-      const mergedById = new Map(merged.map(v => [v.id, v]));
-      const nowMs = Date.now();
-      const localClosedIds = new Set(
-        getLocalVehicles().filter(lv => lv.status !== "activo").map(lv => lv.id)
-      );
-      const isLocallyClosedVehicle = (v: Vehicle) => {
-        if (localClosedIds.has(v.id)) return true;
-        if (
-          v.clientRequestId &&
-          getLocalVehicles().some(
-            lv => lv.clientRequestId === v.clientRequestId && lv.status !== "activo"
-          )
-        ) {
-          return true;
-        }
-        return wasVehicleRecentlyClosed(v.id, v.clientRequestId);
-      };
-      const rescueFrom = (list: Vehicle[]) =>
-        list.filter(
-          v =>
-            v.status === "activo" &&
-            !v.autoVerdad &&
-            !mergedIds.has(v.id) &&
-            !isLocallyClosedVehicle(v) &&
-            !(v.clientRequestId && merged.some(m => m.clientRequestId === v.clientRequestId && m.status !== "activo")) &&
-            !isCloseBlocked(v.id) &&
-            !isOrphanDesglosadorInterrupt(v, mergedById) &&
-            shouldPreserveLocalActivo(v, nowMs)
-        );
-      const rescued = [
-        ...rescueFrom(vehiclesRef.current),
-        ...rescueFrom(getLocalVehicles()),
-      ].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i);
-      if (rescued.length > 0) {
-        console.warn(`[Vehicles] Rescatando ${rescued.length} activo(s) ausentes del snapshot:`, rescued.map(v => `${v.id}:${v.titulo}`));
-        merged = [...rescued, ...merged];
-      }
-      const parkedForRecover = getParkedActiveVehicles().filter(
-        p => !isLocallyClosedVehicle(p)
-      );
-      merged = recoverMissingJournalDayActives(
-        merged,
-        [...getLocalVehicles(), ...parkedForRecover, ...vehiclesRef.current],
-        nowMs,
-        wasVehicleRecentlyClosed,
-        id => localClosedIds.has(id)
-      );
       if (merged.length > 0) {
         saveLocalVehicles(merged);
       }
@@ -1658,7 +1589,7 @@ export default function Planeacion() {
       ghostInterval = setInterval(() => {
         void reconcileGhostActiveVehicles(user.uid);
       }, 60_000);
-    }, 120_000);
+    }, 5_000);
     return () => {
       clearTimeout(ghostStartTimer);
       if (ghostInterval) clearInterval(ghostInterval);
@@ -1914,14 +1845,17 @@ export default function Planeacion() {
     const prevSegId = prevSegmentoIdRef.current;
     if (prevSegId && currentSegId && prevSegId !== currentSegId && user && planilla) {
       clearCruceWarnedIds();
+      const dayStartCruce = getLimaDayStartMs();
       const vehiculosCruzando = vehicles.filter(
         v =>
           v.status === "activo" &&
           !v.autoVerdad &&
           v.tipoFlota !== "descanso" &&
           !isDesglosadorCrossSegmentExempt(v) &&
-          v.segmentoId &&
-          v.segmentoId !== currentSegId
+          (() => {
+            const ctx = resolveVehicleSegmentContext(v, planilla.segmentos, dayStartCruce);
+            return ctx.id != null && ctx.id !== currentSegId;
+          })()
       );
       vehiculosCruzando.forEach(v => {
         const nuevoConteo = (v.segmentosCruzados || 0) + 1;
@@ -2469,8 +2403,13 @@ export default function Planeacion() {
         }
       }
 
-      const segActualNombre = segmentoActivo?.nombre || undefined;
-      const segActualId = segmentoActivo?.id;
+      const launchAtMs = Date.now();
+      const dayStartLaunch = getLimaDayStartMs(launchAtMs);
+      const segResuelto = planilla
+        ? resolveSegmentoForVehicleAt(planilla.segmentos, launchAtMs, dayStartLaunch)
+        : null;
+      const segActualNombre = segResuelto?.nombre ?? segmentoActivo?.nombre ?? undefined;
+      const segActualId = segResuelto?.id ?? segmentoActivo?.id;
       const launchCtx = proyectoLaunchRef.current;
       const resolvedProyectoId = resolverProyectoId(launchCtx);
       const subTareasPrefill =
@@ -3651,7 +3590,7 @@ export default function Planeacion() {
         safeFire(() => volcarMetricasAlHub(closedVehicle, { minutos: duracionMin }));
       }
       if (vehicle.vehiculoPadreDesglosadorId && (status === "cumplido" || status === "archivado")) {
-        await resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
+        await ackInterrupcionDesglosadorCerrada(vehicle.vehiculoPadreDesglosadorId);
       }
     } catch (err: any) {
       console.error("[handleFlotaStatusChange] ERROR:", err);
@@ -3819,9 +3758,9 @@ export default function Planeacion() {
       });
       if (vehicle.vehiculoPadreDesglosadorId) {
         try {
-          await resumeDesglosadorTrasInterrupcion(vehicle.vehiculoPadreDesglosadorId);
+          await ackInterrupcionDesglosadorCerrada(vehicle.vehiculoPadreDesglosadorId);
         } catch (e) {
-          console.warn("[investigadorClose] resume desglosador:", e);
+          console.warn("[investigadorClose] ack desglosador:", e);
         }
       }
     } catch (err) {
@@ -3834,6 +3773,19 @@ export default function Planeacion() {
     } finally {
       endClose(vehicleId);
     }
+  };
+
+  const ackInterrupcionDesglosadorCerrada = async (parentId: string) => {
+    if (!user) return;
+    const parent = vehiclesRef.current.find(v => v.id === parentId);
+    if (!parent || parent.tipoReloj !== "desglosador") return;
+    if (!parent.interrupcionActiva || !parent.desglosadorPausa?.subActivoId) return;
+
+    toast.info("Interrupción cerrada", {
+      description: "Desglosador en pausa. Pulsa «Reanudar desglosador ahora» cuando continúes.",
+      style: { backgroundColor: PIZARRA, border: `1px solid ${VIOLET}`, color: VIOLET },
+      duration: 4500,
+    });
   };
 
   const resumeDesglosadorTrasInterrupcion = async (parentId: string) => {
@@ -5017,12 +4969,12 @@ export default function Planeacion() {
     vehicleId: string,
     ids: string[],
     opts?: { proyectoEnfoqueId?: string }
-  ) => {
-    if (!user || ids.length === 0) return;
+  ): Promise<boolean> => {
+    if (!user || ids.length === 0) return false;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
-    if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return;
+    if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return false;
     const sc = vehicle.situacionCronometro;
-    if (sc?.activo !== true) return;
+    if (sc?.activo !== true) return false;
 
     const idSet = new Set(ids);
     const invalid = ids.some(id => {
@@ -5035,7 +4987,7 @@ export default function Planeacion() {
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
         duration: 3200,
       });
-      return;
+      return false;
     }
 
     const segProy = segmentoActivo?.proyectoVinculadoId;
@@ -5068,7 +5020,7 @@ export default function Planeacion() {
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
         duration: 3200,
       });
-      return;
+      return false;
     }
 
     subTareas = redistribuirMinutosSituacionCronometro(subTareas, budgetMin);
@@ -5119,8 +5071,10 @@ export default function Planeacion() {
         style: { backgroundColor: PIZARRA, border: `1px solid ${VERDE}`, color: VERDE },
         duration: 3200,
       });
+      return true;
     } catch (e) {
       console.error("[handleEnqueueSubTareasToCronometro]", e);
+      return false;
     }
   };
 
@@ -5128,13 +5082,12 @@ export default function Planeacion() {
     vehicleId: string,
     ids: string[],
     opts?: { objetivoHora?: string; proyectoEnfoqueId?: string }
-  ) => {
-    if (!user || ids.length === 0) return;
+  ): Promise<boolean> => {
+    if (!user || ids.length === 0) return false;
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
-    if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return;
+    if (!vehicle?.subTareas || vehicle.tipoFlota !== "situacion") return false;
     if (vehicle.situacionCronometro?.activo === true) {
-      await handleEnqueueSubTareasToCronometro(vehicleId, ids, opts);
-      return;
+      return handleEnqueueSubTareasToCronometro(vehicleId, ids, opts);
     }
     const idSet = new Set(ids);
     const segProy = segmentoActivo?.proyectoVinculadoId;
@@ -5156,16 +5109,19 @@ export default function Planeacion() {
     });
     let subTareas = [...libreOrdered, ...lifted];
     const prevSc = vehicle.situacionCronometro;
-    const objetivoHora = opts?.objetivoHora?.trim() ?? "";
+    const objetivoHora =
+      opts?.objetivoHora?.trim() ||
+      resolveDefaultObjetivoHoraParaRing(segmentoActivo?.horaFin) ||
+      "";
     const contratoMs = situacionObjetivoHoraToContratoMs(objetivoHora);
     const sum = contratoMs != null ? situacionMinutosHastaObjetivoHora(objetivoHora) : null;
     if (sum == null || contratoMs == null) {
       toast.error("Tiempo objetivo inválido", {
-        description: "Indica una hora futura (ej. 07:30) para sellar la meta del reto.",
+        description: "Indica una hora futura (ej. fin de segmento) para abrir el ring de enfoque.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
         duration: 3200,
       });
-      return;
+      return false;
     }
     subTareas = redistribuirMinutosSituacionCronometro(subTareas, sum);
     const firstActivation = true;
@@ -5228,8 +5184,10 @@ export default function Planeacion() {
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
         duration: 2800,
       });
+      return true;
     } catch (e) {
       console.error("[handleMoveSubTareasToCronometro]", e);
+      return false;
     }
   };
 
@@ -5696,12 +5654,24 @@ export default function Planeacion() {
       return;
     }
     const newSub = subTareaFromImanItem(item);
-    const subTareas = [...(vehicle.subTareas || []), newSub];
+    const prevSubTareas = vehicle.subTareas || [];
+    const subTareas = [...prevSubTareas, newSub];
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicle.id ? { ...v, subTareas } : v));
     setVehicles(prev => prev.map(v => (v.id === vehicle.id ? { ...v, subTareas } : v)));
     try {
-      // Una sola persistencia: evita snapshot Firebase intermedio (lista libre) que pisaba el desglose con tiempo.
-      await handleMoveSubTareasToCronometro(vehicle.id, [newSub.id]);
+      const moved = await handleMoveSubTareasToCronometro(vehicle.id, [newSub.id], {
+        proyectoEnfoqueId: item.proyectoId,
+      });
+      if (!moved) {
+        vehiclesRef.current = vehiclesRef.current.map(v =>
+          v.id === vehicle.id ? { ...v, subTareas: prevSubTareas } : v
+        );
+        setVehicles(prev =>
+          prev.map(v => (v.id === vehicle.id ? { ...v, subTareas: prevSubTareas } : v))
+        );
+        persistVehiclesRef();
+        return;
+      }
       const localSaved = await updateSituacionReservaEstado(user.uid, reservaId, "retomada_cron", {
         retomadaAt: Date.now(),
         retomadaEnVehiculoId: vehicle.id,
@@ -5733,6 +5703,13 @@ export default function Planeacion() {
       });
     } catch (e) {
       console.error("[handleReservaACronometro]", e);
+      vehiclesRef.current = vehiclesRef.current.map(v =>
+        v.id === vehicle.id ? { ...v, subTareas: prevSubTareas } : v
+      );
+      setVehicles(prev =>
+        prev.map(v => (v.id === vehicle.id ? { ...v, subTareas: prevSubTareas } : v))
+      );
+      persistVehiclesRef();
       toast.error("No se pudo retomar en cronómetro", {
         description: "Comprueba que el vehículo de enfoque siga activo e inténtalo de nuevo.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
@@ -5791,14 +5768,26 @@ export default function Planeacion() {
       const ruta = item.ruta ?? "ejecucion";
       if (ruta === "situacion_desglosador") cronIds.push(newSubs[idx].id);
     });
-    const subTareas = [...(vehicle.subTareas || []), ...newSubs];
+    const prevSubTareas = vehicle.subTareas || [];
+    const subTareas = [...prevSubTareas, ...newSubs];
     setVehicles(prev => prev.map(v => (v.id === vehicle.id ? { ...v, subTareas } : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicle.id ? { ...v, subTareas } : v));
-    persistVehiclesRef();
     try {
       if (cronIds.length > 0) {
         const nidoProy = nidoId !== NIDO_INBOX_ID ? nidoId : undefined;
-        await handleMoveSubTareasToCronometro(vehicle.id, cronIds, { proyectoEnfoqueId: nidoProy });
+        const moved = await handleMoveSubTareasToCronometro(vehicle.id, cronIds, {
+          proyectoEnfoqueId: nidoProy,
+        });
+        if (!moved) {
+          setVehicles(prev =>
+            prev.map(v => (v.id === vehicle.id ? { ...v, subTareas: prevSubTareas } : v))
+          );
+          vehiclesRef.current = vehiclesRef.current.map(v =>
+            v.id === vehicle.id ? { ...v, subTareas: prevSubTareas } : v
+          );
+          persistVehiclesRef();
+          return;
+        }
       } else {
         await updateVehicle(user.uid, vehicle.id, { subTareas });
       }
@@ -10839,7 +10828,7 @@ function VehicleCard({
                 const done = subs.every(s => s.status === "cumplido" || s.status === "fallado");
                 const fmtSec = (sec: number) => { const m = Math.floor(sec / 60); const s = sec % 60; return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; };
 
-                if (desglosadorSummary || done) {
+                if (done) {
                   const sessionElapsedSec = getDesglosadorSessionElapsedSec(vehicle);
                   const totalRealSec = subs.reduce((acc, s) => acc + (s.duracionFinal || 0), 0);
                   const totalSugeridoSec = subs.reduce((acc, s) => acc + (s.tiempoSugeridoSeg || 0), 0);
@@ -12588,7 +12577,13 @@ function VehicleCard({
                 if (vehicle.status !== "activo" || vehicle.autoVerdad || vehicle.tipoFlota === "descanso") return null;
                 const activeSeg = planilla?.segmentos.find(s => s.estado === "activo") ?? null;
                 const dayStart = getLimaDayStartMs(Date.now());
-                const gracia = getCruceGraciaState(vehicle, activeSeg, Date.now(), dayStart);
+                const gracia = getCruceGraciaState(
+                  vehicle,
+                  activeSeg,
+                  Date.now(),
+                  dayStart,
+                  planilla?.segmentos
+                );
                 if (gracia.phase === "none") return null;
                 const isExpired = gracia.phase === "expired";
                 const accent = isExpired ? BLOOD : NARANJA;

@@ -119,7 +119,11 @@ export function formatElapsedHHMMSS(totalSec: number): string {
 export function getDesglosadorSessionElapsedSec(vehicle: Vehicle, now = Date.now()): number {
   const aperturaMs = vehicle.aperturaAt ?? vehicle.createdAt?.getTime?.() ?? 0;
   if (aperturaMs <= 0) return 0;
-  return Math.floor((now - aperturaMs) / 1000);
+  const pausa = vehicle.desglosadorPausa;
+  if (vehicle.interrupcionActiva && pausa?.pausadoAt) {
+    return Math.max(0, Math.floor((pausa.pausadoAt - aperturaMs) / 1000));
+  }
+  return Math.max(0, Math.floor((now - aperturaMs) / 1000));
 }
 
 export function desglosadorHourProgress(elapsedSec: number): {

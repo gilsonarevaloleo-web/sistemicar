@@ -8,6 +8,7 @@ import {
   wasVehicleRecentlyClosed,
 } from "./persistence.ts";
 import { mergeActiveVehicleSessionState } from "./situacionSessionMerge.ts";
+import { reconcileVehicleList } from "./vehicleSessionAuthority.ts";
 
 function veh(partial: Partial<Vehicle> & Pick<Vehicle, "id">): Vehicle {
   return {
@@ -63,5 +64,39 @@ describe("vehicle close guard", () => {
     const remote = veh({ id: "new", clientRequestId: "crq_match", status: "activo" });
     const match = resolveLocalVehicleMatch(remote, [local]);
     assert.equal(match?.id, "old");
+  });
+
+  it("reconcileVehicleList no reabre activo remoto tras cierre local", () => {
+    notifyVehicleClosed("fb1", "crq_close");
+    const localClosed = veh({
+      id: "fb1",
+      clientRequestId: "crq_close",
+      status: "cumplido",
+      cierreAt: Date.now(),
+      duracionFinal: 15,
+    });
+    const remoteActive = veh({ id: "fb1", clientRequestId: "crq_close", status: "activo" });
+    const merged = reconcileVehicleList({
+      incoming: [remoteActive],
+      localSources: [localClosed],
+    });
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]?.status, "cumplido");
+    assert.equal(merged[0]?.duracionFinal, 15);
+  });
+
+  it("reconcileVehicleList no rescata activo cerrado desde ref UI", () => {
+    notifyVehicleClosed("v99", "crq_99");
+    const closedInUi = veh({
+      id: "v99",
+      clientRequestId: "crq_99",
+      status: "archivado",
+      cierreAt: Date.now(),
+    });
+    const merged = reconcileVehicleList({
+      incoming: [],
+      localSources: [closedInUi],
+    });
+    assert.equal(merged.filter(v => v.status === "activo").length, 0);
   });
 });

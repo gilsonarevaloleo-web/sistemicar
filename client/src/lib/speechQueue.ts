@@ -1,6 +1,5 @@
 /** Cola secuencial para speechSynthesis — evita que utterances se cancelen entre sí. */
 
-import { applyCalmSpanishUtterance, primeSpanishVoices } from "./spanishTtsVoice";
 import {
   isDesglosadorVoiceEnabled,
   isPuertaVozEnabled,
@@ -49,9 +48,11 @@ function getSynth(): SpeechSynthesis | null {
 }
 
 function primeVoicesOnce(): void {
-  if (voicesPrimed) return;
+  const synth = getSynth();
+  if (!synth || voicesPrimed) return;
   voicesPrimed = true;
-  primeSpanishVoices();
+  synth.getVoices();
+  synth.addEventListener("voiceschanged", () => synth.getVoices(), { once: true });
 }
 
 function resumeSynthIfPaused(): void {
@@ -89,10 +90,6 @@ function isBackground(): boolean {
   if (typeof document === "undefined") return false;
   /** Solo pestaña oculta: !hasFocus() mandaba voz al buffer sin reproducir en desktop. */
   return document.hidden;
-}
-
-function applySpanishVoice(u: SpeechSynthesisUtterance): void {
-  applyCalmSpanishUtterance(u);
 }
 
 function enqueueForBackground(phrases: string[], source: UbicacionVoiceSource): void {
@@ -154,7 +151,6 @@ function processQueue(): void {
     try {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "es-ES";
-      applySpanishVoice(u);
       u.onstart = () => {
         if (pendingOnPhraseStarted) {
           const cb = pendingOnPhraseStarted;
