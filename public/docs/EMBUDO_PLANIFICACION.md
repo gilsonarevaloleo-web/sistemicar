@@ -322,10 +322,10 @@ Usar en lugar de "Elige stack Estudiante o Producción":
 ## 8. Próximos pasos (implementación)
 
 - [ ] Alinear copy en `/pagos` con peldaños 1–2–3 y preguntas §5.
-- [ ] Alinear `KIT_VENDEDORES_PLANIFICACION.md` con este doc (fuente de verdad).
+- [x] Alinear `KIT_Vendedores_Planificacion.md` con este doc (fuente de verdad).
 - [ ] Upsell in-app: usuario Base+Operativo activo 14 días → CTA Soberanía.
 - [ ] Bundle "Planificación Completa" (precio a definir).
-- [ ] Reflejar resumen en `/vendedores-planificacion`.
+- [x] Reflejar resumen + Escalera de Conciencia en `/vendedores-planificacion`.
 
 ---
 

@@ -144,13 +144,18 @@ function timestampMs(value: number | Date | undefined): number | undefined {
 }
 
 /** Inicio real de cobertura consciente (no antes de creación ni primera acción). */
-export function resolveConsciousSessionStart(v: VehiculoAnilloLite): number | null {
+export function resolveConsciousSessionStart(v: VehiculoAnilloLite, refMs = Date.now()): number | null {
   const apertura = v.aperturaAt;
   if (apertura == null || !Number.isFinite(apertura)) return null;
   let start = apertura;
   const created = timestampMs(v.createdAt);
   if (created != null && created > start) start = created;
   if (v.primerAccionAt != null && v.primerAccionAt > start) start = v.primerAccionAt;
+  if (!v.autoVerdad && v.status === "activo") {
+    const anchorMs = refMs ?? v.aperturaAt ?? timestampMs(v.createdAt) ?? Date.now();
+    const journalStart = getJournalDayStartMs(anchorMs);
+    if (start < journalStart) start = journalStart;
+  }
   return start;
 }
 
@@ -158,7 +163,7 @@ export function vehicleSessionRange(
   v: VehiculoAnilloLite,
   now: number
 ): { start: number; end: number } | null {
-  const start = resolveConsciousSessionStart(v);
+  const start = resolveConsciousSessionStart(v, now);
   if (start == null) return null;
   let end: number;
   if (v.status === "activo") {
@@ -225,22 +230,107 @@ function subtractMsIntervals(base: MsInterval[], subtract: MsInterval[]): MsInte
   return result;
 }
 
-/**
- * Colchón Centinela: un hueco sin cobertura consciente NO cuenta como entropía
- * (rojo) hasta superar estos minutos. Reemplaza al viejo «vehículo centinela»
- * por una tolerancia automática e interna (no aparece en la interfaz).
- */
-export const ENTROPIA_GRACE_MIN = 2;
-const ENTROPIA_GRACE_MS = ENTROPIA_GRACE_MIN * 60000;
+/** Colchón centinela (2 min): aplica en cierre de jornada y sellado retroactivo, no en el puntero en vivo. */
+export const CENTINELA_GRACE_MIN = 2;
+export const CENTINELA_GRACE_MS = CENTINELA_GRACE_MIN * 60_000;
 
-/** Recorta los primeros minutos de gracia de cada hueco continuo; solo el excedente es entropía real. */
-function applyEntropyGrace(gaps: MsInterval[]): MsInterval[] {
+/** Recorta los primeros 2 min de cada hueco continuo; el excedente es entropía contable en cierre. */
+export function applyCentinelaGraceToGaps(gaps: MsInterval[]): MsInterval[] {
   const out: MsInterval[] = [];
   for (const g of gaps) {
-    const start = g.start + ENTROPIA_GRACE_MS;
+    const start = g.start + CENTINELA_GRACE_MS;
     if (g.end > start) out.push({ start, end: g.end });
   }
   return out;
+}
+
+function sumGapsMinutesInWindow(
+  winStart: number,
+  winEnd: number,
+  coverSessions: MsInterval[],
+  applyGrace: boolean
+): number {
+  if (winEnd <= winStart) return 0;
+  const window: MsInterval = { start: winStart, end: winEnd };
+  const coverInWindow = coverSessions
+    .filter(s => s.start < winEnd && s.end > winStart)
+    .map(s => clipInterval(s, winStart, winEnd))
+    .filter((s): s is MsInterval => s != null);
+  let gaps = mergeMsIntervals(subtractMsIntervals([window], mergeMsIntervals(coverInWindow)));
+  if (applyGrace) gaps = applyCentinelaGraceToGaps(gaps);
+  return gaps.reduce((acc, g) => acc + (g.end - g.start) / 60000, 0);
+}
+
+/**
+ * Intervalos centinela retroactivos (post-gracia) para huecos en segmentos planificados
+ * aún no cubiertos por sesiones centinela reales. Solo aplica con segmentos.
+ */
+export function computeRetroactiveCentinelaIntervalsMs(
+  segmentos: SegmentoAnilloLite[],
+  limaDayStartMs: number,
+  livedStartMs: number,
+  nowMs: number,
+  coverSessions: MsInterval[],
+  existingCentinelaSessions: MsInterval[]
+): MsInterval[] {
+  if (segmentos.length === 0) return [];
+  const rawGaps = computePlannedEntropyGapsMs(
+    segmentos,
+    limaDayStartMs,
+    livedStartMs,
+    nowMs,
+    coverSessions
+  );
+  const graced = applyCentinelaGraceToGaps(rawGaps);
+  return subtractMsIntervals(graced, mergeMsIntervals(existingCentinelaSessions));
+}
+
+/** Huecos sellables como sesiones centinela archivadas (solo con segmentos planificados). */
+export function listRetroactiveCentinelaGapsToPersist(params: {
+  segmentos: SegmentoAnilloLite[];
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): Array<{ aperturaAt: number; cierreAt: number }> {
+  const now = params.now ?? Date.now();
+  if (params.segmentos.length === 0) return [];
+
+  const limaDayStartMs = getLimaDayStartMs(now);
+  const umbralMin = getUmbralConcienciaMin(params.segmentos);
+  const nowMin = getNowMinutesLocal(Math.min(now, getJournalDayStartMs(now) + 86400000), limaDayStartMs);
+  if (nowMin < umbralMin) return [];
+
+  const livedStartMs = limaDayStartMs + umbralMin * 60000;
+  const nowMs = Math.min(now, getJournalDayStartMs(now) + 86400000);
+  if (nowMs <= livedStartMs) return [];
+
+  const todayVehicles = filterVehiculosCalendarioHoy(params.vehiculos, now);
+  const coverSessions = collectClippedSessions(
+    todayVehicles,
+    now,
+    isGapCoverVehicle,
+    livedStartMs,
+    nowMs
+  );
+  const centinelaSessions = collectClippedSessions(
+    todayVehicles,
+    now,
+    isCentinelaVehicle,
+    livedStartMs,
+    nowMs
+  );
+
+  const intervals = computeRetroactiveCentinelaIntervalsMs(
+    params.segmentos,
+    limaDayStartMs,
+    livedStartMs,
+    nowMs,
+    coverSessions,
+    centinelaSessions
+  );
+
+  return intervals
+    .filter(iv => iv.end - iv.start >= 60_000)
+    .map(iv => ({ aperturaAt: iv.start, cierreAt: iv.end }));
 }
 
 function plannedSegmentWindowsMs(
@@ -417,7 +507,7 @@ function computePlannedEntropyGapsMs(
       .filter((s): s is MsInterval => s != null);
     entropyRaw.push(...subtractMsIntervals([window], mergeMsIntervals(coverInWindow)));
   }
-  return applyEntropyGrace(mergeMsIntervals(entropyRaw));
+  return mergeMsIntervals(entropyRaw);
 }
 
 function sumIntervalMinutes(intervals: MsInterval[]): number {
@@ -485,9 +575,20 @@ function buildTimelineCore(params: {
     livedStartMs,
     livedEndMs
   );
-  const centinelaMerged = mergeMsIntervals(centinelaSessions);
-
+  const centinelaRealMerged = mergeMsIntervals(centinelaSessions);
   const hasSegments = segmentos.length > 0;
+  const retroactiveCentinela = hasSegments
+    ? computeRetroactiveCentinelaIntervalsMs(
+        segmentos,
+        limaDayStartMs,
+        livedStartMs,
+        nowMs,
+        coverSessions,
+        centinelaSessions
+      )
+    : [];
+  const centinelaMerged = mergeMsIntervals([...centinelaRealMerged, ...retroactiveCentinela]);
+
   const plannedLivedWindows = hasSegments
     ? plannedSegmentWindowsMs(segmentos, limaDayStartMs, livedStartMs, nowMs)
     : [{ start: livedStartMs, end: livedEndMs }];
@@ -496,9 +597,9 @@ function buildTimelineCore(params: {
     ? sumMinutosPlaneados(segmentos)
     : livedPlannedMin;
 
-  let entropiaIntervals: MsInterval[];
+  let segmentEntropy: MsInterval[];
   if (hasSegments) {
-    entropiaIntervals = computePlannedEntropyGapsMs(
+    segmentEntropy = computePlannedEntropyGapsMs(
       segmentos,
       limaDayStartMs,
       livedStartMs,
@@ -506,12 +607,12 @@ function buildTimelineCore(params: {
       coverSessions
     );
   } else {
-    entropiaIntervals = applyEntropyGrace(
-      mergeMsIntervals(
-        subtractMsIntervals([{ start: livedStartMs, end: livedEndMs }], coverMerged)
-      )
+    segmentEntropy = mergeMsIntervals(
+      subtractMsIntervals([{ start: livedStartMs, end: livedEndMs }], coverMerged)
     );
   }
+  const centinelaNet = subtractMsIntervals(centinelaMerged, coverMerged);
+  const entropiaIntervals = mergeMsIntervals([...segmentEntropy, ...centinelaNet]);
 
   return {
     limaDayStartMs,
@@ -527,7 +628,7 @@ function buildTimelineCore(params: {
     plannedLivedWindows,
     totalPlannedMin,
     livedPlannedMin,
-    entropiaIntervals: mergeMsIntervals(entropiaIntervals),
+    entropiaIntervals,
     centinelaMerged,
   };
 }
@@ -593,13 +694,9 @@ export function buildConcienciaTimeline(params: {
     : core.coverMerged;
 
   const conquistaMinRaw = sumIntervalMinutes(conquistaForStats);
-  // Lo vivido sin cobertura consciente (huecos en bruto, antes del colchón).
-  const uncoveredMin = Math.max(0, core.livedPlannedMin - conquistaMinRaw);
-  // Entropía real (rojo) = solo el excedente de los huecos que superaron el colchón de 2 min.
   const entropiaMinRaw = sumIntervalMinutes(core.entropiaIntervals);
-  // Centinela = colchón de tolerancia absorbido (no es rojo; reemplaza al viejo vehículo centinela).
-  const centinelaMinRaw = Math.max(0, uncoveredMin - entropiaMinRaw);
-  const vacioMinRaw = Math.max(0, core.totalPlannedMin - conquistaMinRaw - uncoveredMin);
+  const centinelaMinRaw = sumIntervalMinutes(core.centinelaMerged);
+  const vacioMinRaw = Math.max(0, core.totalPlannedMin - conquistaMinRaw - entropiaMinRaw);
 
   const conquistaMin = Math.round(conquistaMinRaw * 10) / 10;
   const entropiaMin = Math.round(entropiaMinRaw * 10) / 10;
@@ -663,19 +760,25 @@ function computeAnilloEstadoFromCore(core: TimelineCore): AnilloEstadoVivo {
     };
   }
 
-  // Rojo solo si el hueco actual ya superó el colchón de 2 min (está dentro de un tramo de entropía real).
-  const inActiveEntropyGap = core.entropiaIntervals.some(
+  // Rojo: centinela activo o instante dentro de entropía sellada (sesión centinela, no hueco en bruto).
+  const activeCentinela = core.todayVehicles.some(v => {
+    if (!v.autoVerdad || v.status !== "activo") return false;
+    const session = vehicleSessionRange(v, core.nowMs);
+    return session != null && session.start <= core.nowMs && session.end >= core.nowMs;
+  });
+  const centinelaNet = subtractMsIntervals(core.centinelaMerged, core.coverMerged);
+  const inSealedEntropy = centinelaNet.some(
     iv => iv.start <= core.nowMs && iv.end >= core.nowMs
   );
 
   if (core.hasSegments) {
-    if (inActiveEntropyGap) {
+    if (activeCentinela || inSealedEntropy) {
       return { deg, mode: "entropia", umbralMin: core.umbralMin, sinSegmentos: false };
     }
     return { deg, mode: "libre", umbralMin: core.umbralMin, sinSegmentos: false };
   }
 
-  if (inActiveEntropyGap) {
+  if (activeCentinela || inSealedEntropy) {
     return {
       deg,
       mode: "entropia",
@@ -864,6 +967,10 @@ export function calcularBalanceConquistaJornada(params: {
   });
 
   const consciousToday = jornadaVehiculos.filter(isGapCoverVehicle);
+  const consciousSessions = consciousToday
+    .map(v => vehicleSessionRange(v, now))
+    .filter((s): s is MsInterval => s != null);
+  const hasSegments = params.segmentos.length > 0;
 
   const segmentosBalance: SegmentoConquistaBalance[] = params.segmentos.map(seg => {
     const duracionMin = Math.max(0, segmentDurationMin(seg.horaInicio || "", seg.horaFin || ""));
@@ -872,28 +979,28 @@ export function calcularBalanceConquistaJornada(params: {
       seg.horaFin || "0:0",
       segmentDayStartMs
     );
-    const evalStart = winStart;
     const evalEnd = Math.min(winEnd, now);
 
-    const coverSessions = consciousToday
-      .map(v => vehicleSessionRange(v, now))
-      .filter((s): s is MsInterval => s != null);
-
     let conquistaMin = 0;
-    for (const session of coverSessions) {
+    for (const session of consciousSessions) {
       conquistaMin += overlapMinutes(session.start, session.end, winStart, winEnd);
     }
 
     let entropiaMin = 0;
-    if (evalEnd > evalStart) {
-      const window: MsInterval = { start: evalStart, end: evalEnd };
-      const coverInWindow = coverSessions
-        .map(s => clipInterval(s, evalStart, evalEnd))
-        .filter((s): s is MsInterval => s != null);
-      const gaps = applyEntropyGrace(
-        mergeMsIntervals(subtractMsIntervals([window], mergeMsIntervals(coverInWindow)))
-      );
-      entropiaMin = gaps.reduce((acc, g) => acc + (g.end - g.start) / 60000, 0);
+    if (hasSegments) {
+      // Cierre: entropía = huecos planificados menos cobertura, con colchón de 2 min (≠ puntero en vivo).
+      entropiaMin = sumGapsMinutesInWindow(winStart, evalEnd, consciousSessions, true);
+    } else {
+      const centinelas = jornadaVehiculos.filter(v => v.autoVerdad);
+      for (const v of centinelas) {
+        const session = vehicleSessionRange(v, now);
+        if (!session) continue;
+        let mins = overlapMinutes(session.start, session.end, winStart, winEnd);
+        for (const qs of consciousSessions) {
+          mins -= overlapMinutes(session.start, session.end, qs.start, qs.end);
+        }
+        entropiaMin += Math.max(0, mins);
+      }
     }
 
     const vacioMin = Math.max(0, duracionMin - conquistaMin - entropiaMin);
@@ -911,9 +1018,18 @@ export function calcularBalanceConquistaJornada(params: {
   });
 
   const jornadaMin = metricas.jornadaMin;
-  const conquistaMin = Math.round(metricas.conquistaMin * 10) / 10;
-  const entropiaMin = Math.round(metricas.entropiaMin * 10) / 10;
-  const vacioMin = Math.round(Math.max(0, jornadaMin - conquistaMin - entropiaMin) * 10) / 10;
+  let conquistaMin: number;
+  let entropiaMin: number;
+  let vacioMin: number;
+  if (hasSegments) {
+    conquistaMin = Math.round(segmentosBalance.reduce((a, s) => a + s.conquistaMin, 0) * 10) / 10;
+    entropiaMin = Math.round(segmentosBalance.reduce((a, s) => a + s.entropiaMin, 0) * 10) / 10;
+    vacioMin = Math.round(Math.max(0, jornadaMin - conquistaMin - entropiaMin) * 10) / 10;
+  } else {
+    conquistaMin = Math.round(metricas.conquistaMin * 10) / 10;
+    entropiaMin = Math.round(metricas.entropiaMin * 10) / 10;
+    vacioMin = Math.round(Math.max(0, jornadaMin - conquistaMin - entropiaMin) * 10) / 10;
+  }
 
   return {
     jornadaMin,

@@ -99,4 +99,24 @@ describe("vehicle close guard", () => {
     });
     assert.equal(merged.filter(v => v.status === "activo").length, 0);
   });
+
+  it("mergeActiveVehicleSessionState conserva termoDecisionSnapshot local al cerrar", () => {
+    const dayStart = Date.now() - 3600_000;
+    const snap = {
+      journalDayStartMs: dayStart,
+      subsDesglosadorCumplidos: 4,
+      subsSituacionCumplidos: 0,
+      misionesDirectas: 0,
+      recordedAt: Date.now(),
+    };
+    const local = veh({
+      id: "d1",
+      status: "cumplido",
+      cierreAt: Date.now(),
+      termoDecisionSnapshot: snap,
+    });
+    const remote = veh({ id: "d1", status: "activo", tipoReloj: "desglosador" });
+    const merged = mergeActiveVehicleSessionState(remote, local);
+    assert.equal(merged.termoDecisionSnapshot?.subsDesglosadorCumplidos, 4);
+  });
 });

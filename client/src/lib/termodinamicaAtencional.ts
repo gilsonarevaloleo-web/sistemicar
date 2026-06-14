@@ -9,7 +9,13 @@ import type { DisciplinaDia } from "./disciplinaEngine";
 export type { DisciplinaDia, SegmentoDisciplina } from "./disciplinaEngine";
 import type { DecisionLedgerEntry } from "./decisionesLedger";
 import { countDecisionesFromLedger } from "./decisionesLedger";
+import { isInvisibleCentinelaVehicle } from "./centinelaEngine";
 import { getLimaDayStartMs } from "./segmentTime";
+
+/** Excluye centinelas automáticos del conteo de decisiones / combustible. */
+export function isDecisionCountableVehicle(v: Vehicle): boolean {
+  return !isInvisibleCentinelaVehicle(v);
+}
 
 export interface PsDesglose {
   panoramico: number;
@@ -301,7 +307,7 @@ export function computeEspectroBloques(
   };
 
   for (const v of vehicles) {
-    if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
+    if (!isDecisionCountableVehicle(v) || !vehicleEnTermoJornada(v, dayStartMs)) continue;
 
     if (v.tipoFlota === "descanso" && (v.status === "cumplido" || v.status === "archivado")) {
       counts.descansosCuerpo++;
@@ -329,7 +335,9 @@ export function computeEspectroBloques(
 export function countSubsDesglosadorCumplidosHoy(vehicles: Vehicle[], dayStartMs: number): number {
   let total = 0;
   for (const v of vehicles) {
-    if (v.tipoReloj !== "desglosador" || !vehicleEnTermoJornada(v, dayStartMs)) continue;
+    if (!isDecisionCountableVehicle(v) || v.tipoReloj !== "desglosador" || !vehicleEnTermoJornada(v, dayStartMs)) {
+      continue;
+    }
     let fromSubs = 0;
     for (const sub of v.subVehiculos ?? []) {
       if (subCumplidoEnJornada(sub, v, dayStartMs)) fromSubs++;
@@ -359,7 +367,9 @@ export function countDesglosadoresCerradosHoy(vehicles: Vehicle[], dayStartMs: n
 export function countBloquesOtrosHoy(vehicles: Vehicle[], dayStartMs: number): number {
   let total = 0;
   for (const v of vehicles) {
-    if (v.tipoReloj === "desglosador" || v.tipoFlota === "descanso") continue;
+    if (!isDecisionCountableVehicle(v) || v.tipoReloj === "desglosador" || v.tipoFlota === "descanso") {
+      continue;
+    }
     if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
     if (v.status === "cumplido" || v.status === "archivado") total++;
   }
@@ -412,7 +422,7 @@ export function subTareaDecisionEnJornada(
 export function countSubsSituacionCumplidosHoy(vehicles: Vehicle[], dayStartMs: number): number {
   let total = 0;
   for (const v of vehicles) {
-    if (v.tipoFlota !== "situacion") continue;
+    if (!isDecisionCountableVehicle(v) || v.tipoFlota !== "situacion") continue;
     if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
     let fromSubs = 0;
     for (const st of v.subTareas ?? []) {
@@ -430,7 +440,12 @@ export function countSubsSituacionCumplidosHoy(vehicles: Vehicle[], dayStartMs: 
 export function countMisionesDirectasCerradasHoy(vehicles: Vehicle[], dayStartMs: number): number {
   let total = 0;
   for (const v of vehicles) {
-    if (v.tipoReloj === "desglosador" || v.tipoFlota === "descanso" || v.tipoFlota === "situacion") {
+    if (
+      !isDecisionCountableVehicle(v) ||
+      v.tipoReloj === "desglosador" ||
+      v.tipoFlota === "descanso" ||
+      v.tipoFlota === "situacion"
+    ) {
       continue;
     }
     if (!vehicleEnTermoJornada(v, dayStartMs)) continue;
@@ -712,6 +727,7 @@ export function buildDailySnapshot(params: {
   dayStartMs: number;
   logs: SovereigntyPointsLog[];
   events?: FocusBandEvent[];
+  ledgerEntries?: DecisionLedgerEntry[];
   conquistaMin?: number;
   entropiaMin?: number;
   vacioMin?: number;
@@ -723,6 +739,7 @@ export function buildDailySnapshot(params: {
     dayStartMs,
     logs,
     events = [],
+    ledgerEntries,
     conquistaMin = 0,
     entropiaMin = 0,
     vacioMin = 0,
@@ -746,7 +763,7 @@ export function buildDailySnapshot(params: {
   const ratioConquista =
     jornadaMin > 0 ? conquistaMin / jornadaMin : cerradosManual / Math.max(totalSeg, 1);
 
-  const combustible = computeCombustibleDia(vehicles, dayStartMs);
+  const combustible = computeCombustibleDia(vehicles, dayStartMs, ledgerEntries);
   const {
     bloques: bloquesCompletados,
     desglosadoresCerrados,

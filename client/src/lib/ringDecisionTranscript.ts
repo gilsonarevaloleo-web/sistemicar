@@ -4,6 +4,7 @@ import {
   decisionKeySubDesglosador,
   decisionKeySubSituacion,
 } from "./decisionesLedger";
+import { isInvisibleCentinelaVehicle } from "./centinelaEngine";
 import type { ProyectoDecisionEnumerada } from "./proyectos";
 import type { SubTarea, SubVehiculo, Vehicle } from "./persistence";
 
@@ -39,6 +40,7 @@ function situacionSubStatus(st: SubTarea): DecisionStatus {
 
 /** Extrae decisiones ejecutadas de un vehículo (ring, taller, desglosador, misión). */
 export function collectExecutedDecisionsFromVehicle(vehicle: Vehicle): RawRingDecision[] {
+  if (isInvisibleCentinelaVehicle(vehicle)) return [];
   const out: RawRingDecision[] = [];
   const vehicleTs = vehicle.cierreAt ?? vehicle.aperturaAt ?? Date.now();
 

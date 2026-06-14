@@ -1,97 +1,110 @@
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { ArrowLeft, Copy, Users, DollarSign, Download, MessageCircle, CheckCircle, Magnet } from "lucide-react";
+import { useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowLeft,
+  Copy,
+  Users,
+  DollarSign,
+  Download,
+  MessageCircle,
+  CheckCircle,
+  Magnet,
+  Layers,
+  ChevronDown,
+  AlertTriangle,
+  Sparkles,
+} from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { SELLER_COMMISSION_RATE } from "@shared/sellerCommissions";
 import { buildSellerPagosUrl } from "@/lib/sellerRef";
+import {
+  CATALOGO_PELDAO,
+  ESCALERA_CAPAS,
+  ESCALERA_INTEGRACION,
+  EMBUDO_PREGUNTAS,
+  GUION_VENTA,
+  IMAN_FLUJO,
+  IMAN_FRASES,
+  IMAN_OBJECIONES,
+  INVENTARIO_PRODUCTO,
+  KIT_ELEVATOR_PITCH,
+  KIT_MD_PATH,
+  KIT_RESUMEN_30S,
+  KIT_VERSION,
+  LISTA_ROJA,
+  MATRIZ_BENEFICIOS,
+  OBJECIONES,
+  PRODUCTOS,
+  STACKS,
+} from "@/content/kitVendedoresPlanificacion";
 
 const GOLD = "#D4AF37";
 const WHATSAPP = "51918260514";
 
-const PRODUCTOS = [
-  { id: "planificacion_base", name: "PlanificaciÛn Base", price: 19.99, period: "/mes", stack: "Pelda?o 1", comision: 6.0, color: GOLD },
-  { id: "operativo", name: "Operativo", price: 39.99, period: "/mes", stack: "Pelda?o 2 ? Conquista", comision: 12.0, color: "#00C851" },
-  { id: "soberania_dia", name: "SoberanÌa del dÌa", price: 29.99, period: "/mes", stack: "Pelda?o 3 ? Orden mental", comision: 9.0, color: "#38BDF8" },
-];
-
-const STACKS = [
-  {
-    title: "Conquista medible",
-    peldao: "Pelda?o 2 ? primer upsell",
-    modules: "Base + Operativo",
-    total: 59.98,
-    comisionEjemplo: 18.0,
-    desc: "Unidades, ritmo, rÈcord. Familiariza con cerrar y medir.",
-  },
-  {
-    title: "Orden mental",
-    peldao: "Pelda?o 3 ? avanzado",
-    modules: "Base + SoberanÌa del dÌa",
-    total: 49.98,
-    comisionEjemplo: 15.0,
-    desc: "Im·n, desglosador enfoque, proyectos y pasos de fe.",
-  },
-  {
-    title: "Sistema completo",
-    peldao: "Pelda?os 2 + 3",
-    modules: "Base + Operativo + SoberanÌa",
-    total: 89.96,
-    comisionEjemplo: 27.0,
-    desc: "Mide producciÛn y ordena pensamientos.",
-  },
-];
-
-const EMBUDO_PREGUNTAS = [
-  { peldao: 1, pregunta: "?Tu dÌa cierra con estructura?", respuesta: "PlanificaciÛn Base." },
-  { peldao: 2, pregunta: "?Necesitas unidades, ritmo y rÈcord reales?", respuesta: "A?ade Operativo ? primer upsell." },
-  { peldao: 3, pregunta: "?Ideas sueltas, imprevistos y proyectos grandes?", respuesta: "A?ade SoberanÌa ? Im·n + enfoque + pasos de fe." },
-];
-
-const PREGUNTAS = [
-  "?Tu dÌa cierra con estructura, o necesitas medir unidades, o ordenar ideas sueltas? Eso define el pelda?o.",
-  "?Has perdido dÌas creyendo que produjiste? ? Demo desglosador conquista + termo vs ayer (Operativo).",
-  "?Comparas con Notion? AquÌ pagas por ritmo, cierre y decisiones medidas ? no listas.",
-  "Operativo antes que SoberanÌa: primero conquista medible, despuÈs orden mental avanzado.",
-];
-
-const IMAN_FLUJO = [
-  "Mente ? Im·n (captura + nido/proyecto)",
-  "Desglosador enfoque (ring ~60% con cronÛmetro)",
-  "[no alcanza el bloque] ? Im·n otra vez (ruta S)",
-  "Cumplido ? paso ejecutado en proyecto",
-];
-
-const IMAN_OBJECIONES: { q: string; a: string }[] = [
-  {
-    q: "?Por quÈ escribo dos veces: aquÌ y donde resuelvo?",
-    a: "Con Im·n + proyecto, la primera escritura es aterrizaje con destino; la segunda es ejecuciÛn medida en tiempo.",
-  },
-  {
-    q: "Prefiero anotar directo donde trabajo",
-    a: "Directo = foco bajo si no acotas tiempo. Desglosador + cronÛmetro sube el foco ~60%.",
-  },
-  {
-    q: "Es otra bandeja de notas",
-    a: "Es im·n de ordenamiento: nido (proyecto o inbox), ruta S/E/M, y vuelve al desglosador sin perderse.",
-  },
-];
-
-const IMAN_FRASES = [
-  "No es escribir dos veces al vacÌo: es capturar con nido y cerrar con paso en tu proyecto.",
-  "El Im·n ordena; el desglosador enfoca; el proyecto te da fe para so?ar m·s grande.",
-  "Pr·cticamente el primer sistema que ordena pensamientos hacia acciÛn medida.",
-];
+function Section({
+  id,
+  title,
+  subtitle,
+  icon: Icon,
+  color = GOLD,
+  defaultOpen = false,
+  children,
+}: {
+  id: string;
+  title: string;
+  subtitle?: string;
+  icon: ComponentType<{ size?: number; className?: string; style?: CSSProperties }>;
+  color?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="rounded-xl border border-white/10 bg-card/30 overflow-hidden mb-4" data-testid={id}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-start justify-between gap-3 p-4 text-left hover:bg-white/[0.02]"
+      >
+        <div className="flex items-start gap-2 min-w-0">
+          <Icon size={16} className="flex-shrink-0 mt-0.5" style={{ color }} />
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">{title}</h2>
+            {subtitle && <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{subtitle}</p>}
+          </div>
+        </div>
+        <ChevronDown
+          size={16}
+          className={`flex-shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 border-t border-white/5">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </section>
+  );
+}
 
 export default function VendedoresPlanificacion() {
   const [, navigate] = useLocation();
   const [demoCode, setDemoCode] = useState("TU-CODIGO");
 
-  const copyLink = (code: string) => {
-    const url = buildSellerPagosUrl(code);
-    navigator.clipboard.writeText(url);
-    toast.success("Link copiado");
+  const copyText = (text: string, label = "Copiado") => {
+    navigator.clipboard.writeText(text);
+    toast.success(label);
   };
+
+  const copyLink = (code: string) => copyText(buildSellerPagosUrl(code), "Link copiado");
 
   return (
     <div className="min-h-screen bg-[#050505] text-white p-4 pb-24">
@@ -108,23 +121,103 @@ export default function VendedoresPlanificacion() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-amber-500/30 text-amber-400 text-[10px] font-bold uppercase tracking-widest mb-4">
             <Users size={12} />
-            Kit vendedores
+            Kit vendedores ∑ v{KIT_VERSION}
           </div>
-          <h1 className="text-2xl md:text-3xl font-black mb-2" style={{ fontFamily: "Playfair Display, serif", color: GOLD }}>
+          <h1
+            className="text-2xl md:text-3xl font-black mb-2"
+            style={{ fontFamily: "Playfair Display, serif", color: GOLD }}
+          >
             PlanificaciÛn SISTEMICAR
           </h1>
-          <p className="text-slate-400 text-sm max-w-md mx-auto">
-            Embudo por pelda?os: Base ? conquista medible ? orden mental. Solo PlanificaciÛn (Espejo es otro producto).
+          <p className="text-slate-400 text-sm max-w-md mx-auto leading-relaxed">
+            Embudo comercial por peldaÒos + Escalera de Conciencia (capas de desarrollo). Solo PlanificaciÛn ó Espejo es otro producto.
           </p>
         </div>
 
-        {/* Embudo pelda?os */}
-        <section className="p-4 rounded-xl border mb-6 border-white/10 bg-card/30">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">?En quÈ pelda?o est· el cliente?</h2>
+        {/* Resumen 30s */}
+        <section
+          className="p-4 rounded-xl border mb-6"
+          style={{ borderColor: `${GOLD}30`, backgroundColor: `${GOLD}06` }}
+          data-testid="kit-resumen-30s"
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={14} style={{ color: GOLD }} />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">Resumen en 30 segundos</h2>
+          </div>
+          <ul className="space-y-2">
+            {KIT_RESUMEN_30S.map(line => (
+              <li key={line} className="text-[11px] text-slate-400 leading-relaxed flex gap-2">
+                <span className="text-amber-500/60 flex-shrink-0">∑</span>
+                {line}
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            onClick={() => copyText(KIT_ELEVATOR_PITCH, "Elevator pitch copiado")}
+            className="mt-4 w-full py-2 rounded-lg border text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-white hover:border-white/20"
+            style={{ borderColor: `${GOLD}25` }}
+          >
+            Copiar elevator pitch
+          </button>
+        </section>
+
+        {/* Escalera de Conciencia */}
+        <section
+          className="p-4 rounded-xl border mb-6"
+          style={{ borderColor: "rgba(168,85,247,0.35)", backgroundColor: "rgba(168,85,247,0.06)" }}
+          data-testid="kit-escalera-conciencia"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <Layers size={16} style={{ color: "#A855F7" }} />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">
+              Escalera de Conciencia
+            </h2>
+          </div>
+          <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">
+            Tres capas de desarrollo (no jerarquÌa moral) ó visible en PlanificaciÛn ? MÈtricas. Vende la profundidad del mÈtodo Base.
+          </p>
           <div className="space-y-3">
-            {EMBUDO_PREGUNTAS.map((item) => (
+            {ESCALERA_CAPAS.map(capa => (
+              <div
+                key={capa.id}
+                className="p-3 rounded-lg border pl-4 relative overflow-hidden"
+                style={{ borderColor: `${capa.color}30`, backgroundColor: "rgba(0,0,0,0.25)" }}
+              >
+                <div
+                  className="absolute left-0 top-0 bottom-0 w-1"
+                  style={{ backgroundColor: capa.color }}
+                />
+                <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: capa.color }}>
+                  Capa {capa.capa} ∑ {capa.titulo}
+                </p>
+                <p className="text-[11px] font-bold text-slate-200 mt-1">{capa.pregunta}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{capa.metrica}</p>
+                <p className="text-[10px] text-slate-400 mt-2 leading-relaxed italic">{capa.copyVenta}</p>
+                <p className="text-[9px] text-slate-600 mt-2 font-mono">Demo: {capa.demo}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic border-t border-white/5 pt-3">
+            {ESCALERA_INTEGRACION}
+          </p>
+          <p className="text-[9px] text-purple-400/80 mt-2">
+            Badge <strong>Puente</strong> en app = presencia alta pero pocas decisiones (par·lisis con tiempo cubierto). Momento ideal para hablar del peldaÒo 2 Operativo.
+          </p>
+        </section>
+
+        {/* Embudo peldaÒos comercial */}
+        <section className="p-4 rounded-xl border mb-6 border-white/10 bg-card/30" data-testid="kit-embudo">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">
+            øEn quÈ peldaÒo comercial est· el cliente?
+          </h2>
+          <div className="space-y-3">
+            {EMBUDO_PREGUNTAS.map(item => (
               <div key={item.peldao} className="flex gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black" style={{ backgroundColor: `${GOLD}20`, color: GOLD }}>
+                <span
+                  className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black"
+                  style={{ backgroundColor: `${GOLD}20`, color: GOLD }}
+                >
                   {item.peldao}
                 </span>
                 <div>
@@ -135,116 +228,209 @@ export default function VendedoresPlanificacion() {
             ))}
           </div>
           <p className="text-[9px] text-slate-600 mt-3 italic">
-            Operativo (pelda?o 2) antes que SoberanÌa (pelda?o 3): primero medir, despuÈs ordenar pensamientos.
+            Operativo (peldaÒo 2) antes que SoberanÌa (peldaÒo 3): primero medir, despuÈs ordenar pensamientos.
           </p>
         </section>
 
         {/* ComisiÛn */}
-        <section className="p-4 rounded-xl border mb-6" style={{ borderColor: `${GOLD}30`, backgroundColor: `${GOLD}08` }}>
+        <section
+          className="p-4 rounded-xl border mb-6"
+          style={{ borderColor: `${GOLD}30`, backgroundColor: `${GOLD}08` }}
+          data-testid="kit-comision"
+        >
           <div className="flex items-center gap-2 mb-2">
             <DollarSign size={16} style={{ color: GOLD }} />
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">ComisiÛn</h2>
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">ComisiÛn 30%</h2>
           </div>
-          <p className="text-sm text-white font-bold">{Math.round(SELLER_COMMISSION_RATE * 100)}% cada mes que el cliente pague</p>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Recurrente en suscripciones. Si el usuario cancela, deja de generarse comisiÛn. MercadoPago con tu link; Yape/PayPal vÌa Gilson.
+          <p className="text-sm text-white font-bold">
+            {Math.round(SELLER_COMMISSION_RATE * 100)}% cada mes que el cliente pague
+          </p>
+          <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+            Recurrente en suscripciones Base, Operativo y SoberanÌa. Si cancela, deja de generarse comisiÛn. Espejo ($17 ˙nico) ~$5.10 una vez ó no recurrente.
           </p>
         </section>
 
         {/* Stacks */}
-        <section className="mb-8">
+        <section className="mb-6" data-testid="kit-stacks">
           <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Stacks por evoluciÛn</h2>
           <div className="grid gap-3">
-            {STACKS.map((s) => (
+            {STACKS.map(s => (
               <div key={s.title} className="p-4 rounded-xl border border-white/10 bg-card/40">
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <h3 className="font-bold text-white text-sm">{s.title}</h3>
                   <span className="text-[9px] text-slate-500 uppercase">{s.peldao}</span>
                 </div>
                 <p className="text-[10px] text-slate-500 mb-2">{s.modules}</p>
-                <p className="text-lg font-black" style={{ color: GOLD }}>~${s.total.toFixed(2)}<span className="text-xs text-slate-500 font-normal">/mes</span></p>
+                <p className="text-lg font-black" style={{ color: GOLD }}>
+                  ~${s.total.toFixed(2)}
+                  <span className="text-xs text-slate-500 font-normal">/mes</span>
+                </p>
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">{s.desc}</p>
-                <p className="text-[9px] text-emerald-400/80 mt-2">ComisiÛn ~${s.comisionEjemplo.toFixed(2)}/mes mientras renueve</p>
+                <p className="text-[9px] text-emerald-400/80 mt-2">
+                  ComisiÛn ~${s.comisionEjemplo.toFixed(2)}/mes mientras renueve
+                </p>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Im·n de pensamientos */}
-        <section className="mb-8 p-4 rounded-xl border border-slate-500/25 bg-slate-900/40">
-          <div className="flex items-center gap-2 mb-2">
-            <Magnet size={16} className="text-slate-300" />
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">Im·n de pensamientos</h2>
-          </div>
-          <p className="text-sm text-white font-semibold mb-1">
-            El primer sistema que ordena pensamientos hacia proyectos, tiempo y pasos de fe.
-          </p>
-          <p className="text-[11px] text-slate-500 mb-4">
-            Pelda?o 3 (SoberanÌa) ? demo 2 min ? mente acelerada e interrupciones
-          </p>
-
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Flujo en demo</p>
-          <ol className="space-y-1.5 mb-5">
-            {IMAN_FLUJO.map((step, i) => (
-              <li key={i} className="flex gap-2 text-[11px] text-slate-400">
-                <span className="font-mono text-slate-600 flex-shrink-0">{i + 1}.</span>
-                {step}
-              </li>
-            ))}
-          </ol>
-
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Objeciones frecuentes</p>
-          <div className="space-y-2 mb-5">
-            {IMAN_OBJECIONES.map((o) => (
-              <div key={o.q} className="p-3 rounded-lg border border-white/5 bg-black/30">
-                <p className="text-[11px] font-bold text-slate-300 mb-1">{o.q}</p>
-                <p className="text-[10px] text-slate-500 leading-relaxed">{o.a}</p>
+        {/* Cat·logo por peldaÒo */}
+        <Section
+          id="kit-catalogo"
+          title="Cat·logo por peldaÒo"
+          subtitle="QuÈ incluye cada add-on ∑ frases de venta"
+          icon={CheckCircle}
+          color="#38BDF8"
+          defaultOpen
+        >
+          <div className="space-y-4 pt-3">
+            {CATALOGO_PELDAO.map(cat => (
+              <div key={cat.peldao} className="p-3 rounded-lg border border-white/10 bg-black/20">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">
+                  PeldaÒo {cat.peldao}
+                </p>
+                <h3 className="text-sm font-bold text-white mt-1">{cat.titulo}</h3>
+                <p className="text-[11px] italic text-amber-400/90 mt-2">"{cat.frase}"</p>
+                <ul className="mt-3 space-y-1">
+                  {cat.incluye.map(item => (
+                    <li key={item} className="text-[10px] text-slate-400 flex gap-2">
+                      <CheckCircle size={12} className="flex-shrink-0 text-emerald-500 mt-0.5" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[9px] text-slate-600 mt-2">{cat.noIncluye}</p>
+                {"demo" in cat && cat.demo && (
+                  <p className="text-[9px] text-cyan-500/70 mt-1 font-mono">Demo: {cat.demo}</p>
+                )}
               </div>
             ))}
           </div>
+        </Section>
 
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Frases listas</p>
-          <ul className="space-y-1.5 mb-4">
-            {IMAN_FRASES.map((f) => (
-              <li key={f} className="text-[10px] text-slate-400 italic leading-relaxed pl-3 border-l-2 border-slate-600">
-                "{f}"
-              </li>
-            ))}
-          </ul>
+        {/* Im·n */}
+        <Section
+          id="kit-iman"
+          title="Im·n de pensamientos"
+          subtitle="PeldaÒo 3 ∑ demo 2 min"
+          icon={Magnet}
+          color="#94a3b8"
+        >
+          <div className="pt-3">
+            <p className="text-sm text-white font-semibold mb-4">
+              El primer sistema que ordena pensamientos hacia proyectos, tiempo y pasos de fe.
+            </p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Flujo en demo</p>
+            <ol className="space-y-1.5 mb-5">
+              {IMAN_FLUJO.map((step, i) => (
+                <li key={i} className="flex gap-2 text-[11px] text-slate-400">
+                  <span className="font-mono text-slate-600 flex-shrink-0">{i + 1}.</span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Objeciones</p>
+            <div className="space-y-2 mb-5">
+              {IMAN_OBJECIONES.map(o => (
+                <div key={o.q} className="p-3 rounded-lg border border-white/5 bg-black/30">
+                  <p className="text-[11px] font-bold text-slate-300 mb-1">{o.q}</p>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">{o.a}</p>
+                </div>
+              ))}
+            </div>
+            <ul className="space-y-1.5 mb-4">
+              {IMAN_FRASES.map(f => (
+                <li key={f} className="text-[10px] text-slate-400 italic leading-relaxed pl-3 border-l-2 border-slate-600">
+                  "{f}"
+                </li>
+              ))}
+            </ul>
+            <p className="text-[9px] text-amber-500/80">
+              No digas que el Im·n reemplaza al desglosador. El usuario cierra bloques y cumple subs.
+            </p>
+          </div>
+        </Section>
 
-          <p className="text-[9px] text-amber-500/80">
-            No digas que el Im·n reemplaza al desglosador ni que "planifica solo". El usuario cierra bloques y cumple subs.
-          </p>
-        </section>
+        {/* Matriz beneficios */}
+        <Section id="kit-matriz" title="Matriz persona ? peldaÒo" icon={Users} color={GOLD}>
+          <div className="pt-3 overflow-x-auto">
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="text-slate-500 text-left border-b border-white/10">
+                  <th className="pb-2 pr-2">Persona</th>
+                  <th className="pb-2 pr-2">Dolor</th>
+                  <th className="pb-2 pr-2">PeldaÒo</th>
+                  <th className="pb-2">Demo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {MATRIZ_BENEFICIOS.map(row => (
+                  <tr key={row.persona} className="border-b border-white/5 text-slate-400">
+                    <td className="py-2 pr-2 text-slate-300">{row.persona}</td>
+                    <td className="py-2 pr-2">{row.dolor}</td>
+                    <td className="py-2 pr-2 font-bold" style={{ color: GOLD }}>
+                      {row.peldao}
+                    </td>
+                    <td className="py-2">{row.demo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
 
-        {/* Productos */}
-        <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Cat·logo PlanificaciÛn</h2>
+        {/* Productos precio */}
+        <section className="mb-6" data-testid="kit-productos">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Precios ∑ comisiÛn 30%</h2>
           <div className="space-y-2">
-            {PRODUCTOS.map((p) => (
+            {PRODUCTOS.map(p => (
               <div key={p.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-white/10">
                 <div>
                   <p className="text-sm font-bold text-white">{p.name}</p>
                   <p className="text-[10px] text-slate-500">{p.stack}</p>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="font-black" style={{ color: p.color }}>${p.price}<span className="text-[10px] text-slate-500">{p.period === "/mes" ? "/mes" : ""}</span></p>
-                  <p className="text-[9px] text-emerald-400">
-                    Comisiùn ${p.comision.toFixed(2)}
-                    {p.period === "/mes" ? "/mes" : " (˙nico)"}
+                  <p className="font-black" style={{ color: p.color }}>
+                    ${p.price}
+                    <span className="text-[10px] text-slate-500">/mes</span>
                   </p>
+                  <p className="text-[9px] text-emerald-400">ComisiÛn ${p.comision.toFixed(2)}/mes</p>
                 </div>
               </div>
             ))}
           </div>
         </section>
 
+        {/* Objeciones */}
+        <Section id="kit-objeciones" title="Objeciones frecuentes" icon={MessageCircle}>
+          <div className="space-y-2 pt-3">
+            {OBJECIONES.map(o => (
+              <div key={o.q} className="p-3 rounded-lg border border-white/5">
+                <p className="text-[11px] font-bold text-slate-300">{o.q}</p>
+                <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">{o.a}</p>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        {/* Lista roja */}
+        <Section id="kit-lista-roja" title="QuÈ NO prometer" icon={AlertTriangle} color="#991b1b">
+          <ul className="space-y-2 pt-3">
+            {LISTA_ROJA.map(item => (
+              <li key={item} className="flex gap-2 text-[11px] text-red-300/80">
+                <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </Section>
+
         {/* Guion */}
-        <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Guion r·pido</h2>
+        <section className="mb-6" data-testid="kit-guion">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3">Guion de venta</h2>
           <ul className="space-y-2">
-            {PREGUNTAS.map((q, i) => (
-              <li key={i} className="flex gap-2 text-[11px] text-slate-400">
+            {GUION_VENTA.map((q, i) => (
+              <li key={i} className="flex gap-2 text-[11px] text-slate-400 leading-relaxed">
                 <CheckCircle size={14} className="flex-shrink-0 text-emerald-500 mt-0.5" />
                 {q}
               </li>
@@ -252,14 +438,28 @@ export default function VendedoresPlanificacion() {
           </ul>
         </section>
 
-        {/* Link */}
-        <section className="p-5 rounded-xl border mb-6" style={{ borderColor: `${GOLD}40` }}>
+        {/* Inventario */}
+        <Section id="kit-inventario" title="Inventario producto (jun 2026)" icon={Sparkles} color="#64748b">
+          <div className="pt-3 space-y-2">
+            {INVENTARIO_PRODUCTO.map(row => (
+              <div key={row.area} className="flex items-start justify-between gap-2 text-[10px]">
+                <span className="text-slate-400">{row.area}</span>
+                <span className="text-emerald-500/80 shrink-0">{row.estado}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        {/* Link vendedor */}
+        <section className="p-5 rounded-xl border mb-6" style={{ borderColor: `${GOLD}40` }} data-testid="kit-link">
           <h2 className="text-sm font-bold text-white mb-2">Tu link de venta</h2>
-          <p className="text-[11px] text-slate-500 mb-3">Gilson te asigna un cÛdigo. El cliente debe pagar desde este link:</p>
+          <p className="text-[11px] text-slate-500 mb-3">
+            Gilson te asigna un cÛdigo. El cliente debe pagar desde este link (`ref=TU-CODIGO`):
+          </p>
           <div className="flex gap-2 mb-3">
             <input
               value={demoCode}
-              onChange={(e) => setDemoCode(e.target.value.toUpperCase())}
+              onChange={e => setDemoCode(e.target.value.toUpperCase())}
               placeholder="TU-CODIGO"
               className="flex-1 px-3 py-2 rounded-lg bg-black/50 border border-white/10 text-sm font-mono"
               data-testid="input-seller-code-demo"
@@ -274,7 +474,9 @@ export default function VendedoresPlanificacion() {
               Copiar
             </button>
           </div>
-          <p className="text-[10px] font-mono text-slate-600 break-all">{buildSellerPagosUrl(demoCode || "TU-CODIGO")}</p>
+          <p className="text-[10px] font-mono text-slate-600 break-all">
+            {buildSellerPagosUrl(demoCode || "TU-CODIGO")}
+          </p>
         </section>
 
         {/* Acciones */}
@@ -285,10 +487,10 @@ export default function VendedoresPlanificacion() {
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-white/10 text-sm text-slate-300 hover:bg-white/5"
           >
             <Download size={16} />
-            Embudo PlanificaciÛn (MD)
+            Embudo (MD)
           </a>
           <a
-            href="/docs/KIT_VENDEDORES_PLANIFICACION.md"
+            href={KIT_MD_PATH}
             download
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-white/10 text-sm text-slate-300 hover:bg-white/5"
           >
@@ -308,7 +510,7 @@ export default function VendedoresPlanificacion() {
         </div>
 
         <p className="text-[9px] text-slate-600 text-center mt-8 italic">
-          Solo PlanificaciÛn en este kit. Espejo es otro producto. No prometas mÛdulos en camino.
+          Gilson ∑ WhatsApp +51 918 260 514 ∑ Panel admin /admin-gilson ? Vendedores
         </p>
       </motion.div>
     </div>

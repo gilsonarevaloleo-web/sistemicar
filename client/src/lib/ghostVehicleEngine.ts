@@ -132,7 +132,8 @@ export function filterVehiclesForEntropy(vehicles: Vehicle[], nowMs = Date.now()
 export function filterVehiclesForAnilloCoverage(vehicles: Vehicle[], nowMs = Date.now()): Vehicle[] {
   const dayStart = getJournalDayStartMs(nowMs);
   return filterVehiclesForEntropy(vehicles, nowMs).filter(v => {
-    if (v.autoVerdad) return false;
+    // Centinela (autoVerdad): sesiones selladas de entropía — siempre incluir.
+    if (v.autoVerdad) return true;
     if (v.status !== "activo") return true;
 
     const apertura = v.aperturaAt || (v.createdAt instanceof Date ? v.createdAt.getTime() : 0);

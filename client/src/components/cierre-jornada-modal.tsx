@@ -34,6 +34,7 @@ import {
 } from "@/lib/persistence";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import { calcularBalanceConquistaJornada } from "@/engines/ConcienciaEngine";
+import { filterVehiclesForAnilloCoverage } from "@/lib/ghostVehicleEngine";
 
 const GOLD = "#D4AF37";
 const PURPLE = "#A855F7";
@@ -168,13 +169,10 @@ export function CierreJornadaModal() {
     return unsubscribe;
   }, [user]);
 
-  const todayVehicles = useMemo(() => {
-    const todayStart = getLimaDayStart().getTime();
-    return vehicles.filter(v => {
-      const ts = v.cierreAt || v.aperturaAt || v.createdAt?.getTime?.() || 0;
-      return ts >= todayStart;
-    });
-  }, [vehicles]);
+  const todayVehicles = useMemo(
+    () => filterVehiclesForAnilloCoverage(vehicles, Date.now()),
+    [vehicles]
+  );
 
   const balance = useMemo(
     () =>

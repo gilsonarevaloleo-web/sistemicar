@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  calcularBalanceConquistaJornada,
   clockMinutesToDeg,
   computeAnilloEstado,
   computeTimelineClockArcs,
   computeTimelineDayStats,
   getUmbralConcienciaMin,
   limaNowToClockDeg,
+  listRetroactiveCentinelaGapsToPersist,
   resolveConsciousSessionStart,
   UMBRAL_CONTINGENCIA_MIN,
 } from "./ConcienciaEngine.ts";
@@ -16,6 +18,19 @@ import { filterVehiclesForAnilloCoverage } from "../lib/ghostVehicleEngine.ts";
 /** Hora civil en Lima (UTC-5) como timestamp UTC. */
 function limaAt(y: number, mo: number, d: number, h: number, min = 0): number {
   return Date.UTC(y, mo, d, h + 5, min);
+}
+
+/** Sesión centinela sellada (autoVerdad) para tests de puntero y persistencia. */
+function sesionCentinela(
+  apertura: number,
+  opts?: { cierreAt?: number; status?: "activo" | "archivado" }
+) {
+  return {
+    autoVerdad: true,
+    status: opts?.status ?? (opts?.cierreAt != null ? "archivado" : "activo"),
+    aperturaAt: apertura,
+    ...(opts?.cierreAt != null ? { cierreAt: opts.cierreAt } : {}),
+  };
 }
 
 describe("clockMinutesToDeg / puntero 12h", () => {
@@ -268,7 +283,7 @@ describe("computeTimelineClockArcs", () => {
       aperturaAt: journalStart,
       createdAt: realOpen,
     }];
-    assert.equal(resolveConsciousSessionStart(vehiculos[0]), realOpen);
+    assert.equal(resolveConsciousSessionStart(vehiculos[0], now), realOpen);
     const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
     assert.ok(stats.entropiaMin >= 55 && stats.entropiaMin <= 65);
   });
@@ -282,8 +297,10 @@ describe("computeTimelineClockArcs", () => {
       status: "activo",
       aperturaAt: journalStart - 3600_000,
     };
-    const vehiculos = filterVehiclesForAnilloCoverage([stale as any], now);
-    assert.equal(vehiculos.length, 0);
+    const centinela = sesionCentinela(limaAt(2026, 4, 18, 5, 2));
+    const vehiculos = filterVehiclesForAnilloCoverage([stale as any, centinela as any], now);
+    assert.equal(vehiculos.length, 1);
+    assert.equal(vehiculos[0].autoVerdad, true);
     const arcs = computeTimelineClockArcs({
       vehiculos,
       segmentos: [{ horaInicio: "05:00", horaFin: "10:00" }],
@@ -320,7 +337,11 @@ describe("computeTimelineClockArcs", () => {
 describe("computeAnilloEstado", () => {
   it("modo entropía sin segmentos después de 06:00 sin flota activa", () => {
     const now = limaAt(2026, 4, 18, 7, 0);
-    const st = computeAnilloEstado({ segmentos: [], vehiculos: [], now });
+    const st = computeAnilloEstado({
+      segmentos: [],
+      vehiculos: [sesionCentinela(limaAt(2026, 4, 18, 6, 2))],
+      now,
+    });
     assert.equal(st.mode, "entropia");
     assert.equal(st.sinSegmentos, true);
   });
@@ -339,7 +360,7 @@ describe("computeAnilloEstado", () => {
     const now = limaAt(2026, 4, 18, 9, 0);
     const st = computeAnilloEstado({
       segmentos: [{ horaInicio: "08:00", horaFin: "12:00" }],
-      vehiculos: [],
+      vehiculos: [sesionCentinela(limaAt(2026, 4, 18, 8, 2))],
       now,
     });
     assert.equal(st.mode, "entropia");
@@ -353,9 +374,12 @@ describe("computeAnilloEstado", () => {
       { horaInicio: "14:00", horaFin: "16:00" },
     ];
     const stats = computeTimelineDayStats({ vehiculos: [], segmentos, now });
-    // 3 huecos (120+60+60) menos 2 min de colchón centinela por hueco = 234.
-    assert.equal(stats.entropiaMin, 234, "2h + 1h + 1h menos colchón de 2 min por hueco");
-    const st = computeAnilloEstado({ segmentos, vehiculos: [], now });
+    assert.equal(stats.entropiaMin, 240, "2h + 1h + 1h de huecos planificados");
+    const st = computeAnilloEstado({
+      segmentos,
+      vehiculos: [sesionCentinela(limaAt(2026, 4, 18, 8, 2))],
+      now,
+    });
     assert.equal(st.mode, "entropia");
   });
 
@@ -372,54 +396,98 @@ describe("computeAnilloEstado", () => {
       interrupcionActiva: true,
       desglosadorPausa: { motivo: "test" },
     };
-    const stats = computeTimelineDayStats({ segmentos, vehiculos: [paused], now });
-    assert.ok(stats.entropiaMin >= 87, "casi todo el segmento vivido cuenta como entropía (menos colchón de 2 min)");
-    const st = computeAnilloEstado({ segmentos, vehiculos: [paused], now });
+    const centinela = sesionCentinela(limaAt(2026, 4, 18, 8, 2));
+    const stats = computeTimelineDayStats({ segmentos, vehiculos: [paused, centinela], now });
+    assert.ok(stats.entropiaMin >= 88, "casi todo el segmento vivido cuenta como entropía");
+    const st = computeAnilloEstado({ segmentos, vehiculos: [paused, centinela], now });
     assert.equal(st.mode, "entropia");
   });
 
-  it("hueco menor de 2 min no enciende rojo (colchón centinela)", () => {
-    const now = limaAt(2026, 4, 18, 9, 1);
-    const journalStart = getJournalDayStartMs(now);
+  it("sin centinela activo aún, puntero libre durante los primeros 2 min de hueco", () => {
+    const now = limaAt(2026, 4, 18, 8, 1);
     const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
-    const vehiculos = [{
-      autoVerdad: false,
-      tipoFlota: "tiempo",
-      status: "cumplido",
-      aperturaAt: journalStart,
-      cierreAt: limaAt(2026, 4, 18, 9, 0),
-      duracionFinal: 240,
-    }];
-    const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
-    assert.equal(stats.entropiaMin, 0, "1 min de hueco lo absorbe el colchón");
-    assert.ok(stats.centinelaMin > 0, "el hueco corto cuenta como centinela neutro");
-    const st = computeAnilloEstado({ segmentos, vehiculos, now });
-    assert.equal(st.mode, "libre", "puntero no rojo durante el colchón");
+    const stats = computeTimelineDayStats({ segmentos, vehiculos: [], now });
+    assert.ok(stats.entropiaMin >= 0.5, "el hueco ya cuenta en arcos/stats");
+    const st = computeAnilloEstado({ segmentos, vehiculos: [], now });
+    assert.equal(st.mode, "libre", "puntero no rojo antes de que el centinela materialice la sesión");
   });
 
-  it("hueco mayor de 2 min enciende rojo solo el excedente", () => {
+  it("centinela activo enciende puntero rojo tras el delay de 2 min", () => {
     const now = limaAt(2026, 4, 18, 9, 4);
     const journalStart = getJournalDayStartMs(now);
     const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
-    const vehiculos = [{
+    const vehiculos = [
+      {
+        autoVerdad: false,
+        tipoFlota: "tiempo",
+        status: "cumplido",
+        aperturaAt: journalStart,
+        cierreAt: limaAt(2026, 4, 18, 9, 0),
+        duracionFinal: 240,
+      },
+      sesionCentinela(limaAt(2026, 4, 18, 9, 2)),
+    ];
+    const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
+    assert.ok(stats.entropiaMin >= 3.5, "hueco 9:00–9:04 más sesión centinela sellada");
+    const st = computeAnilloEstado({ segmentos, vehiculos, now });
+    assert.equal(st.mode, "entropia", "centinela activo mantiene puntero rojo");
+  });
+
+  it("entropía sellada persiste al abrir vehículo consciente", () => {
+    const now = limaAt(2026, 4, 18, 10, 0);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const entropiaSellada = sesionCentinela(limaAt(2026, 4, 18, 8, 0), {
+      cierreAt: limaAt(2026, 4, 18, 9, 0),
+      status: "archivado",
+    });
+    const consciente = {
       autoVerdad: false,
       tipoFlota: "tiempo",
-      status: "cumplido",
-      aperturaAt: journalStart,
-      cierreAt: limaAt(2026, 4, 18, 9, 0),
-      duracionFinal: 240,
-    }];
+      status: "activo" as const,
+      aperturaAt: limaAt(2026, 4, 18, 9, 5),
+    };
+    const vehiculos = [entropiaSellada, consciente];
     const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
-    assert.ok(stats.entropiaMin >= 1.5 && stats.entropiaMin <= 2.5, "4 min de hueco - 2 de colchón ≈ 2 rojos");
+    assert.ok(stats.entropiaMin >= 58, "60 min sellados menos solape mínimo con conquista");
+    assert.ok(stats.conquistaMin >= 50 && stats.conquistaMin <= 60, "conquista solo desde 9:05");
+    const arcs = computeTimelineClockArcs({ segmentos, vehiculos, now });
+    const entropiaArcs = arcs.filter(a => a.kind === "entropia");
+    const conquistaArcs = arcs.filter(a => a.kind === "conquista");
+    assert.ok(entropiaArcs.length > 0, "arcos rojos históricos permanecen");
+    assert.ok(conquistaArcs.length > 0, "arco morado desde apertura consciente");
     const st = computeAnilloEstado({ segmentos, vehiculos, now });
-    assert.equal(st.mode, "entropia", "tras 2 min el puntero se vuelve rojo");
+    assert.equal(st.mode, "conquista", "vehículo consciente activo domina el puntero");
+  });
+
+  it("aperturaAt retroactivo no borra entropía sellada previa", () => {
+    const now = limaAt(2026, 4, 18, 10, 0);
+    const journalStart = getJournalDayStartMs(now);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const entropiaSellada = sesionCentinela(limaAt(2026, 4, 18, 8, 0), {
+      cierreAt: limaAt(2026, 4, 18, 9, 0),
+      status: "archivado",
+    });
+    const conscienteRetro = {
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "activo" as const,
+      aperturaAt: journalStart,
+      createdAt: limaAt(2026, 4, 18, 9, 0),
+    };
+    const stats = computeTimelineDayStats({
+      segmentos,
+      vehiculos: [entropiaSellada, conscienteRetro],
+      now,
+    });
+    assert.ok(stats.entropiaMin >= 55, "entropía 8:00–9:00 no se borra por cobertura retroactiva");
   });
 
   it("modo entropía implica minutos inconscientes > 0", () => {
     const now = limaAt(2026, 4, 18, 9, 0);
     const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
-    const st = computeAnilloEstado({ segmentos, vehiculos: [], now });
-    const stats = computeTimelineDayStats({ segmentos, vehiculos: [], now });
+    const vehiculos = [sesionCentinela(limaAt(2026, 4, 18, 8, 2))];
+    const st = computeAnilloEstado({ segmentos, vehiculos, now });
+    const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
     assert.equal(st.mode, "entropia");
     assert.ok(stats.entropiaMin > 0);
   });
@@ -438,5 +506,34 @@ describe("computeAnilloEstado", () => {
       now,
     });
     assert.equal(st.mode, "conquista");
+  });
+});
+
+describe("calcularBalanceConquistaJornada", () => {
+  it("entrada tarde: entropía en cierre resta 2 min de gracia por hueco (≠ puntero en vivo)", () => {
+    const now = limaAt(2026, 4, 18, 10, 0);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00", nombre: "Mañana" }];
+    const balance = calcularBalanceConquistaJornada({ segmentos, vehiculos: [], now });
+    assert.ok(balance.entropiaMin >= 117 && balance.entropiaMin <= 119, "~118 min (120 − 2 de gracia)");
+    assert.equal(balance.conquistaMin, 0);
+    assert.equal(
+      Math.round((balance.conquistaMin + balance.entropiaMin + balance.vacioMin) * 10) / 10,
+      balance.jornadaMin,
+      "conquista + entropía + vacío = jornada planificada"
+    );
+    const st = computeAnilloEstado({ segmentos, vehiculos: [], now });
+    assert.equal(st.mode, "entropia", "puntero usa centinela retroactivo sellado");
+  });
+
+  it("listRetroactiveCentinelaGapsToPersist propone huecos post-gracia en segmentos", () => {
+    const now = limaAt(2026, 4, 18, 10, 0);
+    const gaps = listRetroactiveCentinelaGapsToPersist({
+      segmentos: [{ horaInicio: "08:00", horaFin: "12:00" }],
+      vehiculos: [],
+      now,
+    });
+    assert.equal(gaps.length, 1);
+    assert.equal(gaps[0].aperturaAt, limaAt(2026, 4, 18, 8, 2));
+    assert.equal(gaps[0].cierreAt, now);
   });
 });

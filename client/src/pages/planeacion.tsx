@@ -173,6 +173,14 @@ import {
   type DesglosadorTiempoCloseSummary,
 } from "@/lib/desglosadorTiempoCelebration";
 import { hasJournalSpExactSource, hasJournalSpSourcePrefix } from "@/lib/spLogHygiene";
+import {
+  maybeReleaseStaleSuppression,
+  releaseCentinela,
+  resetCentinelaLaunchGate,
+  resetCentinelaTimerState,
+  suppressCentinela,
+  isInvisibleCentinelaVehicle,
+} from "@/lib/centinelaEngine";
 import { clearStuckDesglosadorPause } from "@/lib/situacionSessionMerge";
 import {
   createRutaEnfoqueState,
@@ -344,6 +352,9 @@ import {
 } from "@/lib/decisionesLedger";
 import type { PlanillaDailySnapshot } from "@/lib/termodinamicaAtencional";
 import { formatCombustibleResumen, formatCombustibleDetalle, formatCombustibleCelebracionBloque } from "@/lib/combustibleConciencia";
+import { buildEscaleraConciencia, serializeEscaleraForCierreWithStats } from "@/lib/escaleraConcienciaEngine";
+import { EscaleraConcienciaCard } from "@/components/escalera-conciencia-card";
+import { EscaleraCierreResumen } from "@/components/escalera-cierre-resumen";
 import { repairStuckSituacionVehicles } from "@/lib/situacionRepair";
 import {
   getProyectoById,
@@ -1535,14 +1546,9 @@ export default function Planeacion() {
     const segs = planilla?.segmentos || [];
     const nowMs = Date.now();
     const vehiculosAnillo = filterVehiclesForAnilloCoverage(vehicles, nowMs);
-    const centinelas = vehicles.filter(v => v.autoVerdad);
-    const vehiculosTimeline = [
-      ...vehiculosAnillo,
-      ...centinelas.filter(c => !vehiculosAnillo.some(v => v.id === c.id)),
-    ];
     const timeline = buildConcienciaTimeline({
       segmentos: segs,
-      vehiculos: vehiculosTimeline,
+      vehiculos: vehiculosAnillo,
       now: nowMs,
     });
     const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
@@ -1579,6 +1585,17 @@ export default function Planeacion() {
     const unsub4 = subscribeToSituacionReserva(user.uid, setSituacionReserva, e => console.error(e));
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    resetCentinelaLaunchGate();
+    maybeReleaseStaleSuppression(15_000);
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    releaseCentinela();
+  }, [user, vehicles]);
 
   useEffect(() => {
     if (!user) return;
@@ -1676,13 +1693,11 @@ export default function Planeacion() {
   const todayTermoLive = useMemo(() => {
     const nowMs = Date.now();
     const dayStartMs = getJournalDayStartMs(nowMs);
-    const jornadaVehicles = filterVehiclesForAnilloCoverage(
-      vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs)),
-      nowMs
-    );
+    const jornadaVehicles = vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs));
+    const ledger = user ? getDecisionLedger(user.uid, dayStartMs) : [];
     const balance = calcularBalanceConquistaJornada({
       segmentos: planilla?.segmentos || [],
-      vehiculos: jornadaVehicles,
+      vehiculos: filterVehiclesForAnilloCoverage(jornadaVehicles, nowMs),
       now: nowMs,
       dayStartMs,
     });
@@ -1693,11 +1708,12 @@ export default function Planeacion() {
       dayStartMs,
       logs: [],
       events: focusEventsToday,
+      ledgerEntries: ledger,
       conquistaMin: balance.conquistaMin,
       entropiaMin: balance.entropiaMin,
       vacioMin: balance.vacioMin,
     });
-  }, [planilla, vehicles, focusEventsToday, anilloTick, segmentTick]);
+  }, [planilla, vehicles, focusEventsToday, anilloTick, segmentTick, user]);
 
   const termoCompare = useMemo(
     () => computeTermodinamicaCompareV2(yesterdayTermoSnapshot, todayTermoLive),
@@ -1759,6 +1775,31 @@ export default function Planeacion() {
       buildDisciplinaSerie(disciplinaSnapshots, disciplinaLive, getJournalDateString()),
     [disciplinaSnapshots, disciplinaLive]
   );
+
+  const escaleraConciencia = useMemo(() => {
+    const nowMs = Date.now();
+    const dayStartMs = getJournalDayStartMs(nowMs);
+    const ledger = user ? getDecisionLedger(user.uid, dayStartMs) : [];
+    return buildEscaleraConciencia({
+      dayStats: anilloModel.dayStats,
+      conquistaArcPct: anilloModel.metricas.conquistaArcPct,
+      disciplina: disciplinaLive,
+      combustible: combustibleLive,
+      ledger,
+      dayStartMs,
+      nowMs,
+      snapshots: disciplinaSnapshots,
+      todayFecha: getJournalDateString(),
+    });
+  }, [
+    anilloModel,
+    disciplinaLive,
+    combustibleLive,
+    disciplinaSnapshots,
+    user,
+    anilloTick,
+    segmentTick,
+  ]);
 
   useEffect(() => {
     if (!user) return;
@@ -2335,10 +2376,33 @@ export default function Planeacion() {
       return;
     }
     setSaving(true);
+    resetCentinelaLaunchGate();
     setCierreEnergiaPending(null);
     setCierreEnergiaSeleccion(null);
     console.log(`[handleFlotaSave] Iniciando creación: "${titulo}" tipo: ${tipoFlotaSeleccionado}`);
     try {
+      suppressCentinela();
+      resetCentinelaTimerState();
+
+      const autoVerdadVehicles = vehicles.filter(v => v.status === "activo" && v.autoVerdad);
+      if (autoVerdadVehicles.length > 0) {
+        const centinelaCierreAt = Date.now();
+        setVehicles(prev =>
+          prev.map(v =>
+            v.autoVerdad && v.status === "activo"
+              ? { ...v, status: "archivado" as VehicleStatus, cierreAt: centinelaCierreAt }
+              : v
+          )
+        );
+        const archivePromises = autoVerdadVehicles.map(av => {
+          const avDuracion = Math.round((centinelaCierreAt - (av.aperturaAt || centinelaCierreAt)) / 60000);
+          return updateVehicle(user.uid, av.id, { cierreAt: centinelaCierreAt, duracionFinal: avDuracion })
+            .then(() => updateVehicleStatus(user.uid, av.id, "archivado"))
+            .catch(e => console.error(`[handleFlotaSave] Error archivando centinela ${av.id}:`, e));
+        });
+        void Promise.all(archivePromises);
+      }
+
       const flotaConfig = FLOTA_CONFIG[tipoFlotaSeleccionado];
       let detalle = "";
       let criterio: CriterioFin = "circunstancia";
@@ -2590,6 +2654,7 @@ export default function Planeacion() {
         duration: 5000,
       });
     } finally {
+      releaseCentinela();
       setSaving(false);
     }
   };
@@ -5968,8 +6033,14 @@ export default function Planeacion() {
     } catch (e) { console.error("[handleEntregarDetalle]", e); }
   };
 
-  const activeVehicles = vehicles.filter(v => v.status === "activo");
-  const completedVehicles = vehicles.filter(v => v.status === "cumplido" || v.status === "archivado");
+  const activeVehicles = vehicles.filter(
+    v => v.status === "activo" && !isInvisibleCentinelaVehicle(v)
+  );
+  const completedVehicles = vehicles.filter(
+    v =>
+      (v.status === "cumplido" || v.status === "archivado") &&
+      !isInvisibleCentinelaVehicle(v)
+  );
   const expressVehiclesActivos = activeVehicles.filter(v => v.tipoTerminoRapido);
   const panoramicaActivos = expressVehiclesActivos.filter(v => v.tipoTerminoRapido === "omitido");
   const operativaActivos = expressVehiclesActivos.filter(v => v.tipoTerminoRapido !== "omitido");
@@ -6381,6 +6452,16 @@ export default function Planeacion() {
         </motion.div>
         )}
 
+        {/* Escalera de Conciencia — presencia · entrada · producción */}
+        {(planLayout === "full" || planTab === "metricas") && (
+          <EscaleraConcienciaCard
+            model={escaleraConciencia}
+            disciplinaSerie={disciplinaSerie}
+            compact={compactLayout}
+            detalleOpen={metricasDetalleOpen}
+          />
+        )}
+
         {/* Termodinámica — frente a ayer (tu referencia) */}
         {(planLayout === "full" || planTab === "metricas") && (
         <motion.div
@@ -6638,7 +6719,7 @@ export default function Planeacion() {
                   Disciplina
                 </p>
                 <p className="text-[7px] text-slate-500 mt-0.5">
-                  Entrada al trabajo con vehículos conscientes (independiente de la puerta)
+                  Capa 2 · detalle por segmento · entrada al trabajo con vehículos conscientes
                 </p>
               </div>
               <div
@@ -9374,6 +9455,7 @@ export default function Planeacion() {
               const fresh = getDailyPointsLocalSync(user.uid);
               const events = await safeWithFallback(getFocusBandEventsRecent(user.uid, 1), [], 3000);
               const todayEvents = events.filter(e => e.fecha === fecha);
+              const decisionLedger = getDecisionLedger(user.uid, journalStartMs);
 
               const snapshot = buildDailySnapshot({
                 fecha,
@@ -9382,6 +9464,7 @@ export default function Planeacion() {
                 dayStartMs,
                 logs: fresh.logs,
                 events: todayEvents,
+                ledgerEntries: decisionLedger,
                 conquistaMin: balance.conquistaMin,
                 entropiaMin: balance.entropiaMin,
                 vacioMin: balance.vacioMin,
@@ -9416,7 +9499,7 @@ export default function Planeacion() {
               setShowCierreJornada(false);
 
               toast.success("Jornada Sellada", {
-                description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${snapshot.decisionesDelDia ?? snapshot.subsDesglosadorCumplidos ?? 0} decisiones · ${snapshot.bloquesCompletados} bloque${snapshot.bloquesCompletados !== 1 ? "s" : ""} · ${sealed.totalPS} PS refuerzo${!snapshotSaved || !cierreSaved ? " · guardado parcial en dispositivo" : ""}`,
+                description: `${(sealed as any).porcentajeDiaIdeal || sealed.porcentajeSoberania}% Día Ideal · ${cierre.escaleraConciencia?.decisionesHoy ?? snapshot.decisionesDelDia ?? 0} decisiones · Presencia ${cierre.escaleraConciencia?.presenciaNivel ?? "—"} · Producción ${cierre.escaleraConciencia?.produccionNivel ?? "—"} · ${sealed.totalPS} PS refuerzo${!snapshotSaved || !cierreSaved ? " · guardado parcial en dispositivo" : ""}`,
                 style: { backgroundColor: PIZARRA, border: `2px solid ${GOLD}`, color: GOLD },
               });
 
@@ -13021,6 +13104,34 @@ function CierreJornadaModal({
     [segmentos, vehicles, segmentDayStartMs]
   );
 
+  const escaleraCierre = useMemo(() => {
+    const nowMs = Date.now();
+    const vehiculosAnillo = filterVehiclesForAnilloCoverage(vehicles, nowMs);
+    const timeline = buildConcienciaTimeline({
+      segmentos,
+      vehiculos: vehiculosAnillo,
+      now: nowMs,
+    });
+    const jornadaVehiclesTermo = vehicles.filter(v => vehicleEnTermoJornada(v, journalStartMs));
+    const ledger = getDecisionLedger(userId, journalStartMs);
+    const combustible = computeCombustibleDia(jornadaVehiclesTermo, journalStartMs, ledger);
+    const disciplina = computeDisciplinaDia({
+      segmentos,
+      vehicles: jornadaVehicles,
+      dayStartMs: segmentDayStartMs,
+      nowMs,
+    });
+    return buildEscaleraConciencia({
+      dayStats: timeline.dayStats,
+      conquistaArcPct: timeline.metricas.conquistaArcPct,
+      disciplina,
+      combustible,
+      ledger,
+      dayStartMs: journalStartMs,
+      nowMs,
+    });
+  }, [segmentos, vehicles, jornadaVehicles, journalStartMs, segmentDayStartMs, userId]);
+
   const cumplidos = jornadaVehicles.filter(v => v.status === "cumplido").length;
   const archivados = jornadaVehicles.filter(v => v.status === "archivado").length;
   const activos = jornadaVehicles.filter(v => v.status === "activo").length;
@@ -13074,6 +13185,10 @@ function CierreJornadaModal({
       (cierre as any).entropiaMin = balance.entropiaMin;
       (cierre as any).vacioMin = balance.vacioMin;
       (cierre as any).jornadaPlanMin = balance.jornadaMin;
+      cierre.escaleraConciencia = serializeEscaleraForCierreWithStats(
+        escaleraCierre,
+        balance.entropiaMin
+      );
       await Promise.resolve(onSeal(cierre));
     } finally {
       setIsSealing(false);
@@ -13094,6 +13209,11 @@ function CierreJornadaModal({
         </div>
 
         <BalanceConquistaPanel balance={balance} />
+
+        <EscaleraCierreResumen
+          model={existingCierre?.escaleraConciencia ? undefined : escaleraCierre}
+          snapshot={existingCierre?.escaleraConciencia}
+        />
 
         <div className="p-3 rounded-xl border space-y-2" style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }}>
           <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Resumen del día (números)</p>

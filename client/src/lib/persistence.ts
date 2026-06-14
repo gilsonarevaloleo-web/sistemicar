@@ -582,6 +582,8 @@ export interface CierreJornadaLog {
   profundidadMaxima?: "fluido" | "concentrado" | "limite";
   bloquesCompletados?: number;
   descansosCuerpo?: number;
+  /** Escalera de Conciencia al sellar (presencia · entrada · producción). */
+  escaleraConciencia?: import("./escaleraConcienciaEngine").EscaleraCierreSnapshot;
 }
 
 export interface Vehicle {

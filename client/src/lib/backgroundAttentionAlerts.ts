@@ -8,6 +8,7 @@ import { readNotificationState } from "./notificationState";
 import { getCrossingVehiclesState } from "./segmentCrossEntropyEngine";
 import { getLimaDayStartMs } from "./segmentTime";
 import { speakUbicacionSingle, type UbicacionVoiceSource } from "./speechQueue";
+import { speakUbicacionVoiceReliable } from "./ubicacionVoiceReliable";
 import { isPuertaVozEnabled } from "./tikSound";
 
 function postAttentionNotification(opts: {
@@ -197,7 +198,12 @@ export function deliverPuertaVoice(
     return;
   }
 
-  speakUbicacionSingle(phrase, source);
+  speakUbicacionVoiceReliable(
+    opts?.notifyTag ?? `puerta-live-${Date.now()}`,
+    [phrase],
+    false,
+    source
+  );
 }
 
 export function deliverSegmentEntropiaAlert(params: {

@@ -245,6 +245,14 @@ function finalizeSessionMerge(base: Vehicle, firebaseV: Vehicle, localV: Vehicle
     localV
   );
 
+  const termoDecisionSnapshot = mergeTermoDecisionSnapshots(
+    firebaseV.termoDecisionSnapshot,
+    localV.termoDecisionSnapshot
+  );
+  if (termoDecisionSnapshot) {
+    merged = { ...merged, termoDecisionSnapshot };
+  }
+
   if (firebaseV.tipoFlota === "situacion" && localV.tipoFlota === "situacion") {
     return applySituacionDesgloseMerge(merged, firebaseV, localV);
   }
@@ -267,6 +275,25 @@ function finalizeSessionMerge(base: Vehicle, firebaseV: Vehicle, localV: Vehicle
   return merged;
 }
 
+function mergeTermoDecisionSnapshots(
+  a: Vehicle["termoDecisionSnapshot"],
+  b: Vehicle["termoDecisionSnapshot"]
+): Vehicle["termoDecisionSnapshot"] | undefined {
+  if (!a && !b) return undefined;
+  if (!a) return b;
+  if (!b) return a;
+  if (a.journalDayStartMs !== b.journalDayStartMs) {
+    return a.recordedAt >= b.recordedAt ? a : b;
+  }
+  return {
+    journalDayStartMs: a.journalDayStartMs,
+    subsDesglosadorCumplidos: Math.max(a.subsDesglosadorCumplidos, b.subsDesglosadorCumplidos),
+    subsSituacionCumplidos: Math.max(a.subsSituacionCumplidos, b.subsSituacionCumplidos),
+    misionesDirectas: Math.max(a.misionesDirectas, b.misionesDirectas),
+    recordedAt: Math.max(a.recordedAt, b.recordedAt),
+  };
+}
+
 export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehicle | undefined): Vehicle {
   if (!localV) return firebaseV;
 
@@ -282,6 +309,9 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
         ...(localV.intensidadEnergeticaFin ? { intensidadEnergeticaFin: localV.intensidadEnergeticaFin } : {}),
         ...(localV.etiquetaSalida ? { etiquetaSalida: localV.etiquetaSalida } : {}),
         ...(localV.notaSalida != null ? { notaSalida: localV.notaSalida } : {}),
+        ...(localV.termoDecisionSnapshot
+          ? { termoDecisionSnapshot: localV.termoDecisionSnapshot }
+          : {}),
         situacionCronometro: localV.situacionCronometro ?? null,
         situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
       },

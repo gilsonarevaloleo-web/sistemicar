@@ -1,5 +1,6 @@
 /** Cola secuencial para speechSynthesis — evita que utterances se cancelen entre sí. */
 
+import { applyCalmSpanishUtterance, primeSpanishVoices } from "./spanishTtsVoice";
 import {
   isDesglosadorVoiceEnabled,
   isPuertaVozEnabled,
@@ -48,11 +49,9 @@ function getSynth(): SpeechSynthesis | null {
 }
 
 function primeVoicesOnce(): void {
-  const synth = getSynth();
-  if (!synth || voicesPrimed) return;
+  if (voicesPrimed) return;
   voicesPrimed = true;
-  synth.getVoices();
-  synth.addEventListener("voiceschanged", () => synth.getVoices(), { once: true });
+  primeSpanishVoices();
 }
 
 function resumeSynthIfPaused(): void {
@@ -150,7 +149,7 @@ function processQueue(): void {
   const speakPhrase = () => {
     try {
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = "es-ES";
+      applyCalmSpanishUtterance(u);
       u.onstart = () => {
         if (pendingOnPhraseStarted) {
           const cb = pendingOnPhraseStarted;
@@ -236,7 +235,7 @@ export function speakUbicacionQueue(
     return;
   }
 
-  warmupSpeechSynthesis(source === "desglosador" || source === "situacion");
+  warmupSpeechSynthesis(true);
 
   if (cancelPrevious) {
     try {

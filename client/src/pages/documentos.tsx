@@ -11,11 +11,11 @@ const DOCUMENTOS = [
   {
     id: "vendedores",
     titulo: "KIT VENDEDORES — PLANIFICACIÓN",
-    descripcion: "Playbook embudo peldaños, stacks Conquista/Orden/Sistema completo, comisión 30% y guion de venta.",
+    descripcion: "Playbook embudo peldaños, Escalera de Conciencia, stacks, comisión 30% y guion de venta.",
     archivo: "/vendedores-planificacion",
     icon: Users,
     color: EMERALD,
-    version: "v1.3",
+    version: "v1.5",
     isRoute: true
   },
   {

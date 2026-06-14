@@ -1,6 +1,6 @@
 # Kit vendedores — Planificación SISTEMICAR
 
-**Versión:** 1.4 · **Actualizado:** junio 2026  
+**Versión:** 1.5 · **Actualizado:** junio 2026  
 **Audiencia:** vendedores afiliados, closers, partners de distribución  
 **Contacto operativo:** Gilson · WhatsApp +51 918 260 514  
 **Documento maestro embudo:** `EMBUDO_PLANIFICACION.md`
@@ -11,7 +11,7 @@
 
 SISTEMICAR **Planificación** no es un calendario ni una lista de tareas. Es un **motor de cierre del día** con embudo de maduración:
 
-1. **Base** — estructura, anillo, segmentos, PS  
+1. **Base** — estructura, anillo, **Escalera de Conciencia**, segmentos, PS  
 2. **Operativo** — conquista medible (unidades, ritmo, récord) — **primer upsell**  
 3. **Soberanía** — orden mental avanzado (Imán, situación, proyectos)
 
@@ -95,6 +95,10 @@ Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**)
 **Incluye:**
 
 - **Anillo de conciencia** — reloj del día (conquista vs entropía)
+- **Escalera de Conciencia** (Métricas) — tres capas de desarrollo:
+  - **Capa 1 · Presencia** — ¿en qué se me va el tiempo? (anillo)
+  - **Capa 2 · Entrada** — ¿aparezco al trabajo consciente? (disciplina)
+  - **Capa 3 · Producción** — ¿convierto el tiempo en decisiones? (combustible + pulso)
 - Segmentos del día y monitor de omisión/entropía
 - **La Flota** + motor de **4 ejes**
 - **Puntos de Soberanía (PS)** + economía de cierre
@@ -108,6 +112,36 @@ Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**)
 **No incluye (sin add-on):** desglosador conquista premium, desglosador enfoque premium, hub proyectos, Imán completo.
 
 **Frase de venta:** *"Organiza el día y cierra segmentos con datos, no con culpa."*
+
+---
+
+### 4.1.1 Escalera de Conciencia (dentro de Base · Métricas)
+
+**Para quién:** cualquier usuario Base — enseña la profundidad del método sin vender culpa.
+
+**Qué es:** Tres **capas de desarrollo consciente** (como una cebolla), no tres productos. Ninguna capa es "mejor" que otra: cada una prepara la siguiente.
+
+| Capa | Pregunta | Métrica en app |
+|------|----------|----------------|
+| 1 · Presencia | ¿En qué se me va el tiempo? | Anillo (conquista / entropía / vacío) |
+| 2 · Entrada | ¿Aparezco al trabajo consciente? | Disciplina (? primer vehículo por segmento) |
+| 3 · Producción | ¿Convierto el tiempo en decisiones? | Combustible + pulso de decisiones |
+
+**Insight de venta clave:** El anillo puede estar verde y el tanque de combustible vacío. Eso no es fallo del anillo — es señal de **parálisis con tiempo cubierto**. Badge **Puente** en Métricas = momento ideal para hablar de Operativo (decisiones medibles a escala).
+
+**Demo 3 min (Métricas):**
+
+1. Capa 1 — conquista vs entropía en vivo  
+2. Capa 2 — índice disciplina + serie  
+3. Capa 3 — pulso intradía + decisiones acumuladas  
+
+**Frases listas:**
+
+- *"Primero ves el tiempo; después entras al trabajo; al final cierras decisiones — antientropía por capas."*
+- *"Conquista sin combustible es ilusión de progreso — la capa 3 enseña el motor real del cambio."*
+- *"No es castigo: es desarrollo. Semilla ? Tallo ? Hoja ? Flor en cada capa."*
+
+**Qué NO decir:** que el anillo "alcanza" sin decisiones, o que PS sustituyen producción.
 
 ---
 
@@ -212,8 +246,8 @@ Usa **dolor ? resultado ? prueba en la app**, no lista de funciones técnicas.
 
 | Persona | Dolor | Peldaño | Demo |
 |---------|-------|---------|------|
-| Día sin estructura | "Se me va el día" | 1 Base | Segmento ? flota ? cierre |
-| Producción / unidades | Autoengaño al cerrar | 2 Operativo | Desglosador conquista ? termo |
+| Día sin estructura | "Se me va el día" | 1 Base | Segmento ? flota ? Escalera capa 1 |
+| Producción / unidades | Autoengaño al cerrar | 2 Operativo | Desglosador conquista ? Escalera capa 3 |
 | Mente acelerada | Ideas que se pierden | 3 Soberanía | Imán ? nido ? cronómetro |
 | Proyectos largos | Poco avance visible | 3 Soberanía | Hub ? paso #N al cumplir |
 
@@ -292,9 +326,10 @@ El cliente pierde acceso; tú dejas de ganar comisión ese mes.
 | Área | Estado | Comentario vendedor |
 |------|--------|---------------------|
 | Segmentos + Flota + 4 ejes | Producción | Core estable — peldaño 1 |
+| Escalera de Conciencia (Métricas) | Producción | Capas presencia / entrada / producción |
 | Desglosador conquista + récord | Producción | Peldaño 2 — vender primero |
 | Desglosador enfoque + Imán + proyectos | Producción | Peldaño 3 — avanzado |
-| Termodinámica v2 | Producción | Mejor tras sync de subs |
+| Termodinámica v2 + combustible | Producción | Ledger decisiones + pulso intradía |
 | Claridad mental / oleada en proyectos | En despliegue | Solo si el cliente ya lo ve |
 | Pagos recurrentes MP + ref vendedor | Producción | Verificar dominio de producción |
 
@@ -302,7 +337,7 @@ El cliente pierde acceso; tú dejas de ganar comisión ese mes.
 
 ## 12. Elevator pitch (copiar/pegar)
 
-> **Planificación SISTEMICAR** cierra tu día en tres peldaños: Base (anillo, segmentos, PS), Operativo (unidades y récord — primer upsell), Soberanía (Imán, imprevistos y pasos en proyectos). No es una lista — es maduración medida. ¿Tu día cierra, mides unidades, o ordenas ideas sueltas? Te digo el peldaño en un minuto.
+> **Planificación SISTEMICAR** cierra tu día en tres peldaños comerciales: Base (anillo, segmentos, PS y Escalera de Conciencia), Operativo (unidades y récord — primer upsell), Soberanía (Imán, imprevistos y pasos en proyectos). No es una lista — es maduración medida. ¿Tu día cierra, mides unidades, o ordenas ideas sueltas? Te digo el peldaño en un minuto.
 
 ---
 

@@ -397,4 +397,49 @@ describe("termodinamicaAtencional", () => {
     const frRow = cmp.rows.find(r => r.key === "friccion");
     assert.equal(frRow?.betterWhenHigher, true);
   });
+
+  it("buildDailySnapshot fusiona ledger cuando el conteo en vivo queda corto", () => {
+    const dayStart = Date.now() - 3600_000;
+    const snap = buildDailySnapshot({
+      fecha: "2026-06-14",
+      segmentos: [],
+      vehicles: [],
+      dayStartMs: dayStart,
+      logs: [],
+      ledgerEntries: [
+        { key: "k1", kind: "sub_desglosador", vehicleId: "v1", ts: dayStart + 1000 },
+        { key: "k2", kind: "sub_desglosador", vehicleId: "v1", ts: dayStart + 2000 },
+        { key: "k3", kind: "sub_situacion", vehicleId: "v2", ts: dayStart + 3000 },
+      ],
+    });
+    assert.equal(snap.decisionesDelDia, 3);
+    assert.equal(snap.subsDesglosadorCumplidos, 2);
+    assert.equal(snap.decisionesSubsSituacion, 1);
+  });
+
+  it("countSubsDesglosadorCumplidosHoy incluye subs de desglosador activo abierto antes de la jornada", () => {
+    const dayStart = Date.now() - 3600_000;
+    const yesterday = dayStart - 86400000;
+    const vehicle: Vehicle = {
+      id: "d-overnight",
+      titulo: "Overnight",
+      criterioFin: "tiempo",
+      criterioDetalle: "x",
+      userId: "u1",
+      status: "activo",
+      tipoReloj: "desglosador",
+      aperturaAt: yesterday,
+      createdAt: new Date(yesterday),
+      tiempoInicio: new Date(yesterday),
+      subVehiculos: [
+        {
+          id: "s1",
+          titulo: "Sub hoy",
+          status: "cumplido",
+          cierreAt: dayStart + 5000,
+        },
+      ],
+    } as Vehicle;
+    assert.equal(countSubsDesglosadorCumplidosHoy([vehicle], dayStart), 1);
+  });
 });
