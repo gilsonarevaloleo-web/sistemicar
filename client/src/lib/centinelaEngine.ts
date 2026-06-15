@@ -1,5 +1,4 @@
 ﻿import type { Planilla, SegmentoV5, Vehicle } from "./persistence";
-import { hasRealActiveConsciousVehicle } from "./ghostVehicleEngine";
 import { listRetroactiveCentinelaGapsToPersist } from "@/engines/ConcienciaEngine";
 import {
   getJournalDayStartMs,
@@ -155,17 +154,36 @@ export function getCentinelaSegmentGate(
   return { allowed: true, segContext: first };
 }
 
-export function isCentinelaBlockedByVehicles(vehicles: Vehicle[], nowMs = Date.now()): boolean {
-  return hasRealActiveConsciousVehicle(vehicles, nowMs);
+/** Centinelas activos en la flota (Modo Centinela / autoVerdad). */
+export function listActiveCentinelas(vehicles: Vehicle[]): Vehicle[] {
+  return vehicles.filter(v => v.autoVerdad && v.status === "activo");
 }
 
-/** Cierra centinelas activos cuando hay trabajo consciente (evita entrop├¡a fantasma en el anillo). */
-export async function archiveActiveCentinelasWhenBlocked(
+/**
+ * Exclusión mutua centinela ↔ consciente.
+ * Cualquier `activo` no-autoVerdad (sin filtro fantasma): si la UI lo muestra, el centinela cede.
+ */
+export function isCentinelaBlockedByVehicles(vehicles: Vehicle[], _nowMs = Date.now()): boolean {
+  return vehicles.some(v => v.status === "activo" && !v.autoVerdad);
+}
+
+export function buildCentinelaArchiveFields(
+  v: Vehicle,
+  cierreAt: number
+): { status: "archivado"; cierreAt: number; duracionFinal: number } {
+  return {
+    status: "archivado",
+    cierreAt,
+    duracionFinal: Math.max(0, Math.round((cierreAt - (v.aperturaAt || cierreAt)) / 60000)),
+  };
+}
+
+/** Cierra todos los centinelas activos (Firebase + local vía persistence). */
+export async function archiveActiveCentinelas(
   userId: string,
   vehicles: Vehicle[]
 ): Promise<string[]> {
-  if (!isCentinelaBlockedByVehicles(vehicles)) return [];
-  const active = vehicles.filter(v => v.autoVerdad && v.status === "activo");
+  const active = listActiveCentinelas(vehicles);
   if (active.length === 0) return [];
 
   const { updateVehicle, updateVehicleStatus } = await import("./persistence");
@@ -173,17 +191,41 @@ export async function archiveActiveCentinelasWhenBlocked(
   const closedIds: string[] = [];
 
   for (const av of active) {
-    const dur = Math.max(0, Math.round((now - (av.aperturaAt || now)) / 60000));
+    const fields = buildCentinelaArchiveFields(av, now);
     try {
-      await updateVehicle(userId, av.id, { cierreAt: now, duracionFinal: dur });
+      await updateVehicle(userId, av.id, {
+        cierreAt: fields.cierreAt,
+        duracionFinal: fields.duracionFinal,
+      });
       await updateVehicleStatus(userId, av.id, "archivado");
       closedIds.push(av.id);
-      console.log(`[Centinela] Cerrado por veh├¡culo consciente activo: ${av.id} (${dur} min)`);
+      console.log(
+        `[Centinela] Cerrado por vehículo consciente activo: ${av.id} (${fields.duracionFinal} min)`
+      );
     } catch (e) {
-      console.warn("[Centinela] archiveActiveCentinelasWhenBlocked:", av.id, e);
+      console.warn("[Centinela] archiveActiveCentinelas:", av.id, e);
     }
   }
   return closedIds;
+}
+
+/** Cierra centinelas activos cuando hay trabajo consciente (evita entropía fantasma en el anillo). */
+export async function archiveActiveCentinelasWhenBlocked(
+  userId: string,
+  vehicles: Vehicle[]
+): Promise<string[]> {
+  if (!isCentinelaBlockedByVehicles(vehicles)) return [];
+  return archiveActiveCentinelas(userId, vehicles);
+}
+
+/** Antes de lanzar un vehículo consciente: suprimir timer y archivar centinelas activos. */
+export async function closeCentinelasBeforeConsciousLaunch(
+  userId: string,
+  vehicles: Vehicle[]
+): Promise<string[]> {
+  suppressCentinela();
+  resetCentinelaTimerState();
+  return archiveActiveCentinelas(userId, vehicles);
 }
 
 export function resetCentinelaTimerState(): void {

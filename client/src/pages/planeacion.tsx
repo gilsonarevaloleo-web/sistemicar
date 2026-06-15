@@ -174,11 +174,14 @@ import {
 } from "@/lib/desglosadorTiempoCelebration";
 import { hasJournalSpExactSource, hasJournalSpSourcePrefix } from "@/lib/spLogHygiene";
 import {
+  archiveActiveCentinelas,
+  buildCentinelaArchiveFields,
+  closeCentinelasBeforeConsciousLaunch,
+  isCentinelaBlockedByVehicles,
+  listActiveCentinelas,
   maybeReleaseStaleSuppression,
   releaseCentinela,
   resetCentinelaLaunchGate,
-  resetCentinelaTimerState,
-  suppressCentinela,
   isInvisibleCentinelaVehicle,
 } from "@/lib/centinelaEngine";
 import { clearStuckDesglosadorPause } from "@/lib/situacionSessionMerge";
@@ -1982,8 +1985,38 @@ export default function Planeacion() {
     closingInProgressRef.current.delete(vehicleId);
   };
   const pausaInterrupcionLockRef = useRef<string | null>(null);
+  const centinelaArchiveInFlightRef = useRef(false);
   const checkPuertaAtencionRef = useRef<(() => void) | null>(null);
   vehiclesRef.current = vehicles;
+
+  const applyCentinelaArchiveLocally = useCallback((cierreAt: number) => {
+    if (listActiveCentinelas(vehiclesRef.current).length === 0) return;
+    const patch = (list: Vehicle[]) =>
+      list.map(v =>
+        v.autoVerdad && v.status === "activo"
+          ? { ...v, ...buildCentinelaArchiveFields(v, cierreAt) }
+          : v
+      );
+    const next = patch(vehiclesRef.current);
+    vehiclesRef.current = next;
+    setVehicles(patch);
+    saveLocalVehicles(next);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const list = vehiclesRef.current;
+    if (!isCentinelaBlockedByVehicles(list)) return;
+    if (listActiveCentinelas(list).length === 0) return;
+    if (centinelaArchiveInFlightRef.current) return;
+
+    centinelaArchiveInFlightRef.current = true;
+    const cierreAt = Date.now();
+    applyCentinelaArchiveLocally(cierreAt);
+    void archiveActiveCentinelas(user.uid, list).finally(() => {
+      centinelaArchiveInFlightRef.current = false;
+    });
+  }, [user, vehicles, applyCentinelaArchiveLocally]);
 
   useEffect(() => {
     if (!user) return;
@@ -2381,27 +2414,9 @@ export default function Planeacion() {
     setCierreEnergiaSeleccion(null);
     console.log(`[handleFlotaSave] Iniciando creación: "${titulo}" tipo: ${tipoFlotaSeleccionado}`);
     try {
-      suppressCentinela();
-      resetCentinelaTimerState();
-
-      const autoVerdadVehicles = vehicles.filter(v => v.status === "activo" && v.autoVerdad);
-      if (autoVerdadVehicles.length > 0) {
-        const centinelaCierreAt = Date.now();
-        setVehicles(prev =>
-          prev.map(v =>
-            v.autoVerdad && v.status === "activo"
-              ? { ...v, status: "archivado" as VehicleStatus, cierreAt: centinelaCierreAt }
-              : v
-          )
-        );
-        const archivePromises = autoVerdadVehicles.map(av => {
-          const avDuracion = Math.round((centinelaCierreAt - (av.aperturaAt || centinelaCierreAt)) / 60000);
-          return updateVehicle(user.uid, av.id, { cierreAt: centinelaCierreAt, duracionFinal: avDuracion })
-            .then(() => updateVehicleStatus(user.uid, av.id, "archivado"))
-            .catch(e => console.error(`[handleFlotaSave] Error archivando centinela ${av.id}:`, e));
-        });
-        void Promise.all(archivePromises);
-      }
+      const cierreAt = Date.now();
+      applyCentinelaArchiveLocally(cierreAt);
+      await closeCentinelasBeforeConsciousLaunch(user.uid, vehiclesRef.current);
 
       const flotaConfig = FLOTA_CONFIG[tipoFlotaSeleccionado];
       let detalle = "";
@@ -3092,12 +3107,16 @@ export default function Planeacion() {
       return;
     }
     setSaving(true);
+    resetCentinelaLaunchGate();
     setCierreEnergiaPending(null);
     setCierreEnergiaSeleccion(null);
     const terminoInfo = TERMINO_OPTIONS.find(t => t.id === tipoTermino);
     const detalleNorm = detalle?.trim() || (tipoTermino === "situacion" ? "Al cerrar este bloque" : "");
     let newVehicleId: string;
     try {
+      const cierreAt = Date.now();
+      applyCentinelaArchiveLocally(cierreAt);
+      await closeCentinelasBeforeConsciousLaunch(user.uid, vehiclesRef.current);
       newVehicleId = await addVehicle(user.uid, {
         titulo: titulo.trim(),
         criterioFin: tipoTermino === "hora" ? "tiempo" : "circunstancia",
@@ -3115,6 +3134,7 @@ export default function Planeacion() {
         style: { backgroundColor: PIZARRA, border: `1px solid ${BLOOD}`, color: BLOOD },
       });
       setSaving(false);
+      releaseCentinela();
       return;
     }
     try {
@@ -3155,6 +3175,8 @@ export default function Planeacion() {
         description: "La lista se actualizará en un momento.",
         style: { backgroundColor: PIZARRA, border: `1px solid ${EMERALD}`, color: EMERALD },
       });
+    } finally {
+      releaseCentinela();
     }
     setSaving(false);
   };
@@ -3946,6 +3968,10 @@ export default function Planeacion() {
     }
 
     pausaInterrupcionLockRef.current = vehicleId;
+
+    const cierreAt = Date.now();
+    applyCentinelaArchiveLocally(cierreAt);
+    void closeCentinelasBeforeConsciousLaunch(user.uid, vehiclesRef.current);
 
     const elapsedSec = Math.floor((Date.now() - activeSub.aperturaAt) / 1000);
     let restanteUnidades: number | undefined;

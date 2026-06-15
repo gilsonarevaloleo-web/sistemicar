@@ -242,6 +242,17 @@ export function CentinelaEngine() {
       void checkActivate();
     }, 5000);
 
+    const onVehiclesLocalSync = () => {
+      const local = getLocalVehicles();
+      if (local.length > 0) {
+        vehiclesRef.current = local;
+      }
+      lastCheck.current = 0;
+      void tickUi();
+    };
+    window.addEventListener("vehicles-updated", onVehiclesLocalSync);
+    window.addEventListener("vehicles-status-changed", onVehiclesLocalSync);
+
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       console.log("[Centinela] App visible — reevaluando");
@@ -257,6 +268,8 @@ export function CentinelaEngine() {
       unsubVehicles();
       clearInterval(uiInterval);
       clearInterval(activateInterval);
+      window.removeEventListener("vehicles-updated", onVehiclesLocalSync);
+      window.removeEventListener("vehicles-status-changed", onVehiclesLocalSync);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [user, planillaFecha]);
