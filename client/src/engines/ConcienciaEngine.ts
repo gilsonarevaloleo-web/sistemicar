@@ -110,6 +110,49 @@ export interface TimelineClockArc {
   lap?: 0 | 1;
 }
 
+/** Arco de segmento planificado — misma geometría 12h + lap que timeline y puntero. */
+export interface SegmentClockArc {
+  startDeg: number;
+  endDeg: number;
+  lap: 0 | 1;
+  ordinal: number;
+  estado: string;
+  nombre?: string;
+  horaInicio: string;
+  horaFin: string;
+  isActive?: boolean;
+  isNowInside?: boolean;
+}
+
+/** Conquista / entropía recortada dentro del arco de un segmento planificado. */
+export type SegmentBattleKind = "conquista" | "entropia";
+
+export interface SegmentBattleArc {
+  startDeg: number;
+  endDeg: number;
+  lap: 0 | 1;
+  ordinal: number;
+  kind: SegmentBattleKind;
+}
+
+export interface SegmentBattleInterval {
+  ordinal: number;
+  kind: SegmentBattleKind;
+  startMs: number;
+  endMs: number;
+}
+
+/** Stats por segmento para tooltip / long-press. */
+export interface SegmentArcStats {
+  ordinal: number;
+  nombre?: string;
+  horaInicio: string;
+  horaFin: string;
+  estado: string;
+  conquistaMin: number;
+  entropiaMin: number;
+}
+
 export interface TimelineDayStats {
   conquistaMin: number;
   entropiaMin: number;
@@ -841,6 +884,196 @@ function intervalToClockArcs(interval: MsInterval, dayStartMs: number, kind: Tim
     out.push({ startDeg, endDeg, kind, lap: p.lap });
   }
   return out;
+}
+
+/** Segmentos en reloj 12h × 2 vueltas (AM exterior / PM interior), anclados a medianoche Lima. */
+export function computeSegmentClockArcs(
+  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>,
+  nowMs: number = Date.now()
+): SegmentClockArc[] {
+  const dayStartMs = getLimaDayStartMs(nowMs);
+  const out: SegmentClockArc[] = [];
+  segmentos.forEach((seg, idx) => {
+    if (!seg.horaInicio || !seg.horaFin) return;
+    const { start, end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);
+    const isActive = seg.estado === "activo";
+    const isNowInside = nowMs >= start && nowMs <= end;
+    for (const p of splitByHalfDayLap({ start, end }, dayStartMs)) {
+      let startDeg = msToClockDeg(p.interval.start, dayStartMs);
+      let endDeg = msToClockDeg(p.interval.end, dayStartMs);
+      if (endDeg <= startDeg) endDeg += 360;
+      out.push({
+        startDeg,
+        endDeg,
+        lap: p.lap,
+        ordinal: idx + 1,
+        estado: seg.estado ?? "pendiente",
+        nombre: seg.nombre,
+        horaInicio: seg.horaInicio,
+        horaFin: seg.horaFin,
+        isActive,
+        isNowInside: isNowInside && nowMs >= p.interval.start && nowMs <= p.interval.end,
+      });
+    }
+  });
+  return out;
+}
+
+function intervalsInSegmentWindow(
+  intervals: MsInterval[],
+  segStart: number,
+  segEnd: number,
+  livedStartMs: number,
+  nowMs: number
+): MsInterval[] {
+  const livedStart = Math.max(segStart, livedStartMs);
+  const livedEnd = Math.min(segEnd, nowMs);
+  if (livedEnd <= livedStart) return [];
+  return intersectIntervalsWithWindows(intervals, [{ start: livedStart, end: livedEnd }]);
+}
+
+function buildSegmentBattleIntervals(params: {
+  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): SegmentBattleInterval[] {
+  const now = params.now ?? Date.now();
+  const core = buildTimelineCore({
+    vehiculos: params.vehiculos,
+    segmentos: params.segmentos,
+    now,
+  });
+  if (!core?.hasSegments) return [];
+
+  const dayStartMs = core.limaDayStartMs;
+  const out: SegmentBattleInterval[] = [];
+
+  params.segmentos.forEach((seg, idx) => {
+    if (!seg.horaInicio || !seg.horaFin) return;
+    const { start, end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);
+    const ordinal = idx + 1;
+
+    for (const interval of intervalsInSegmentWindow(
+      core.coverMerged,
+      start,
+      end,
+      core.livedStartMs,
+      core.nowMs
+    )) {
+      out.push({ ordinal, kind: "conquista", startMs: interval.start, endMs: interval.end });
+    }
+    for (const interval of intervalsInSegmentWindow(
+      core.entropiaIntervals,
+      start,
+      end,
+      core.livedStartMs,
+      core.nowMs
+    )) {
+      out.push({ ordinal, kind: "entropia", startMs: interval.start, endMs: interval.end });
+    }
+  });
+
+  return out;
+}
+
+/** Intervalos ms de batalla por segmento — usado por modo Horizonte. */
+export function buildSegmentBattleIntervalsForHorizon(params: {
+  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): SegmentBattleInterval[] {
+  return buildSegmentBattleIntervals(params);
+}
+
+/** Overlays morado/rojo dentro de cada ventana de segmento (batalla en territorio). */
+export function computeSegmentBattleArcs(params: {
+  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): SegmentBattleArc[] {
+  const now = params.now ?? Date.now();
+  const core = buildTimelineCore({
+    vehiculos: params.vehiculos,
+    segmentos: params.segmentos,
+    now,
+  });
+  if (!core?.hasSegments) return [];
+
+  const dayStartMs = core.limaDayStartMs;
+  const out: SegmentBattleArc[] = [];
+
+  for (const battle of buildSegmentBattleIntervals(params)) {
+    for (const arc of intervalToClockArcs(
+      { start: battle.startMs, end: battle.endMs },
+      dayStartMs,
+      battle.kind
+    )) {
+      out.push({
+        startDeg: arc.startDeg,
+        endDeg: arc.endDeg,
+        lap: arc.lap ?? 0,
+        ordinal: battle.ordinal,
+        kind: battle.kind,
+      });
+    }
+  }
+
+  return out;
+}
+
+export function computeSegmentArcStats(params: {
+  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
+  vehiculos: VehiculoAnilloLite[];
+  now?: number;
+}): SegmentArcStats[] {
+  const now = params.now ?? Date.now();
+  const core = buildTimelineCore({
+    vehiculos: params.vehiculos,
+    segmentos: params.segmentos,
+    now,
+  });
+  if (!core?.hasSegments) return [];
+
+  const dayStartMs = core.limaDayStartMs;
+  return params.segmentos.map((seg, idx) => {
+    const horaInicio = seg.horaInicio ?? "";
+    const horaFin = seg.horaFin ?? "";
+    if (!horaInicio || !horaFin) {
+      return {
+        ordinal: idx + 1,
+        nombre: seg.nombre,
+        horaInicio,
+        horaFin,
+        estado: seg.estado ?? "pendiente",
+        conquistaMin: 0,
+        entropiaMin: 0,
+      };
+    }
+    const { start, end } = segmentWindowMs(horaInicio, horaFin, dayStartMs);
+    const conq = intervalsInSegmentWindow(
+      core.coverMerged,
+      start,
+      end,
+      core.livedStartMs,
+      core.nowMs
+    );
+    const ent = intervalsInSegmentWindow(
+      core.entropiaIntervals,
+      start,
+      end,
+      core.livedStartMs,
+      core.nowMs
+    );
+    return {
+      ordinal: idx + 1,
+      nombre: seg.nombre,
+      horaInicio,
+      horaFin,
+      estado: seg.estado ?? "pendiente",
+      conquistaMin: Math.round(sumIntervalMinutes(conq) * 10) / 10,
+      entropiaMin: Math.round(sumIntervalMinutes(ent) * 10) / 10,
+    };
+  });
 }
 
 export function filterVehiculosCalendarioHoy(

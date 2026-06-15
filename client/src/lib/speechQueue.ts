@@ -22,6 +22,10 @@ let stuckTimer: ReturnType<typeof setTimeout> | null = null;
 let voicesPrimed = false;
 let pendingOnPhraseStarted: (() => void) | null = null;
 const idleListeners = new Set<() => void>();
+let lastQueuedPhrase = "";
+let lastQueuedAtMs = 0;
+
+const PHRASE_ENQUEUE_DEDUP_MS = 90_000;
 
 function notifySpeechQueueIdle(): void {
   if (speaking || queue.length > 0) return;
@@ -85,6 +89,17 @@ function armStuckReset(): void {
   }, STUCK_SPEAK_MS);
 }
 
+export function isUbicacionPhraseQueued(text: string): boolean {
+  const phrase = text.trim();
+  if (!phrase) return false;
+  return queue.includes(phrase);
+}
+
+export function isUbicacionSpeechActive(): boolean {
+  const synth = getSynth();
+  return speaking || !!(synth?.speaking || synth?.pending);
+}
+
 function isBackground(): boolean {
   if (typeof document === "undefined") return false;
   /** Solo pestaña oculta: !hasFocus() mandaba voz al buffer sin reproducir en desktop. */
@@ -144,7 +159,7 @@ function processQueue(): void {
   speaking = true;
   armStuckReset();
   let phraseRetries = 0;
-  const maxPhraseRetries = 2;
+  const maxPhraseRetries = 1;
 
   const speakPhrase = () => {
     try {
@@ -247,11 +262,25 @@ export function speakUbicacionQueue(
     speaking = false;
     clearStuckTimer();
     pendingOnPhraseStarted = null;
+    lastQueuedPhrase = "";
+    lastQueuedAtMs = 0;
   }
 
   pendingOnPhraseStarted = onPhraseStarted ?? null;
 
-  queue.push(...filtered);
+  const now = Date.now();
+  for (const phrase of filtered) {
+    if (
+      phrase === lastQueuedPhrase &&
+      now - lastQueuedAtMs < PHRASE_ENQUEUE_DEDUP_MS &&
+      (isUbicacionPhraseQueued(phrase) || isUbicacionSpeechActive())
+    ) {
+      continue;
+    }
+    queue.push(phrase);
+    lastQueuedPhrase = phrase;
+    lastQueuedAtMs = now;
+  }
   processQueue();
   if (!speaking && queue.length === 0) {
     pendingOnPhraseStarted = null;

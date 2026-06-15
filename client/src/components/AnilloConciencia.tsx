@@ -1,5 +1,12 @@
+import { useCallback, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import type { AnilloPointerMode, TimelineClockArc } from "@/engines/ConcienciaEngine";
+import type {
+  AnilloPointerMode,
+  SegmentArcStats,
+  SegmentBattleArc,
+  SegmentClockArc,
+  TimelineClockArc,
+} from "@/engines/ConcienciaEngine";
 import { clockMinutesToDeg } from "@/engines/ConcienciaEngine";
 
 interface SegmentoLite {
@@ -12,6 +19,9 @@ interface SegmentoLite {
 interface AnilloConcienciaProps {
   planificacionPct: number;
   timelineArcs?: TimelineClockArc[];
+  segmentClockArcs?: SegmentClockArc[];
+  segmentBattleArcs?: SegmentBattleArc[];
+  segmentArcStats?: SegmentArcStats[];
   conquistaArcPct?: number;
   entropiaArcPct?: number;
   conquistaPct?: number;
@@ -24,12 +34,6 @@ interface AnilloConcienciaProps {
   pointerMode?: AnilloPointerMode;
   centerGuide?: string;
 }
-
-const parseMin = (t: string): number => {
-  if (!t) return 0;
-  const parts = t.split(":").map(Number);
-  return (parts[0] || 0) * 60 + (parts[1] || 0);
-};
 
 type HalfDayLap = 0 | 1;
 
@@ -64,35 +68,20 @@ const POINTER_COLORS: Record<AnilloPointerMode, string> = {
   entropia: BLOOD,
 };
 
-function splitMinutesRangeByLap(
-  startMin: number,
-  endMin: number,
-): Array<{ startMin: number; endMin: number; lap: HalfDayLap }> {
-  // Normalize to [0, 2880) so we can split cleanly across midnight.
-  let s = ((startMin % 1440) + 1440) % 1440;
-  let e = ((endMin % 1440) + 1440) % 1440;
-  if (endMin <= startMin) e += 1440;
-
-  const cutPoints = [720, 1440, 2160];
-  const out: Array<{ startMin: number; endMin: number; lap: HalfDayLap }> = [];
-  let cur = s;
-  for (const cut of cutPoints) {
-    if (cut <= cur) continue;
-    if (e <= cut) break;
-    const lap: HalfDayLap = (cur % 1440) >= 720 ? 1 : 0;
-    out.push({ startMin: cur, endMin: cut, lap });
-    cur = cut;
+function segmentArcColor(estado: string): { color: string; glow: string } {
+  if (estado === "cerrado_manual" || estado === "entropia") {
+    return { color: GOLD, glow: `${GOLD}80` };
   }
-  const lap: HalfDayLap = (cur % 1440) >= 720 ? 1 : 0;
-  out.push({ startMin: cur, endMin: e, lap });
-  return out
-    .map(p => ({ ...p, startMin: p.startMin % 1440, endMin: p.endMin % 1440 }))
-    .filter(p => p.endMin !== p.startMin);
+  if (estado === "activo") {
+    return { color: CYAN, glow: `${CYAN}90` };
+  }
+  return { color: "rgba(255,255,255,0.18)", glow: "transparent" };
 }
 
 export default function AnilloConciencia({
   planificacionPct,
   timelineArcs = [],
+  segmentClockArcs = [],
   conquistaArcPct,
   entropiaArcPct: entropiaArcPctProp,
   conquistaPct,
@@ -157,43 +146,27 @@ export default function AnilloConciencia({
   const timelineR2 = timelineR - timelineSW * 1.25;
   const segR2 = segR - segSW * 1.25;
 
-  const segArcs: { path: string; color: string; glow: string; isActive: boolean; lap: HalfDayLap }[] = [];
-  for (const s of segmentos) {
-    const ini = parseMin(s.horaInicio);
-    const fin = parseMin(s.horaFin);
-    if (!s.horaInicio || !s.horaFin) continue;
+  const segArcs = segmentClockArcs.map(arc => {
+    const r = arc.lap === 0 ? segR : segR2;
+    const { color, glow } = segmentArcColor(arc.estado);
+    return {
+      key: `seg-${arc.ordinal}-${arc.lap}-${arc.startDeg.toFixed(1)}`,
+      path: arcPath(cx, cy, r, arc.startDeg, arc.endDeg),
+      color,
+      glow,
+      isActive: arc.estado === "activo",
+      lap: arc.lap as HalfDayLap,
+      ordinal: arc.ordinal,
+      strokeOpacity: arc.lap === 0 ? 1 : 0.82,
+    };
+  });
 
-    const color =
-      s.estado === "cerrado_manual" || s.estado === "entropia"
-        ? GOLD
-        : s.estado === "activo"
-          ? CYAN
-          : "rgba(255,255,255,0.18)";
-    const glow =
-      s.estado === "cerrado_manual" || s.estado === "entropia"
-        ? `${GOLD}80`
-        : s.estado === "activo"
-          ? `${CYAN}90`
-          : "transparent";
-
-    const parts = splitMinutesRangeByLap(ini, fin);
-    for (const p of parts) {
-      const startDeg = clockMinutesToDeg(p.startMin);
-      let endDeg = clockMinutesToDeg(p.endMin);
-      if (endDeg <= startDeg) endDeg += 360;
-      segArcs.push({
-        path: arcPath(cx, cy, p.lap === 0 ? segR : segR2, startDeg, endDeg),
-        color: p.lap === 0 ? color : `${color}B3`,
-        glow,
-        isActive: s.estado === "activo",
-        lap: p.lap,
-      });
-    }
-  }
-
+  const pointerRailR = pointerLap === 1 ? timelineR2 : timelineR;
+  const pointerRailSW = pointerLap === 1 ? timelineSW * 0.9 : timelineSW;
   const needleColor = POINTER_COLORS[pointerMode];
   const needleRad = toRad(pointerDeg - 90);
-  const needleLen = timelineR - timelineSW * 0.5;
+  const needleLen = pointerRailR - pointerRailSW * 0.5;
+  const noonRad = toRad(-90);
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -201,24 +174,120 @@ export default function AnilloConciencia({
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} overflow="visible">
           <circle cx={cx} cy={cy} r={segR} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={segSW} />
           <circle cx={cx} cy={cy} r={segR2} fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth={segSW * 0.9} />
-          {segArcs.map((arc, i) => (
+
+          <line
+            x1={cx + segR2 * Math.cos(noonRad)}
+            y1={cy + segR2 * Math.sin(noonRad)}
+            x2={cx + segR * Math.cos(noonRad)}
+            y2={cy + segR * Math.sin(noonRad)}
+            stroke="rgba(255,255,255,0.16)"
+            strokeWidth={1}
+            strokeDasharray="2 3"
+          />
+          <path
+            d={arcPath(cx, cy, (segR + segR2) / 2, -8, 8)}
+            fill="none"
+            stroke="rgba(255,255,255,0.1)"
+            strokeWidth={segSW * 0.35}
+            strokeLinecap="round"
+          />
+          <text
+            x={cx - segR - size * 0.04}
+            y={cy + 3}
+            textAnchor="end"
+            fill="rgba(255,255,255,0.28)"
+            fontSize={size * 0.055}
+            fontFamily="JetBrains Mono, monospace"
+            fontWeight="bold"
+          >
+            AM
+          </text>
+          <text
+            x={cx - segR2 - size * 0.02}
+            y={cy + size * 0.12}
+            textAnchor="end"
+            fill="rgba(255,255,255,0.2)"
+            fontSize={size * 0.05}
+            fontFamily="JetBrains Mono, monospace"
+            fontWeight="bold"
+          >
+            PM
+          </text>
+          <text
+            x={cx}
+            y={cy - segR - size * 0.02}
+            textAnchor="middle"
+            fill="rgba(255,255,255,0.22)"
+            fontSize={size * 0.045}
+            fontFamily="JetBrains Mono, monospace"
+          >
+            12
+          </text>
+
+          {segArcs.map(arc => (
+            <g key={arc.key} {...bindSegmentPress(arc.ordinal)}>
+              <motion.path
+                d={arc.path}
+                fill="none"
+                stroke={arc.color}
+                strokeWidth={arc.strokeWidth}
+                strokeLinecap="butt"
+                strokeOpacity={arc.strokeOpacity}
+                initial={{ pathLength: 0, opacity: 0 }}
+                animate={{ pathLength: 1, opacity: arc.strokeOpacity }}
+                transition={{ duration: 0.8, delay: arc.ordinal * 0.04, ease: "easeOut" }}
+                style={{
+                  filter: arc.isLiveActive
+                    ? `drop-shadow(0 0 8px ${arc.glow}) drop-shadow(0 0 14px ${CYAN}55)`
+                    : arc.isActive
+                      ? `drop-shadow(0 0 5px ${arc.glow})`
+                      : arc.color !== "rgba(255,255,255,0.18)"
+                        ? `drop-shadow(0 0 3px ${arc.glow})`
+                        : "none",
+                }}
+              />
+              {arc.isLiveActive && (
+                <text
+                  x={cx}
+                  y={cy - (arc.lap === 0 ? segR : segR2) - size * 0.04}
+                  textAnchor="middle"
+                  fill={CYAN}
+                  fontSize={size * 0.055}
+                  fontFamily="JetBrains Mono, monospace"
+                  fontWeight="bold"
+                >
+                  {arc.nombre ? arc.nombre.slice(0, 8) : `#${arc.ordinal}`}
+                </text>
+              )}
+            </g>
+          ))}
+
+          {battleEntropia.map((arc, i) => (
             <motion.path
-              key={`seg-${i}`}
-              d={arc.path}
+              key={`bat-ent-${arc.ordinal}-${arc.lap}-${i}`}
+              d={arcPath(cx, cy, battleRail(arc.lap), arc.startDeg, arc.endDeg)}
               fill="none"
-              stroke={arc.color}
-              strokeWidth={arc.lap === 0 ? segSW : segSW * 0.9}
+              stroke={BLOOD}
+              strokeWidth={battleSW}
               strokeLinecap="butt"
               initial={{ pathLength: 0, opacity: 0 }}
-              animate={{ pathLength: 1, opacity: arc.lap === 0 ? 1 : 0.85 }}
-              transition={{ duration: 0.8, delay: i * 0.05, ease: "easeOut" }}
-              style={{
-                filter: arc.isActive
-                  ? `drop-shadow(0 0 5px ${arc.glow})`
-                  : arc.color !== "rgba(255,255,255,0.18)"
-                    ? `drop-shadow(0 0 3px ${arc.glow})`
-                    : "none",
-              }}
+              animate={{ pathLength: 1, opacity: arc.lap === 0 ? 0.95 : 0.82 }}
+              transition={{ duration: 0.45, delay: i * 0.02 }}
+              style={{ filter: `drop-shadow(0 0 2px ${BLOOD}70)` }}
+            />
+          ))}
+          {battleConquista.map((arc, i) => (
+            <motion.path
+              key={`bat-conq-${arc.ordinal}-${arc.lap}-${i}`}
+              d={arcPath(cx, cy, battleRail(arc.lap), arc.startDeg, arc.endDeg)}
+              fill="none"
+              stroke={PURPLE}
+              strokeWidth={battleSW}
+              strokeLinecap="butt"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: arc.lap === 0 ? 0.95 : 0.82 }}
+              transition={{ duration: 0.45, delay: i * 0.02 }}
+              style={{ filter: `drop-shadow(0 0 2px ${PURPLE}70)` }}
             />
           ))}
 
@@ -252,7 +321,7 @@ export default function AnilloConciencia({
             const isMain = h % 6 === 0;
             return (
               <line
-                key={`h-${h}`}
+                key={`h-am-${h}`}
                 x1={cx + inner * Math.cos(rad)}
                 y1={cy + inner * Math.sin(rad)}
                 x2={cx + outer * Math.cos(rad)}
@@ -262,6 +331,56 @@ export default function AnilloConciencia({
               />
             );
           })}
+          {pointerLap === 1 &&
+            activeHourMarks.map(h => {
+              const civilH = h === 12 ? 12 : h;
+              const deg = clockMinutesToDeg(civilH * 60);
+              const rad = toRad(deg - 90);
+              const inner = activeRailR - activeRailSW / 2 - 1;
+              const outer = activeRailR + activeRailSW / 2 + 1;
+              return (
+                <g key={`h-pm-${h}`}>
+                  <line
+                    x1={cx + inner * Math.cos(rad)}
+                    y1={cy + inner * Math.sin(rad)}
+                    x2={cx + outer * Math.cos(rad)}
+                    y2={cy + outer * Math.sin(rad)}
+                    stroke="rgba(255,255,255,0.24)"
+                    strokeWidth={1.1}
+                  />
+                  <text
+                    x={cx + (outer + size * 0.03) * Math.cos(rad)}
+                    y={cy + (outer + size * 0.03) * Math.sin(rad) + 2}
+                    textAnchor="middle"
+                    fill="rgba(255,255,255,0.28)"
+                    fontSize={size * 0.042}
+                    fontFamily="JetBrains Mono, monospace"
+                  >
+                    {h === 12 ? 12 : h + 12}
+                  </text>
+                </g>
+              );
+            })}
+          {pointerLap === 0 &&
+            activeHourMarks.map(h => {
+              if (h === 12) return null;
+              const deg = clockMinutesToDeg(h * 60);
+              const rad = toRad(deg - 90);
+              const outer = activeRailR + activeRailSW / 2 + size * 0.03;
+              return (
+                <text
+                  key={`h-am-label-${h}`}
+                  x={cx + outer * Math.cos(rad)}
+                  y={cy + outer * Math.sin(rad) + 2}
+                  textAnchor="middle"
+                  fill="rgba(255,255,255,0.28)"
+                  fontSize={size * 0.042}
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {h}
+                </text>
+              );
+            })}
           {entropiaLap0.map((arc, i) => (
             <motion.path
               key={`tl-ent-${i}`}
@@ -405,6 +524,16 @@ export default function AnilloConciencia({
             }}
           />
 
+          <circle
+            cx={cx + pointerRailR * Math.cos(needleRad)}
+            cy={cy + pointerRailR * Math.sin(needleRad)}
+            r={pointerRailSW * 0.55}
+            fill="none"
+            stroke={needleColor}
+            strokeWidth={0.8}
+            opacity={0.35}
+          />
+
           <circle cx={cx} cy={cy} r={2.5} fill={needleColor} opacity={0.85} />
 
           <>
@@ -453,6 +582,32 @@ export default function AnilloConciencia({
             </text>
           </>
         </svg>
+
+        {tooltipStats && (
+          <div
+            className="absolute left-1/2 -translate-x-1/2 bottom-0 z-10 px-2 py-1.5 rounded-lg border text-center pointer-events-none"
+            style={{
+              backgroundColor: "rgba(10,12,18,0.95)",
+              borderColor: "rgba(255,255,255,0.12)",
+              minWidth: size * 0.85,
+            }}
+          >
+            <p className="text-[8px] font-black text-white truncate">
+              {tooltipStats.nombre ?? `Segmento ${tooltipStats.ordinal}`}
+            </p>
+            <p className="text-[7px] text-slate-500">
+              {tooltipStats.horaInicio}–{tooltipStats.horaFin}
+            </p>
+            <div className="flex justify-center gap-3 mt-0.5">
+              <span className="text-[7px] font-bold" style={{ color: PURPLE }}>
+                +{tooltipStats.conquistaMin}m
+              </span>
+              <span className="text-[7px] font-bold" style={{ color: BLOOD }}>
+                −{tooltipStats.entropiaMin}m
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center flex-wrap justify-center gap-2">
@@ -473,10 +628,17 @@ export default function AnilloConciencia({
           <span className="text-[7px] font-black uppercase tracking-widest text-slate-500">Conquista</span>
         </div>
         <div className="flex items-center gap-1">
+          <div className="w-1.5 h-1.5 rounded-full border border-white/10" style={{ backgroundColor: "rgba(255,255,255,0.12)" }} />
+          <span className="text-[7px] font-black uppercase tracking-widest text-slate-500">Seg. plan</span>
+        </div>
+        <div className="flex items-center gap-1">
           <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NEUTRAL_GRAY, border: "1px solid rgba(255,255,255,0.08)" }} />
           <span className="text-[7px] font-black uppercase tracking-widest text-slate-500">Libre</span>
         </div>
       </div>
+      <p className="text-[7px] text-slate-600 text-center max-w-[11rem] leading-relaxed">
+        Caracol 24h: riel exterior AM · interior PM · puntero y segmento comparten ángulo
+      </p>
     </div>
   );
 }

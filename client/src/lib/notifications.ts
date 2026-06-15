@@ -178,7 +178,6 @@ export function scheduleSegmentNotifications(segmentos: SegmentoV5[]): void {
             title: `Puerta de atención: ${segNow.nombre} (${ordinal}/${total})`,
             body: phrase,
             tag: `seg-voz-${segId}`,
-            voicePhrase: phrase,
           });
         });
       }

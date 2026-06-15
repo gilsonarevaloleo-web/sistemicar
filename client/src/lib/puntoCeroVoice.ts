@@ -49,10 +49,10 @@ const VOICE_PROFILES: Record<
   PuntoCeroVoiceProfile,
   { rate: number; pitch: number; volume: number; pauseMs: number }
 > = {
-  calm: { rate: 0.68, pitch: 0.82, volume: 0.5, pauseMs: 880 },
-  night: { rate: 0.62, pitch: 0.78, volume: 0.42, pauseMs: 1050 },
-  day: { rate: 0.7, pitch: 0.84, volume: 0.5, pauseMs: 820 },
-  reactivation: { rate: 0.76, pitch: 0.88, volume: 0.54, pauseMs: 560 },
+  calm: { rate: 0.78, pitch: 0.92, volume: 0.52, pauseMs: 820 },
+  night: { rate: 0.72, pitch: 0.9, volume: 0.45, pauseMs: 980 },
+  day: { rate: 0.8, pitch: 0.94, volume: 0.52, pauseMs: 760 },
+  reactivation: { rate: 0.86, pitch: 0.96, volume: 0.56, pauseMs: 520 },
 };
 
 let pcQueue: string[] = [];

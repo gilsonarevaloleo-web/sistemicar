@@ -75,10 +75,19 @@ export function shouldEnterPasiva(
 ): boolean {
   if (session.fase === "pasiva" || session.fase === "completada") return false;
   if (todosColoresConfirmados(colores)) return true;
-  if (coloresEnProgreso(colores)) return false;
+  return false;
+}
+
+/** Sugiere pasiva manual cuando agotó la fase activa sin bloquear colores en curso. */
+export function shouldSuggestPasivaByTime(
+  session: PuntoCeroSession,
+  now: number,
+  colores: boolean[]
+): boolean {
+  if (session.fase !== "activa") return false;
+  if (todosColoresConfirmados(colores) || coloresEnProgreso(colores)) return false;
   const { activaMin } = faseDuracionesMin(session.duracionTotalMin);
-  const elapsed = elapsedSesionMin(session, now);
-  return elapsed >= activaMin;
+  return elapsedSesionMin(session, now) >= activaMin;
 }
 
 export function shouldComplete(session: PuntoCeroSession, now: number): boolean {
@@ -168,10 +177,6 @@ export function tickPuntoCero(
   let next = { ...session, coloresConfirmados: colores ?? session.coloresConfirmados };
 
   if (next.fase === "completada") {
-    if (!next.autoCierreDisparado) {
-      next = markAutoCierreDisparado(next);
-      events.push({ type: "auto_close_due" });
-    }
     return { session: next, events };
   }
 
@@ -189,10 +194,6 @@ export function tickPuntoCero(
   if (shouldComplete(next, now)) {
     next = transitionToCompletada(next, now);
     events.push({ type: "enter_completada" });
-    if (!next.autoCierreDisparado) {
-      next = markAutoCierreDisparado(next);
-      events.push({ type: "auto_close_due" });
-    }
     return { session: next, events };
   }
 

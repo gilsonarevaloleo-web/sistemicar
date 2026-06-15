@@ -1,5 +1,6 @@
 import { deliverPuertaVoice } from "./backgroundAttentionAlerts";
 import { isPuertaVozEnabled } from "./tikSound";
+import { puertaVoiceKeyFromPhrase } from "./puertaVoiceDedup";
 import { getJournalDateString } from "./segmentTime";
 
 const ORDINALES_PUERTA: Record<number, string> = {
@@ -82,7 +83,7 @@ export function speakPuertaSegmento(params: {
     source: "puerta",
     notifyTitle: `Puerta ${params.ordinal}/${params.total}: ${params.nombre}`,
     notifyBody: phrase,
-    notifyTag: `puerta-live-${params.nombre}`,
+    notifyTag: puertaVoiceKeyFromPhrase(phrase),
   });
 }
 

@@ -10314,12 +10314,16 @@ function VehicleCard({
 
   useEffect(() => {
     if (tipoFlota !== "descanso" || vehicle.status !== "activo") return;
+    if (vehicle.tipoDescanso === "punto_cero") {
+      setShowMicroPasos(true);
+      return;
+    }
     const aperturaMs = vehicle.aperturaAt || Date.now();
     const elapsed = Date.now() - aperturaMs;
     const delay = Math.max(0, 30000 - elapsed);
     const timer = setTimeout(() => setShowMicroPasos(true), delay);
     return () => clearTimeout(timer);
-  }, [tipoFlota, vehicle.status, vehicle.aperturaAt]);
+  }, [tipoFlota, vehicle.status, vehicle.tipoDescanso, vehicle.aperturaAt]);
 
   useEffect(() => {
     if (vehicle.status === "activo") return;

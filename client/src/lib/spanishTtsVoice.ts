@@ -20,11 +20,11 @@ function scoreSpanishVoice(v: SpeechSynthesisVoice): number {
   const blob = `${v.name} ${v.voiceURI} ${v.lang}`.toLowerCase();
   if (/^es-es/i.test(v.lang)) score += 50;
   else if (/^es-/i.test(v.lang)) score += 28;
-  if (/google.*espa(?!.*estados)/i.test(v.name)) score += 35;
-  if (/microsoft.*(laura|elena|sabina|helena|david|pablo)/i.test(blob)) score += 30;
-  if (/natural|neural|premium|online/i.test(blob)) score += 18;
-  if (/male|hombre|diego|jorge|pablo|enrique|carlos|daniel|antonio|david/i.test(blob)) score += 12;
-  if (/female|mujer|helena|laura|sabina|elena/i.test(blob)) score += 8;
+  if (/google.*espa(?!.*estados)/i.test(v.name)) score += 38;
+  if (/microsoft.*(laura|elena|sabina|helena)/i.test(blob)) score += 42;
+  if (/natural|neural|premium|online/i.test(blob)) score += 24;
+  if (/female|mujer|helena|laura|sabina|elena|monica|paulina|soledad|paloma/i.test(blob)) score += 20;
+  if (/male|hombre|diego|jorge|pablo|enrique|carlos|daniel|antonio|david/i.test(blob)) score -= 18;
   if (/estados unidos|latino|méxico|mexico|mexican/i.test(blob)) score -= 8;
   if (/english|en-us|en-gb/i.test(v.lang)) score -= 40;
   return score;
@@ -34,7 +34,7 @@ export function primeSpanishVoices(): void {
   loadVoices();
 }
 
-/** Voz en español calmada — prioriza es-ES y voces neurales del sistema. */
+/** Voz en español clara — prioriza es-ES, neurales y timbre femenino del sistema. */
 export function pickCalmDeepSpanishVoice(): SpeechSynthesisVoice | null {
   const voices = loadVoices();
   if (!voices.length) return null;
@@ -47,11 +47,17 @@ export function pickCalmDeepSpanishVoice(): SpeechSynthesisVoice | null {
 /** Alias histórico — misma selección calmada es-ES. */
 export const pickPleasantSpanishVoice = pickCalmDeepSpanishVoice;
 
-export function applyCalmSpanishUtterance(u: SpeechSynthesisUtterance): void {
+/** Alertas operativas (puerta, situación, desglosador) — ritmo natural, sin ronquera. */
+export function applyAlertSpanishUtterance(u: SpeechSynthesisUtterance): void {
   const voice = pickCalmDeepSpanishVoice();
   if (voice) u.voice = voice;
   u.lang = "es-ES";
-  u.rate = 0.82;
-  u.pitch = 0.88;
-  u.volume = 0.92;
+  u.rate = 0.96;
+  u.pitch = 1.02;
+  u.volume = 0.94;
+}
+
+/** Alias histórico — alertas de ubicación. */
+export function applyCalmSpanishUtterance(u: SpeechSynthesisUtterance): void {
+  applyAlertSpanishUtterance(u);
 }

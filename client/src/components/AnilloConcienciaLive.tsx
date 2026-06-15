@@ -1,12 +1,23 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import AnilloConciencia from "@/components/AnilloConciencia";
+import AnilloConcienciaHorizon from "@/components/AnilloConcienciaHorizon";
 import {
   computeLiveEntropy,
+  computeSegmentArcStats,
+  computeSegmentBattleArcs,
+  computeSegmentClockArcs,
   formatMinutosJornada,
   nowToClockDeg,
   nowToHalfDayLap,
   type SegmentoAnilloLite,
 } from "@/engines/ConcienciaEngine";
+import { computeHorizonProjection } from "@/engines/ConcienciaHorizonEngine";
+import {
+  readAnilloViewMode,
+  subscribeAnilloViewMode,
+  writeAnilloViewMode,
+  type AnilloViewMode,
+} from "@/lib/anilloViewMode";
 import { useConcienciaClockTick, useConcienciaMetricTick } from "@/lib/concienciaClock";
 import type { Vehicle } from "@/lib/persistence";
 
@@ -22,6 +33,8 @@ export interface AnilloConcienciaLiveProps {
   className?: string;
   /** Muestra conquista / entropía / segmentos bajo el anillo. */
   showDayStats?: boolean;
+  /** Toggle Mapa / Horizonte (cockpit y tarjeta métricas). */
+  showViewToggle?: boolean;
 }
 
 /**
@@ -36,9 +49,13 @@ function AnilloConcienciaLiveInner({
   size = 130,
   className,
   showDayStats = false,
+  showViewToggle = true,
 }: AnilloConcienciaLiveProps) {
+  const [viewMode, setViewMode] = useState<AnilloViewMode>(() => readAnilloViewMode());
   const pointerTick = useConcienciaClockTick();
   const metricTick = useConcienciaMetricTick();
+
+  useEffect(() => subscribeAnilloViewMode(setViewMode), []);
 
   const model = useMemo(() => {
     void metricTick;
@@ -51,8 +68,13 @@ function AnilloConcienciaLiveInner({
     const segConquistados = segmentos.filter(
       s => (s as { estado?: string }).estado === "cerrado_manual"
     ).length;
+    const battleParams = { segmentos, vehiculos: vehicles, now: nowMs };
     return {
       segs: segmentos,
+      segmentClockArcs: computeSegmentClockArcs(segmentos, nowMs),
+      segmentBattleArcs: computeSegmentBattleArcs(battleParams),
+      segmentArcStats: computeSegmentArcStats(battleParams),
+      horizonProjection: computeHorizonProjection(battleParams),
       metricas: timeline.metricas,
       anilloEstado: timeline.anilloEstado,
       timelineArcs: timeline.timelineArcs,
@@ -71,26 +93,79 @@ function AnilloConcienciaLiveInner({
     return nowToHalfDayLap(Date.now());
   }, [pointerTick]);
 
-  const ring = (
-    <AnilloConciencia
-      planificacionPct={model.metricas.planificacionPct}
-      conquistaArcPct={model.metricas.conquistaArcPct}
-      entropiaArcPct={model.metricas.entropiaArcPct}
-      timelineArcs={model.timelineArcs}
-      conquistaPulse={conquistaPulse}
-      size={size}
-      segmentos={model.segs}
-      pointerDeg={pointerDeg}
-      pointerLap={pointerLap}
-      pointerMode={model.anilloEstado.mode}
-      centerGuide={model.anilloEstado.centerGuide}
-    />
-  );
+  const toggle = showViewToggle ? (
+    <div
+      className="flex rounded-lg border overflow-hidden mb-1"
+      style={{ borderColor: "rgba(255,255,255,0.1)" }}
+      role="tablist"
+      aria-label="Vista del anillo"
+    >
+      {(["mapa", "horizonte"] as const).map(mode => {
+        const active = viewMode === mode;
+        return (
+          <button
+            key={mode}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            data-testid={`anillo-view-${mode}`}
+            className="px-2 py-0.5 text-[7px] font-black uppercase tracking-widest transition-colors"
+            style={{
+              backgroundColor: active ? "rgba(0,255,195,0.12)" : "transparent",
+              color: active ? "#00FFC3" : "rgba(148,163,184,0.7)",
+            }}
+            onClick={() => {
+              writeAnilloViewMode(mode);
+              setViewMode(mode);
+            }}
+          >
+            {mode === "mapa" ? "Mapa" : "Horizonte"}
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
-  if (ringOnly) return ring;
+  const ring =
+    viewMode === "horizonte" ? (
+      <AnilloConcienciaHorizon
+        projection={model.horizonProjection}
+        planificacionPct={model.metricas.planificacionPct}
+        conquistaArcPct={model.metricas.conquistaArcPct}
+        entropiaArcPct={model.metricas.entropiaArcPct}
+        size={size}
+      />
+    ) : (
+      <AnilloConciencia
+        planificacionPct={model.metricas.planificacionPct}
+        conquistaArcPct={model.metricas.conquistaArcPct}
+        entropiaArcPct={model.metricas.entropiaArcPct}
+        timelineArcs={model.timelineArcs}
+        conquistaPulse={conquistaPulse}
+        size={size}
+        segmentClockArcs={model.segmentClockArcs}
+        segmentBattleArcs={model.segmentBattleArcs}
+        segmentArcStats={model.segmentArcStats}
+        segmentos={model.segs}
+        pointerDeg={pointerDeg}
+        pointerLap={pointerLap}
+        pointerMode={model.anilloEstado.mode}
+        centerGuide={model.anilloEstado.centerGuide}
+      />
+    );
+
+  if (ringOnly) {
+    return (
+      <div className={className}>
+        {toggle}
+        {ring}
+      </div>
+    );
+  }
 
   return (
     <div className={className}>
+      {toggle}
       {ring}
       {showDayStats && (
         <div className="mt-2 grid grid-cols-3 gap-1 w-full text-center">

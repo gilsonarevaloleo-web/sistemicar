@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Brain, Check, Circle, Clock, Power, Sparkles, Sun, Moon, Volume2, VolumeX, Wind } from "lucide-react";
+import { Brain, Check, Circle, Clock, Power, Sparkles, Sun, Moon, Volume2, VolumeX, Wind, X } from "lucide-react";
 import type { Vehicle } from "@/lib/persistence";
 import type { PuntoCeroSession } from "@/lib/puntoCeroTypes";
 import {
@@ -13,6 +13,7 @@ import {
   getFaseEfectiva,
   initPuntoCeroSession,
   parsePuntoCeroDuracionMin,
+  shouldSuggestPasivaByTime,
   todosColoresConfirmados,
   transitionToPasiva,
 } from "@/engines/PuntoCeroEngine";
@@ -25,6 +26,7 @@ import {
   speakColorInmersion,
   speakEtapaPuntoCero,
   speakPuntoCeroSequence,
+  stopPleasantVoice,
 } from "@/lib/puntoCeroVoice";
 import { toast } from "sonner";
 
@@ -111,6 +113,37 @@ function PuntoCeroAudioControls({
   );
 }
 
+function PuntoCeroSalirButton({
+  vehicleId,
+  onClick,
+  dark = false,
+}: {
+  vehicleId: string;
+  onClick: () => void;
+  dark?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={e => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="fixed top-4 right-4 z-[210] flex items-center gap-1.5 min-h-[2.75rem] px-3.5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.16em] border backdrop-blur-sm transition-transform active:scale-[0.98]"
+      style={{
+        backgroundColor: dark ? "rgba(0,0,0,0.55)" : "rgba(10,10,10,0.92)",
+        borderColor: dark ? "rgba(255,255,255,0.22)" : "rgba(212,175,55,0.45)",
+        color: dark ? "rgba(255,255,255,0.85)" : "#D4AF37",
+        boxShadow: dark ? "0 8px 32px rgba(0,0,0,0.45)" : "0 8px 24px rgba(0,0,0,0.35)",
+      }}
+      data-testid={`punto-cero-salir-${vehicleId}`}
+    >
+      <X size={14} />
+      Salir
+    </button>
+  );
+}
+
 function PuntoCeroCloseButton({
   vehicleId,
   flotaColor,
@@ -174,6 +207,7 @@ export function PuntoCeroPanel({
   const [closeFlow, setCloseFlow] = useState(false);
   const [etiquetaLocal, setEtiquetaLocal] = useState<"recuperado" | "parcial" | "fragmentado" | null>(null);
   const [notaLocal, setNotaLocal] = useState("");
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const session = vehicle.puntoCero;
   const ep = vehicle.etapasPuntoCero ?? etapasPuntoCeroVacias();
   const colores = session?.coloresConfirmados ?? Array(7).fill(false);
@@ -212,12 +246,39 @@ export function PuntoCeroPanel({
   const audioEnabled = vehicle.status === "activo" && !!session;
   const puntoCeroAudio = usePuntoCeroAudio(audioEnabled, session?.modo, fase);
 
+  const stopPuntoCeroMedia = useCallback(() => {
+    stopPleasantVoice();
+    puntoCeroAudio.stopAll();
+  }, [puntoCeroAudio]);
+
+  const openCloseFlow = useCallback(() => {
+    stopPuntoCeroMedia();
+    setCloseFlow(true);
+  }, [stopPuntoCeroMedia]);
+
+  const enterPasivaManual = useCallback(() => {
+    if (!session || enPasiva) return;
+    stopPuntoCeroMedia();
+    onSessionPersist(vehicle.id, transitionToPasiva(session, Date.now()));
+  }, [enPasiva, onSessionPersist, session, stopPuntoCeroMedia, vehicle.id]);
+
+  useEffect(() => {
+    if (!session || enPasiva || enCompletada) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, [enCompletada, enPasiva, session]);
+
+  const suggestPasivaManual =
+    !!session && !enPasiva && shouldSuggestPasivaByTime(session, nowTick, colores);
+
   const orchestratorActive =
     vehicle.status === "activo" && !!session && session.fase !== "completada";
 
   usePuntoCeroOrchestrator(session, orchestratorActive, {
     onSessionUpdate: handleSessionUpdate,
-    onAutoClose: () => onAutoClose(vehicle.id),
+    onAutoClose: () => {
+      /* El operador cierra manualmente — no auto-archivar al completar. */
+    },
     onEnterPasiva: () => {
       if (session?.modo === "dia") {
         speakPuntoCeroSequence(MENSAJE_PASIVA_DIA, "day");
@@ -233,12 +294,6 @@ export function PuntoCeroPanel({
       });
     },
   });
-
-  useEffect(() => {
-    if (!enCompletada || vehicle.status !== "activo") return;
-    const t = window.setTimeout(() => onAutoClose(vehicle.id), 2500);
-    return () => clearTimeout(t);
-  }, [enCompletada, vehicle.status, vehicle.id, onAutoClose]);
 
   useEffect(() => {
     if (vehicle.status !== "activo" || vehicle.tipoDescanso !== "punto_cero" || session) return;
@@ -283,6 +338,9 @@ export function PuntoCeroPanel({
         <p className="text-[10px] font-black uppercase tracking-wider text-center" style={{ color: flotaColor }}>
           ¿Cómo saliste del Punto Cero?
         </p>
+        <p className="text-[8px] text-slate-500 text-center leading-relaxed">
+          Podés salir en cualquier momento. Las etapas completadas ya sumaron PS.
+        </p>
         <div className="grid grid-cols-3 gap-2">
           {([
             { key: "recuperado" as const, label: "RECUPERADO", color: "#10b981" },
@@ -317,6 +375,7 @@ export function PuntoCeroPanel({
             disabled={!etiquetaLocal}
             onClick={() => {
               if (!etiquetaLocal) return;
+              stopPuntoCeroMedia();
               onConfirmManualClose(vehicle.id, etiquetaLocal, notaLocal);
               setCloseFlow(false);
               setEtiquetaLocal(null);
@@ -347,12 +406,15 @@ export function PuntoCeroPanel({
     return (
       <>
         {closeEtiquetaOverlay}
+        {!closeFlow && (
+          <PuntoCeroSalirButton vehicleId={vehicle.id} dark onClick={openCloseFlow} />
+        )}
         <div
           className="fixed inset-0 z-[200] flex flex-col items-center justify-center px-6"
           style={{ backgroundColor: "#000000" }}
           data-testid={`punto-cero-pasiva-${vehicle.id}`}
         >
-          <div className="absolute top-4 left-4 right-4 max-w-[14rem] ml-auto">
+          <div className="absolute top-4 left-4 max-w-[14rem]">
             <PuntoCeroAudioControls
               vehicleId={vehicle.id}
               muted={puntoCeroAudio.muted}
@@ -386,35 +448,18 @@ export function PuntoCeroPanel({
             )}
             {enCompletada && (
               <p className="text-[10px] font-bold pt-2" style={{ color: flotaColor }}>
-                Punto Cero completado
+                Bloque completado — salí cuando quieras retomar
               </p>
             )}
           </div>
           <div className="absolute bottom-6 left-4 right-4 max-w-xs mx-auto space-y-2">
-            {enCompletada ? (
-              <button
-                type="button"
-                onClick={() => onAutoClose(vehicle.id)}
-                className="w-full min-h-[3rem] px-6 py-3.5 rounded-2xl text-xs font-black uppercase tracking-[0.2em] border-2 transition-transform active:scale-[0.98]"
-                style={{
-                  backgroundColor: `${flotaColor}22`,
-                  borderColor: flotaColor,
-                  color: flotaColor,
-                  boxShadow: `0 0 24px ${flotaColor}30`,
-                }}
-                data-testid={`punto-cero-cerrar-completado-${vehicle.id}`}
-              >
-                Cerrar y retomar
-              </button>
-            ) : (
-              <PuntoCeroCloseButton
-                vehicleId={vehicle.id}
-                flotaColor={flotaColor}
-                dark
-                label="Apagar y cerrar"
-                onClick={() => setCloseFlow(true)}
-              />
-            )}
+            <PuntoCeroCloseButton
+              vehicleId={vehicle.id}
+              flotaColor={flotaColor}
+              dark
+              label={enCompletada ? "Cerrar y retomar jornada" : "Terminar y cerrar"}
+              onClick={openCloseFlow}
+            />
           </div>
         </div>
       </>
@@ -424,6 +469,9 @@ export function PuntoCeroPanel({
   return (
     <>
       {closeEtiquetaOverlay}
+      {!closeFlow && !colorInmersion && (
+        <PuntoCeroSalirButton vehicleId={vehicle.id} onClick={openCloseFlow} />
+      )}
       <AnimatePresence>
         {colorInmersion && (
           <motion.div
@@ -437,13 +485,23 @@ export function PuntoCeroPanel({
             style={{ backgroundColor: `${colorInmersion.color}E0`, cursor: "pointer" }}
             data-testid={`overlay-inmersion-${vehicle.id}`}
           >
+            {!closeFlow && (
+              <PuntoCeroSalirButton
+                vehicleId={vehicle.id}
+                dark
+                onClick={() => {
+                  setColorInmersion(null);
+                  openCloseFlow();
+                }}
+              />
+            )}
             <button
               type="button"
               onClick={e => {
                 e.stopPropagation();
                 setColorInmersion(null);
               }}
-              className="absolute top-4 right-4 px-3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider border border-white/25 text-white/70 bg-black/20"
+              className="absolute top-4 left-4 px-3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider border border-white/25 text-white/70 bg-black/20 z-[211]"
               data-testid={`overlay-inmersion-cancel-${vehicle.id}`}
             >
               Volver
@@ -514,13 +572,28 @@ export function PuntoCeroPanel({
           {eficienciaSec !== null && (
             <p className="text-[8px] mt-1" style={{ color: flotaColor }}>⚡ Primera etapa: {eficienciaSec < 60 ? `${eficienciaSec}s` : `${Math.round(eficienciaSec / 60)}m`} desde apertura</p>
           )}
-          <div className="mt-2">
+          <div className="mt-2 space-y-2">
             <PuntoCeroCloseButton
               vehicleId={vehicle.id}
               flotaColor={flotaColor}
-              label="Cerrar descanso"
-              onClick={() => setCloseFlow(true)}
+              label="Terminar Punto Cero"
+              onClick={openCloseFlow}
             />
+            {suggestPasivaManual && (
+              <button
+                type="button"
+                onClick={enterPasivaManual}
+                className="w-full min-h-[2.5rem] px-3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider border transition-all"
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.04)",
+                  borderColor: `${flotaColor}35`,
+                  color: flotaColor,
+                }}
+                data-testid={`punto-cero-pasiva-manual-${vehicle.id}`}
+              >
+                Entrar en silencio (fase pasiva)
+              </button>
+            )}
           </div>
         </div>
 
@@ -608,7 +681,7 @@ export function PuntoCeroPanel({
             })}
           </div>
         ) : (
-          <p className="text-[8px] text-center text-slate-600">Las etapas aparecerán en unos segundos...</p>
+          <p className="text-[8px] text-center text-slate-600">Cargando etapas del protocolo…</p>
         )}
       </div>
     </>

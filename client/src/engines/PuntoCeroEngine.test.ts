@@ -28,10 +28,10 @@ describe("PuntoCeroEngine", () => {
     assert.equal(shouldEnterPasiva(s, base + 2 * 60000, s.coloresConfirmados), true);
   });
 
-  it("shouldEnterPasiva al agotar minutos activos sin colores", () => {
+  it("shouldEnterPasiva solo al completar 7 colores", () => {
     const base = 1_700_000_000_000;
     const s = initPuntoCeroSession("dia", 15, base);
-    assert.equal(shouldEnterPasiva(s, base + 5 * 60000, s.coloresConfirmados), true);
+    assert.equal(shouldEnterPasiva(s, base + 5 * 60000, s.coloresConfirmados), false);
   });
 
   it("no entra a pasiva por tiempo si faltan colores del arcoíris", () => {
@@ -52,7 +52,8 @@ describe("PuntoCeroEngine", () => {
 
     const t2 = tickPuntoCero(t1.session, base + 15 * 60000);
     assert.equal(t2.session.fase, "completada");
-    assert.ok(t2.events.some(e => e.type === "auto_close_due"));
+    assert.ok(t2.events.some(e => e.type === "enter_completada"));
+    assert.equal(t2.events.some(e => e.type === "auto_close_due"), false);
   });
 
   it("shouldComplete al llegar duracionTotalMin", () => {

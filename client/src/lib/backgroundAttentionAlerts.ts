@@ -7,9 +7,10 @@
 import { readNotificationState } from "./notificationState";
 import { getCrossingVehiclesState } from "./segmentCrossEntropyEngine";
 import { getLimaDayStartMs } from "./segmentTime";
-import { speakUbicacionSingle, type UbicacionVoiceSource } from "./speechQueue";
+import { type UbicacionVoiceSource } from "./speechQueue";
 import { speakUbicacionVoiceReliable } from "./ubicacionVoiceReliable";
 import { isPuertaVozEnabled } from "./tikSound";
+import { puertaVoiceKeyFromPhrase, shouldDeliverPuertaVoiceOnce } from "./puertaVoiceDedup";
 
 function postAttentionNotification(opts: {
   title: string;
@@ -168,7 +169,10 @@ export function flushMissedPuertaVoiceOnVisible(): number {
   }
   writeMissedQueue([]);
   for (const item of queue) {
-    speakUbicacionSingle(item.text, item.source);
+    deliverPuertaVoice(item.text, {
+      source: item.source,
+      notifyTag: puertaVoiceKeyFromPhrase(item.text),
+    });
   }
   return queue.length;
 }
@@ -185,6 +189,8 @@ export function deliverPuertaVoice(
   const phrase = text.trim();
   if (!phrase || !isPuertaVozEnabled()) return;
   const source = opts?.source ?? "puerta";
+  const dedupKey = opts?.notifyTag ?? puertaVoiceKeyFromPhrase(phrase);
+  if (!shouldDeliverPuertaVoiceOnce(dedupKey)) return;
 
   if (isAppInBackground()) {
     enqueueMissedPuertaVoice(phrase, source);
@@ -192,18 +198,13 @@ export function deliverPuertaVoice(
       postAttentionNotification({
         title: opts.notifyTitle,
         body: opts.notifyBody ?? phrase,
-        tag: opts.notifyTag ?? `puerta-voz-${Date.now()}`,
+        tag: dedupKey,
       });
     }
     return;
   }
 
-  speakUbicacionVoiceReliable(
-    opts?.notifyTag ?? `puerta-live-${Date.now()}`,
-    [phrase],
-    false,
-    source
-  );
+  speakUbicacionVoiceReliable(dedupKey, [phrase], false, source);
 }
 
 export function deliverSegmentEntropiaAlert(params: {

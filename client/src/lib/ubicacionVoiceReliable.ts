@@ -7,6 +7,8 @@ import {
   recoverSpeechQueue,
   speakUbicacionQueue,
   warmupSpeechSynthesis,
+  isUbicacionPhraseQueued,
+  isUbicacionSpeechActive,
   type UbicacionVoiceSource,
 } from "./speechQueue";
 import { isDesglosadorVoiceEnabled, isSituacionAlertsEnabled } from "./tikSound";
@@ -17,10 +19,12 @@ type PendingVoice = {
   source: UbicacionVoiceSource;
   onSpoken?: () => void;
   spoken: boolean;
+  attempts: number;
 };
 
 const pending = new Map<string, PendingVoice>();
 const cleanupByKey = new Map<string, () => void>();
+const MAX_RELIABLE_ATTEMPTS = 2;
 
 function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
   if (source === "desglosador") return isDesglosadorVoiceEnabled();
@@ -28,21 +32,42 @@ function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
   return true;
 }
 
+function markVoiceDelivered(key: string): void {
+  const entry = pending.get(key);
+  if (!entry || entry.spoken) return;
+  entry.spoken = true;
+  entry.onSpoken?.();
+  cleanupByKey.get(key)?.();
+  cleanupByKey.delete(key);
+  pending.delete(key);
+}
+
 function trySpeak(key: string): void {
   const entry = pending.get(key);
   if (!entry || entry.spoken || !isVoiceEnabledFor(entry.source)) return;
 
+  if (entry.attempts >= MAX_RELIABLE_ATTEMPTS) {
+    markVoiceDelivered(key);
+    return;
+  }
+
+  const phrase = entry.phrases[0];
+  if (phrase && isUbicacionPhraseQueued(phrase)) {
+    markVoiceDelivered(key);
+    return;
+  }
+
+  if (entry.attempts > 0 && isUbicacionSpeechActive()) {
+    markVoiceDelivered(key);
+    return;
+  }
+
+  entry.attempts += 1;
   warmupSpeechSynthesis(true);
   recoverSpeechQueue();
 
   speakUbicacionQueue(entry.phrases, entry.cancelPrevious, entry.source, () => {
-    const p = pending.get(key);
-    if (!p || p.spoken) return;
-    p.spoken = true;
-    p.onSpoken?.();
-    cleanupByKey.get(key)?.();
-    cleanupByKey.delete(key);
-    pending.delete(key);
+    markVoiceDelivered(key);
   });
 }
 
@@ -68,13 +93,11 @@ export function speakUbicacionVoiceReliable(
     return () => {};
   }
 
-  pending.set(key, { phrases: filtered, cancelPrevious, source, onSpoken, spoken: false });
+  pending.set(key, { phrases: filtered, cancelPrevious, source, onSpoken, spoken: false, attempts: 0 });
 
   trySpeak(key);
 
-  const retryTimers = [800, 1800, 4500, 12_000].map(ms =>
-    window.setTimeout(() => trySpeak(key), ms)
-  );
+  const retryTimers = [1500, 4000].map(ms => window.setTimeout(() => trySpeak(key), ms));
 
   const onRetry = () => trySpeak(key);
   window.addEventListener("pointerdown", onRetry, { capture: true });

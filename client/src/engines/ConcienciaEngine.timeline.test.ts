@@ -5,6 +5,8 @@ import {
   clockMinutesToDeg,
   computeAnilloEstado,
   computeLiveEntropy,
+  computeSegmentBattleArcs,
+  computeSegmentClockArcs,
   armEntropyGapOnConsciousClose,
   computeTimelineClockArcs,
   computeTimelineDayStats,
@@ -16,6 +18,7 @@ import {
   UMBRAL_CONTINGENCIA_MIN,
 } from "./ConcienciaEngine.ts";
 import { getJournalDayStartMs } from "../lib/segmentTime.ts";
+import { computeHorizonProjection, msToHorizonDeg } from "./ConcienciaHorizonEngine.ts";
 import { filterVehiclesForAnilloCoverage } from "../lib/ghostVehicleEngine.ts";
 import type { Vehicle } from "../lib/persistence.ts";
 
@@ -69,6 +72,110 @@ describe("Umbral de Conciencia", () => {
       ]),
       7 * 60 + 30
     );
+  });
+});
+
+describe("computeSegmentClockArcs", () => {
+  it("segmento matutino y puntero 09:00 comparten ángulo AM", () => {
+    const now = limaAt(2026, 4, 18, 9, 0);
+    const arcs = computeSegmentClockArcs(
+      [{ horaInicio: "08:00", horaFin: "10:00", estado: "activo", nombre: "Mañana" }],
+      now
+    );
+    assert.equal(arcs.length, 1);
+    assert.equal(arcs[0]!.lap, 0);
+    const ptr = limaNowToClockDeg(now);
+    assert.ok(ptr >= arcs[0]!.startDeg && ptr <= arcs[0]!.endDeg);
+    assert.equal(arcs[0]!.startDeg, clockMinutesToDeg(8 * 60));
+    assert.equal(arcs[0]!.endDeg, clockMinutesToDeg(10 * 60));
+  });
+
+  it("segmento vespertino cae en vuelta PM", () => {
+    const now = limaAt(2026, 4, 18, 15, 0);
+    const arcs = computeSegmentClockArcs(
+      [{ horaInicio: "14:00", horaFin: "16:00", estado: "pendiente" }],
+      now
+    );
+    assert.equal(arcs.length, 1);
+    assert.equal(arcs[0]!.lap, 1);
+    const ptr = limaNowToClockDeg(now);
+    assert.ok(ptr >= arcs[0]!.startDeg && ptr <= arcs[0]!.endDeg);
+  });
+
+  it("segmento que cruza mediodía se parte en AM y PM", () => {
+    const now = limaAt(2026, 4, 18, 13, 0);
+    const arcs = computeSegmentClockArcs(
+      [{ horaInicio: "11:00", horaFin: "13:00", estado: "activo" }],
+      now
+    );
+    assert.equal(arcs.length, 2);
+    assert.deepEqual(
+      arcs.map(a => a.lap).sort(),
+      [0, 1]
+    );
+    assert.equal(arcs[1]!.isActive, true);
+    assert.equal(arcs[1]!.isNowInside, true);
+  });
+
+  it("marca isNowInside solo en la vuelta que contiene now", () => {
+    const now = limaAt(2026, 4, 18, 11, 30);
+    const arcs = computeSegmentClockArcs(
+      [{ horaInicio: "11:00", horaFin: "13:00", estado: "activo" }],
+      now
+    );
+    const am = arcs.find(a => a.lap === 0)!;
+    const pm = arcs.find(a => a.lap === 1)!;
+    assert.equal(am.isNowInside, true);
+    assert.equal(pm.isNowInside, false);
+  });
+});
+
+describe("computeSegmentBattleArcs", () => {
+  it("entropía dentro del segmento planificado genera arco en el mismo lap", () => {
+    const now = limaAt(2026, 4, 18, 9, 0);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00", estado: "pendiente" }];
+    const battle = computeSegmentBattleArcs({ segmentos, vehiculos: [], now });
+    const seg = computeSegmentClockArcs(segmentos, now)[0]!;
+    const ent = battle.filter(a => a.kind === "entropia");
+    assert.ok(ent.length > 0);
+    assert.equal(ent[0]!.lap, seg.lap);
+    assert.ok(ent[0]!.startDeg >= seg.startDeg - 0.01);
+    assert.ok(ent[0]!.endDeg <= seg.endDeg + 0.01);
+  });
+
+  it("vehículo activo genera conquista dentro del arco del segmento", () => {
+    const now = limaAt(2026, 4, 18, 9, 0);
+    const journalStart = getJournalDayStartMs(now);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00", estado: "activo" }];
+    const vehiculos = [{
+      autoVerdad: false,
+      tipoFlota: "tiempo",
+      status: "activo",
+      aperturaAt: journalStart,
+    }];
+    const battle = computeSegmentBattleArcs({ segmentos, vehiculos, now });
+    assert.ok(battle.some(a => a.kind === "conquista"));
+    assert.equal(battle.filter(a => a.kind === "entropia").length, 0);
+  });
+});
+
+describe("ConcienciaHorizonEngine", () => {
+  it("msToHorizonDeg: ahora = 0°, pasado negativo", () => {
+    const half = 4 * 60 * 60000;
+    assert.equal(msToHorizonDeg(0, half), 0);
+    assert.ok(msToHorizonDeg(-half, half) < 0);
+    assert.ok(msToHorizonDeg(half, half) > 0);
+  });
+
+  it("computeHorizonProjection incluye segmento futuro cerca de now", () => {
+    const now = limaAt(2026, 4, 18, 10, 0);
+    const proj = computeHorizonProjection({
+      segmentos: [{ horaInicio: "10:30", horaFin: "12:00", estado: "pendiente", nombre: "Tarde" }],
+      vehiculos: [],
+      now,
+    });
+    assert.ok(proj.arcs.some(a => a.kind === "segmento"));
+    assert.equal(proj.pointerDeg, 0);
   });
 });
 
