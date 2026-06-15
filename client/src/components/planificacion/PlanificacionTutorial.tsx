@@ -68,6 +68,11 @@ export function PlanificacionTutorial({ uid, profile, onComplete, onAskDoctor }:
             exit={{ opacity: 0, x: -12 }}
           >
             <h2 className="text-lg font-black text-white mb-2">{current.title}</h2>
+            {step === 0 && (
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: GOLD }}>
+                {JORNADA_MODULE.tagline}
+              </p>
+            )}
             <p className="text-sm text-slate-400 leading-relaxed mb-3">{current.description}</p>
             {current.action && (
               <p className="text-xs font-bold rounded-lg px-3 py-2" style={{ color: GOLD, backgroundColor: `${GOLD}12` }}>

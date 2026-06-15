@@ -9,6 +9,8 @@ import { PLANIFICACION_CHECKOUT_PLANS } from "@shared/mercadopagoPlans";
 import { MODULOS_EN_CAMINO, BADGE_EN_CAMINO } from "@shared/moduleCatalog";
 import { modulesGrantedByPlan } from "@shared/moduleAccess";
 import { captureSellerRefFromUrl, getSellerRef } from "@/lib/sellerRef";
+import { CategoriaSistemicarBanner } from "@/components/CategoriaSistemicarBanner";
+import { SISTEMICAR_CATEGORY } from "@/lib/sistemicarCategory";
 import yapeQrImage from "@assets/yape_qr_2026-02-17T22-11-48_1771384383841.png";
 
 const GOLD = "#D4AF37";
@@ -46,7 +48,7 @@ const EMBUDO_PREGUNTAS = [
   {
     id: "base",
     pregunta: "¿Tu día cierra con estructura?",
-    si: "Empieza con Planificación Base — anillo, segmentos, flota y PS.",
+    si: "Planificación Base — Escalera de Conciencia (3 capas) + anillo, segmentos y flota.",
     peldaño: 1,
   },
   {
@@ -91,13 +93,14 @@ const planificacionPlans: Plan[] = [
     pricePEN: 74,
     peldaño: "Peldaño 1 · Fundamento",
     forWho: "Todos — obligatorio",
-    anchorCopy: "Cierra el día con conciencia: anillo, segmentos y flota.",
-    roiCopy: "Organiza la jornada con datos, no con culpa.",
+    anchorCopy: SISTEMICAR_CATEGORY.nameShort + ": anillo + Escalera (presencia, entrada, producción).",
+    roiCopy: "Cierra el día con datos por capas — no con culpa ni listas infinitas.",
     features: [
+      { name: "Escalera de Conciencia — 3 capas en Métricas", locked: false, highlight: true },
       { name: "Anillo de conciencia + segmentos", locked: false, highlight: true },
       { name: "La Flota + motor de 4 ejes", locked: false },
-      { name: "PS, disciplina y visión panorámica", locked: false },
-      { name: "Termodinámica y combustible (lectura)", locked: false },
+      { name: "Disciplina, PS y cierre de jornada con sello", locked: false },
+      { name: "Combustible de conciencia (decisiones)", locked: false },
     ],
     icon: Compass,
     color: GOLD,
@@ -385,10 +388,13 @@ export default function Pagos() {
           ) : (
             <>
               <h1 className="text-3xl md:text-4xl font-black tracking-tighter text-white mb-2">
-                MÓDULOS <span className="text-primary">SISTEMICAR</span>
+                {SISTEMICAR_CATEGORY.name.toUpperCase()}
               </h1>
-              <p className="text-slate-400 text-sm">
-                No es un calendario. Pagas el módulo que evita lo que pierdes.
+              <p className="text-slate-400 text-sm max-w-lg mx-auto leading-relaxed">
+                {SISTEMICAR_CATEGORY.oneLiner}
+              </p>
+              <p className="text-[10px] text-slate-600 mt-2 italic max-w-md mx-auto">
+                {SISTEMICAR_CATEGORY.notA}
               </p>
             </>
           )}
@@ -572,6 +578,8 @@ export default function Pagos() {
 
         {/* Planificación mensual */}
         <section className="mb-10">
+          <CategoriaSistemicarBanner />
+
           <div className="flex items-center gap-2 mb-4">
             <Compass size={16} style={{ color: GOLD }} />
             <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Planificación · Mensual</h2>

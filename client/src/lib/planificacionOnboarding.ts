@@ -1,4 +1,5 @@
 import { JORNADA_MODULE } from "./jornadaBrand";
+import { SISTEMICAR_CATEGORY } from "./sistemicarCategory";
 
 export type PlanificacionPlanProfile = "base" | "estudiante" | "produccion";
 
@@ -6,6 +7,7 @@ export type PrimerDiaCheckKey =
   | "segmento"
   | "vehiculo"
   | "cierre"
+  | "escalera"
   | "desglosador"
   | "proyecto";
 
@@ -40,9 +42,14 @@ export function profileLabel(profile: PlanificacionPlanProfile): string {
 const STEPS_BASE: TutorialStep[] = [
   {
     title: `Bienvenido a ${JORNADA_MODULE.title}`,
+    description: `${SISTEMICAR_CATEGORY.oneLiner} Estructuras el día en segmentos, operas en La Flota y cierras la jornada con sello (cumplido o archivado).`,
+    action: "Siguiente: la Escalera de Conciencia.",
+  },
+  {
+    title: "Escalera de Conciencia — 3 capas",
     description:
-      "Aquí no guardas listas infinitas: estructuras el día en segmentos, operas en La Flota y cierras la jornada con conciencia (cumplido o archivado).",
-    action: "Siguiente: entender el monitor del día.",
+      "Presencia (anillo): ¿en qué se me va el tiempo? Entrada (disciplina): ¿aparezco al trabajo consciente? Producción (combustible): ¿convierto el tiempo en decisiones? Ninguna capa sustituye a la otra.",
+    action: "Ve a «Métricas» y revisa las tres capas de hoy.",
   },
   {
     title: "Segmentos = tu día en tramos",
@@ -134,6 +141,11 @@ export function getPrimerDiaItems(profile: PlanificacionPlanProfile): PrimerDiaI
       key: "cierre",
       label: "Cerré un vehículo (cumplido o archivado)",
       hint: "Sin cierre no hay PS ni datos en termodinámica.",
+    },
+    {
+      key: "escalera",
+      label: "Revisé la Escalera de Conciencia en Métricas",
+      hint: "Métricas → Presencia · Entrada · Producción — tu espejo por capas.",
     },
   ];
   if (profile === "estudiante" || profile === "produccion") {
@@ -258,6 +270,7 @@ export function buildPrimerDiaSummaryForDoctor(
 /** Preguntas rápidas para el Doctor en Jornada */
 export const PLANIFICACION_DOCTOR_QUICK_PROMPTS = [
   "¿Por dónde empiezo hoy?",
+  "¿Qué es la Escalera de Conciencia?",
   "¿Qué es un segmento?",
   "¿Express o vehículo profundo?",
   "¿Cómo funciona el desglosador?",

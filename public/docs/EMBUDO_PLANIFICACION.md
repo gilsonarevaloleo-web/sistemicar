@@ -8,7 +8,7 @@
 
 ## 1. Tesis del embudo
 
-SISTEMICAR está pensado como **componentes que resuelven mundos distintos**. Planificación es un mundo: **cerrar el día con conciencia medida**.
+SISTEMICAR está pensado como **componentes que resuelven mundos distintos**. Planificación es un mundo: **motor de cierre consciente por capas** (presencia → entrada → producción). No competimos con calendarios — medimos cierres y decisiones.
 
 La mecánica de precio debe ser **familiarización progresiva**:
 

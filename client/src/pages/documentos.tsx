@@ -15,7 +15,7 @@ const DOCUMENTOS = [
     archivo: "/vendedores-planificacion",
     icon: Users,
     color: EMERALD,
-    version: "v1.5",
+    version: "v1.6",
     isRoute: true
   },
   {

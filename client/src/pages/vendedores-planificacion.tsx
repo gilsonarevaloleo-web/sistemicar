@@ -18,6 +18,8 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { SELLER_COMMISSION_RATE } from "@shared/sellerCommissions";
 import { buildSellerPagosUrl } from "@/lib/sellerRef";
+import { CategoriaSistemicarBanner } from "@/components/CategoriaSistemicarBanner";
+import { SISTEMICAR_CATEGORY } from "@/lib/sistemicarCategory";
 import {
   CATALOGO_PELDAO,
   ESCALERA_CAPAS,
@@ -127,11 +129,15 @@ export default function VendedoresPlanificacion() {
             className="text-2xl md:text-3xl font-black mb-2"
             style={{ fontFamily: "Playfair Display, serif", color: GOLD }}
           >
-            Planificación SISTEMICAR
+            {SISTEMICAR_CATEGORY.name}
           </h1>
           <p className="text-slate-400 text-sm max-w-md mx-auto leading-relaxed">
-            Embudo comercial por peldaños + Escalera de Conciencia (capas de desarrollo). Solo Planificación — Espejo es otro producto.
+            {SISTEMICAR_CATEGORY.oneLiner} Embudo comercial por peldaños + Escalera (capas de desarrollo). Solo Planificación — Espejo es otro producto.
           </p>
+        </div>
+
+        <div className="mb-6">
+          <CategoriaSistemicarBanner variant="compact" />
         </div>
 
         {/* Resumen 30s */}

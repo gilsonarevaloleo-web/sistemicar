@@ -1,12 +1,13 @@
 /** Contenido del kit vendedores — fuente compartida con `/vendedores-planificacion`. */
-export const KIT_VERSION = "1.5";
+import { SISTEMICAR_CATEGORY, CATEGORY_FOOTER } from "@/lib/sistemicarCategory";
 
-export const KIT_ELEVATOR_PITCH =
-  "Planificación SISTEMICAR cierra tu día en tres peldaños comerciales: Base (anillo, segmentos, PS y Escalera de Conciencia), Operativo (unidades y récord — primer upsell), Soberanía (Imán, imprevistos y pasos en proyectos). No es una lista — es maduración medida. ¿Tu día cierra, mides unidades, o ordenas ideas sueltas? Te digo el peldaño en un minuto.";
+export const KIT_VERSION = "1.6";
+
+export const KIT_ELEVATOR_PITCH = SISTEMICAR_CATEGORY.elevator;
 
 export const KIT_RESUMEN_30S = [
-  "SISTEMICAR Planificación no es calendario ni lista de tareas: es motor de cierre del día con embudo de maduración.",
-  "Peldaño 1 Base — estructura, anillo, Escalera de Conciencia, segmentos, PS.",
+  SISTEMICAR_CATEGORY.name + " — no calendario ni lista de tareas.",
+  "Peldaño 1 Base — Escalera de Conciencia, anillo, segmentos, PS.",
   "Peldaño 2 Operativo — conquista medible (unidades, ritmo, récord) — primer upsell.",
   "Peldaño 3 Soberanía — orden mental avanzado (Imán, enfoque, proyectos).",
   "Espejo es otro producto. Comisión 30% recurrente mientras el cliente pague.",
@@ -48,8 +49,7 @@ export const ESCALERA_CAPAS = [
   },
 ] as const;
 
-export const ESCALERA_INTEGRACION =
-  "Las tres capas son peldaños de desarrollo, no competencia: ninguna sustituye a la otra. El anillo protege el cuándo; las decisiones miden el qué se hizo de verdad.";
+export const ESCALERA_INTEGRACION = CATEGORY_FOOTER;
 
 export const PRODUCTOS = [
   {

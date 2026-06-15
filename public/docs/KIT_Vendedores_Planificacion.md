@@ -1,15 +1,17 @@
 # Kit vendedores — Planificación SISTEMICAR
 
-**Versión:** 1.5 · **Actualizado:** junio 2026  
+**Versión:** 1.6 · **Actualizado:** junio 2026  
 **Audiencia:** vendedores afiliados, closers, partners de distribución  
 **Contacto operativo:** Gilson · WhatsApp +51 918 260 514  
 **Documento maestro embudo:** `EMBUDO_PLANIFICACION.md`
+
+**Categoría pública:** Motor de cierre consciente por capas — no calendario ni lista de tareas.
 
 ---
 
 ## 1. Resumen en 30 segundos
 
-SISTEMICAR **Planificación** no es un calendario ni una lista de tareas. Es un **motor de cierre del día** con embudo de maduración:
+SISTEMICAR Jornada es un **motor de cierre consciente por capas**: presencia (anillo), entrada (disciplina) y producción (decisiones). No es un calendario ni una lista de tareas. Es un **embudo de maduración comercial**:
 
 1. **Base** — estructura, anillo, **Escalera de Conciencia**, segmentos, PS  
 2. **Operativo** — conquista medible (unidades, ritmo, récord) — **primer upsell**  

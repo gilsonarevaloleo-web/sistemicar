@@ -8,7 +8,7 @@ import {
 
 describe("planificacionOnboarding", () => {
   it("getTutorialSteps varía por perfil", () => {
-    assert.equal(getTutorialSteps("base").length, 5);
+    assert.equal(getTutorialSteps("base").length, 6);
     assert.ok(getTutorialSteps("estudiante").length > getTutorialSteps("base").length);
     assert.ok(getTutorialSteps("produccion").length > getTutorialSteps("base").length);
   });
