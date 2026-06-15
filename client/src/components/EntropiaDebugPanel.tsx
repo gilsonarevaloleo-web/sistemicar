@@ -5,6 +5,7 @@ import {
   buildEntropyDebugSnapshot,
   type EntropyDebugSnapshot,
 } from "@/engines/ConcienciaEngine";
+import { useConcienciaClockTick } from "@/lib/concienciaClock";
 
 const LOG_KEY = "sistemicar_entropy_debug_log";
 const MAX_LOG = 120;
@@ -40,10 +41,10 @@ function exportEntropyLog(): string {
 interface EntropiaDebugPanelProps {
   segmentos: SegmentoAnilloLite[];
   vehicles: Vehicle[];
-  tick: number;
 }
 
-export function EntropiaDebugPanel({ segmentos, vehicles, tick }: EntropiaDebugPanelProps) {
+export function EntropiaDebugPanel({ segmentos, vehicles }: EntropiaDebugPanelProps) {
+  const tick = useConcienciaClockTick();
   const [expanded, setExpanded] = useState(true);
   const prevEntropiaRef = useRef<number | null>(null);
   const snapshot = useMemo(

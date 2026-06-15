@@ -89,6 +89,29 @@ function saveState(state: EntropyMonotonicState, persist: boolean): void {
   if (persist) writeStateToStorage(state);
 }
 
+const PERSIST_MIN_DELTA = 0.1;
+
+function shouldPersistMonotonicState(
+  prev: EntropyMonotonicState,
+  next: EntropyMonotonicState
+): boolean {
+  if (prev.journalDayMs !== next.journalDayMs) return true;
+  if (prev.gapAnchorMs !== next.gapAnchorMs) return true;
+  if (Math.abs(next.floorMin - prev.floorMin) >= PERSIST_MIN_DELTA) return true;
+  return false;
+}
+
+function saveStateIfChanged(
+  prev: EntropyMonotonicState,
+  next: EntropyMonotonicState,
+  persist: boolean
+): void {
+  memoryState = next;
+  if (persist && shouldPersistMonotonicState(prev, next)) {
+    writeStateToStorage(next);
+  }
+}
+
 function readLaunchGate(): ConsciousLaunchGate | null {
   return memoryLaunchGate ?? readLaunchGateFromStorage();
 }
@@ -148,22 +171,28 @@ export function applyMonotonicLiveEntropy(params: {
   if (consciousNow) {
     const allowDecrease = consumeConsciousLaunchGate(nowMs, persist);
     if (allowDecrease || rawMin + 0.05 >= state.floorMin) {
-      state.floorMin = Math.max(0, rawMin);
-      state.gapAnchorMs = null;
-      state.updatedAtMs = nowMs;
-      saveState(state, persist);
-      return Math.max(0, rawMin);
+      const next: EntropyMonotonicState = {
+        ...state,
+        floorMin: Math.max(0, rawMin),
+        gapAnchorMs: null,
+        updatedAtMs: nowMs,
+      };
+      saveStateIfChanged(state, next, persist);
+      return next.floorMin;
     }
-    state.updatedAtMs = nowMs;
-    saveState(state, persist);
+    const next: EntropyMonotonicState = { ...state, updatedAtMs: nowMs };
+    saveStateIfChanged(state, next, persist);
     return state.floorMin;
   }
 
-  if (!state.gapAnchorMs) state.gapAnchorMs = nowMs;
-  state.floorMin = Math.max(state.floorMin, rawMin);
-  state.updatedAtMs = nowMs;
-  saveState(state, persist);
-  return state.floorMin;
+  const next: EntropyMonotonicState = {
+    ...state,
+    gapAnchorMs: state.gapAnchorMs ?? nowMs,
+    floorMin: Math.max(state.floorMin, rawMin),
+    updatedAtMs: nowMs,
+  };
+  saveStateIfChanged(state, next, persist);
+  return next.floorMin;
 }
 
 export function getEntropyMonotonicDebugState(nowMs = Date.now()): EntropyMonotonicState | null {

@@ -217,7 +217,7 @@ import {
   clearCruceWarnedIds,
   runSegmentAttentionTickNow,
 } from "@/lib/segmentAttentionCycle";
-import { useConcienciaClockTick } from "@/lib/concienciaClock";
+import AnilloConcienciaLive from "@/components/AnilloConcienciaLive";
 import {
   isTikSoundEnabled,
   setTikSoundEnabled,
@@ -424,7 +424,6 @@ import { PlanificacionPrimerDia } from "@/components/planificacion/Planificacion
 import { isTutorialDone } from "@/lib/planificacionOnboarding";
 import { progressionToProfile } from "@/lib/planificacionProfile";
 import { openDoctorIAChat } from "@/lib/doctorIaBridge";
-import AnilloConciencia from "@/components/AnilloConciencia";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import PlanificacionCockpit from "@/components/PlanificacionCockpit";
 import ImanPensamientosDock from "@/components/ImanPensamientosDock";
@@ -448,7 +447,7 @@ import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
-import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, armEntropyGapOnConsciousClose, formatMinutosJornada, nowToHalfDayLap, resetLiveEntropyMonotonic } from "@/engines/ConcienciaEngine";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, armEntropyGapOnConsciousClose, formatMinutosJornada, resetLiveEntropyMonotonic } from "@/engines/ConcienciaEngine";
 import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/EntropiaDebugPanel";
 import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
 import { sealVehicleSessionClose } from "@/lib/vehicleSessionSeal";
@@ -1208,7 +1207,6 @@ export default function Planeacion() {
   const [puertaVozEnabled, setPuertaVozEnabledState] = useState(() => isPuertaVozEnabled());
   const [desglosadorVozEnabled, setDesglosadorVozEnabledState] = useState(() => isDesglosadorVoiceEnabled());
 
-  const anilloTick = useConcienciaClockTick();
   const [conquistaPulse, setConquistaPulse] = useState(false);
   const conquistaPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1547,26 +1545,18 @@ export default function Planeacion() {
     return null;
   }, [planilla, segmentoActivo]);
 
-  const anilloModel = useMemo(() => {
-    void anilloTick;
+  const anilloSnapshotForEscalera = useMemo(() => {
     const segs = planilla?.segmentos || [];
-    const nowMs = Date.now();
     const timeline = computeLiveEntropy({
       segmentos: segs,
       vehiculos: vehicles,
-      now: nowMs,
+      now: Date.now(),
     });
-    const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
     return {
-      segs,
-      metricas: timeline.metricas,
-      anilloEstado: timeline.anilloEstado,
-      pointerLap: nowToHalfDayLap(nowMs),
-      timelineArcs: timeline.timelineArcs,
       dayStats: timeline.dayStats,
-      segConquistados,
+      metricas: timeline.metricas,
     };
-  }, [planilla, vehicles, anilloTick]);
+  }, [planilla, vehicles, segmentTick]);
 
   const showEntropyDebug = useMemo(() => isEntropyDebugEnabled(), []);
 
@@ -1722,7 +1712,7 @@ export default function Planeacion() {
       entropiaMin: balance.entropiaMin,
       vacioMin: balance.vacioMin,
     });
-  }, [planilla, vehicles, focusEventsToday, anilloTick, segmentTick, user]);
+  }, [planilla, vehicles, focusEventsToday, segmentTick, user]);
 
   const termoCompare = useMemo(
     () => computeTermodinamicaCompareV2(yesterdayTermoSnapshot, todayTermoLive),
@@ -1734,7 +1724,7 @@ export default function Planeacion() {
     const jornadaVehicles = vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs));
     const ledger = user ? getDecisionLedger(user.uid, dayStartMs) : [];
     return computeCombustibleDia(jornadaVehicles, dayStartMs, ledger);
-  }, [vehicles, segmentTick, anilloTick, user]);
+  }, [vehicles, segmentTick, user]);
 
   const disciplinaLive = useMemo(() => {
     const dayStartMs = getLimaDayStartMs();
@@ -1757,7 +1747,7 @@ export default function Planeacion() {
       nowMs: Date.now(),
       dayStartMs,
     });
-  }, [planilla, segmentTick, anilloTick]);
+  }, [planilla, segmentTick]);
 
   const atencionCompare = useMemo(
     () => computeAtencionCompare(null, atencionLive),
@@ -1790,8 +1780,8 @@ export default function Planeacion() {
     const dayStartMs = getJournalDayStartMs(nowMs);
     const ledger = user ? getDecisionLedger(user.uid, dayStartMs) : [];
     return buildEscaleraConciencia({
-      dayStats: anilloModel.dayStats,
-      conquistaArcPct: anilloModel.metricas.conquistaArcPct,
+      dayStats: anilloSnapshotForEscalera.dayStats,
+      conquistaArcPct: anilloSnapshotForEscalera.metricas.conquistaArcPct,
       disciplina: disciplinaLive,
       combustible: combustibleLive,
       ledger,
@@ -1801,12 +1791,11 @@ export default function Planeacion() {
       todayFecha: getJournalDateString(),
     });
   }, [
-    anilloModel,
+    anilloSnapshotForEscalera,
     disciplinaLive,
     combustibleLive,
     disciplinaSnapshots,
     user,
-    anilloTick,
     segmentTick,
   ]);
 
@@ -6379,18 +6368,12 @@ export default function Planeacion() {
               </p>
             )}
             anillo={(
-              <AnilloConciencia
-                planificacionPct={anilloModel.metricas.planificacionPct}
-                conquistaArcPct={anilloModel.metricas.conquistaArcPct}
-                entropiaArcPct={anilloModel.metricas.entropiaArcPct}
-                timelineArcs={anilloModel.timelineArcs}
+              <AnilloConcienciaLive
+                segmentos={planilla?.segmentos || []}
+                vehicles={vehicles}
                 conquistaPulse={conquistaPulse}
+                ringOnly
                 size={72}
-                segmentos={anilloModel.segs}
-                pointerDeg={anilloModel.anilloEstado.deg}
-                pointerLap={anilloModel.pointerLap}
-                pointerMode={anilloModel.anilloEstado.mode}
-                centerGuide={anilloModel.anilloEstado.centerGuide}
               />
             )}
             segmentoChip={(
@@ -6995,35 +6978,13 @@ export default function Planeacion() {
             <p className="text-[7px] text-slate-600 text-center mb-2 leading-snug px-2">
               Tiempo presente · el combustible son tus decisiones cerradas (abajo)
             </p>
-            <AnilloConciencia
-              planificacionPct={anilloModel.metricas.planificacionPct}
-              conquistaArcPct={anilloModel.metricas.conquistaArcPct}
-              entropiaArcPct={anilloModel.metricas.entropiaArcPct}
-              timelineArcs={anilloModel.timelineArcs}
+            <AnilloConcienciaLive
+              segmentos={planilla?.segmentos || []}
+              vehicles={vehicles}
               conquistaPulse={conquistaPulse}
               size={130}
-              segmentos={anilloModel.segs}
-              pointerDeg={anilloModel.anilloEstado.deg}
-              pointerLap={anilloModel.pointerLap}
-              pointerMode={anilloModel.anilloEstado.mode}
-              centerGuide={anilloModel.anilloEstado.centerGuide}
+              showDayStats
             />
-            <div className="mt-2 grid grid-cols-3 gap-1 w-full text-center">
-              <div>
-                <p className="text-[7px] uppercase font-bold" style={{ color: "#8B5CF6" }}>Consciente</p>
-                <p className="text-xs font-black" style={{ color: "#8B5CF6" }}>{formatMinutosJornada(anilloModel.dayStats.conquistaMin)}</p>
-              </div>
-              <div>
-                <p className="text-[7px] uppercase font-bold" style={{ color: BLOOD }}>Inconsciente</p>
-                <p className="text-xs font-black" style={{ color: anilloModel.dayStats.entropiaMin > 0 ? BLOOD : "rgba(148,163,184,0.5)" }}>
-                  {formatMinutosJornada(anilloModel.dayStats.entropiaMin)}
-                </p>
-              </div>
-              <div>
-                <p className="text-[7px] text-slate-500 uppercase">Seg. cerrados</p>
-                <p className="text-xs font-black" style={{ color: "#00FFC3" }}>{anilloModel.segConquistados}/{anilloModel.segs.length}</p>
-              </div>
-            </div>
             <div
               className="mt-2 w-full p-2 rounded-lg border text-center"
               style={{ backgroundColor: "rgba(168,85,247,0.08)", borderColor: "rgba(168,85,247,0.28)" }}
@@ -9598,7 +9559,6 @@ export default function Planeacion() {
           <EntropiaDebugPanel
             segmentos={planilla?.segmentos || []}
             vehicles={vehicles}
-            tick={anilloTick}
           />
         )}
       </div>

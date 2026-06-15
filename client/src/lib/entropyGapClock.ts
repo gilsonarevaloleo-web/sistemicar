@@ -27,6 +27,15 @@ function readGapFromStorage(): LiveGapClockState | null {
 }
 
 function writeGapToStorage(state: LiveGapClockState | null): void {
+  if (state && memoryGap) {
+    const same =
+      memoryGap.journalDayMs === state.journalDayMs &&
+      memoryGap.gapAnchorMs === state.gapAnchorMs &&
+      memoryGap.baselineEntropyMin === state.baselineEntropyMin;
+    if (same) return;
+  }
+  if (!state && memoryGap === null) return;
+
   memoryGap = state;
   if (typeof localStorage === "undefined") return;
   try {
