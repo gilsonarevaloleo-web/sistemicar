@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Area,
@@ -124,7 +124,7 @@ export interface EscaleraConcienciaCardProps {
   detalleOpen?: boolean;
 }
 
-export function EscaleraConcienciaCard({
+function EscaleraConcienciaCard({
   model,
   disciplinaSerie,
   compact = false,
@@ -364,3 +364,6 @@ export function EscaleraConcienciaCard({
     </motion.div>
   );
 }
+
+const EscaleraConcienciaCardMemo = memo(EscaleraConcienciaCard);
+export { EscaleraConcienciaCardMemo as EscaleraConcienciaCard };

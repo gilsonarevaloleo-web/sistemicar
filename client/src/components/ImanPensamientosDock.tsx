@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, FlaskConical, Plus, Send, Trash2 } from "lucide-react";
 import {
   RUTA_TACTICA_META,
@@ -44,7 +44,7 @@ type Props = {
   dockBottomPx?: number;
 };
 
-export default function ImanPensamientosDock({
+function ImanPensamientosDock({
   items,
   proyectos,
   defaultProyectoId = "",
@@ -483,3 +483,5 @@ export default function ImanPensamientosDock({
     </div>
   );
 }
+
+export default memo(ImanPensamientosDock);

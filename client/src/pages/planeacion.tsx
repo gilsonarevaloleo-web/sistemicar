@@ -142,9 +142,12 @@ import {
   resolveLocalVehicleMatch,
   findLocalClosedOverride,
   isOrphanDesglosadorInterrupt,
-  reconcileGhostActiveVehicles,
   reconcileStaleCentinelaInFirestore,
 } from "@/lib/persistence";
+import {
+  requestGhostReconcileAfterVehicleAction,
+  requestGhostReconcileForced,
+} from "@/lib/ghostReconcileScheduler";
 import {
   filterVehiclesForAnilloCoverage,
   filterVehiclesForEntropy,
@@ -357,7 +360,6 @@ import {
 import type { PlanillaDailySnapshot } from "@/lib/termodinamicaAtencional";
 import { formatCombustibleResumen, formatCombustibleDetalle, formatCombustibleCelebracionBloque } from "@/lib/combustibleConciencia";
 import { buildEscaleraConciencia, serializeEscaleraForCierreWithStats } from "@/lib/escaleraConcienciaEngine";
-import { EscaleraConcienciaCard } from "@/components/escalera-conciencia-card";
 import { EscaleraCierreResumen } from "@/components/escalera-cierre-resumen";
 import { repairStuckSituacionVehicles } from "@/lib/situacionRepair";
 import {
@@ -426,7 +428,8 @@ import { progressionToProfile } from "@/lib/planificacionProfile";
 import { openDoctorIAChat } from "@/lib/doctorIaBridge";
 import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import PlanificacionCockpit from "@/components/PlanificacionCockpit";
-import ImanPensamientosDock from "@/components/ImanPensamientosDock";
+import PlaneacionCrisolDock from "@/components/planeacion/PlaneacionCrisolDock";
+import PlaneacionMetricsEscalera from "@/components/planeacion/PlaneacionMetricsEscalera";
 import {
   aplicarProyectoHeredadoASub,
   devolverRingPendientesAlIman,
@@ -1208,6 +1211,20 @@ export default function Planeacion() {
   const [desglosadorVozEnabled, setDesglosadorVozEnabledState] = useState(() => isDesglosadorVoiceEnabled());
 
   const [conquistaPulse, setConquistaPulse] = useState(false);
+  const ghostReconcileRef = useRef<( () => void) | null>(null);
+  ghostReconcileRef.current = () => {
+    if (user?.uid) requestGhostReconcileAfterVehicleAction(user.uid);
+  };
+
+  const consciousActiveSignature = useMemo(
+    () =>
+      vehicles
+        .filter(v => v.status === "activo" && !v.autoVerdad)
+        .map(v => v.id)
+        .sort()
+        .join(","),
+    [vehicles]
+  );
   const conquistaPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerConquistaPulse = useCallback(() => {
@@ -1590,24 +1607,13 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !consciousActiveSignature) return;
     releaseCentinela();
-  }, [user, vehicles]);
+  }, [user, consciousActiveSignature]);
 
   useEffect(() => {
     if (!user) return;
     void reconcileStaleCentinelaInFirestore(user.uid);
-    let ghostInterval: ReturnType<typeof setInterval> | undefined;
-    const ghostStartTimer = setTimeout(() => {
-      void reconcileGhostActiveVehicles(user.uid);
-      ghostInterval = setInterval(() => {
-        void reconcileGhostActiveVehicles(user.uid);
-      }, 60_000);
-    }, 5_000);
-    return () => {
-      clearTimeout(ghostStartTimer);
-      if (ghostInterval) clearInterval(ghostInterval);
-    };
   }, [user]);
 
   useEffect(() => {
@@ -1642,7 +1648,7 @@ export default function Planeacion() {
       resetLiveEntropyMonotonic();
       resetGhostSessionCache();
       loadYesterday();
-      void reconcileGhostActiveVehicles(user.uid);
+      requestGhostReconcileForced(user.uid);
     };
     window.addEventListener("journal-day-changed", onDayChange);
     return () => window.removeEventListener("journal-day-changed", onDayChange);
@@ -1978,6 +1984,7 @@ export default function Planeacion() {
   };
   const endClose = (vehicleId: string) => {
     closingInProgressRef.current.delete(vehicleId);
+    ghostReconcileRef.current?.();
   };
   const pausaInterrupcionLockRef = useRef<string | null>(null);
   const centinelaArchiveInFlightRef = useRef(false);
@@ -2641,6 +2648,7 @@ export default function Planeacion() {
       }
       setIsCreating(false);
       scrollFlotaActivosIntoView();
+      ghostReconcileRef.current?.();
 
       toast.success(`"${titulo}" lanzado · ${flotaConfig.label}`, {
         description: flotaConfig.psCierre,
@@ -3157,6 +3165,7 @@ export default function Planeacion() {
       setIsCreating(false);
       setVehicleMode("selector");
       scrollFlotaActivosIntoView();
+      ghostReconcileRef.current?.();
       toast.success(`"${titulo}" lanzado (+${terminoInfo?.puntosCumple || 0} PS al completar)`, {
         style: { backgroundColor: PIZARRA, border: `1px solid ${terminoInfo?.color || AZURE}`, color: terminoInfo?.color || AZURE },
       });
@@ -4043,6 +4052,7 @@ export default function Planeacion() {
         setVehicles(synced);
         setExpandedId(prev => (prev === provisionalInterruptId ? realId : prev));
       }
+      ghostReconcileRef.current?.();
     } catch {
       const rolledBack = vehiclesRef.current
         .filter(v => v.id !== provisionalInterruptId)
@@ -6479,7 +6489,8 @@ export default function Planeacion() {
 
         {/* Escalera de Conciencia — presencia · entrada · producción */}
         {(planLayout === "full" || planTab === "metricas") && (
-          <EscaleraConcienciaCard
+          <PlaneacionMetricsEscalera
+            visible
             model={escaleraConciencia}
             disciplinaSerie={disciplinaSerie}
             compact={compactLayout}
@@ -9542,17 +9553,16 @@ export default function Planeacion() {
           />
         )}
 
-        <ImanPensamientosDock
+        <PlaneacionCrisolDock
           items={reservaActivas}
           proyectos={imanProyectos}
           defaultProyectoId={segmentoActivo?.proyectoVinculadoId ?? ""}
-          onQuickAdd={(texto, ruta, proyectoId) => handleReservaTacticaQuickAdd(texto, ruta, proyectoId)}
-          onEnviarUnidad={(id) => void handleEnviarReservaASituacion(id)}
-          onEnviarSeleccion={(ids) => void handleEnviarReservasSeleccionadas(ids)}
-          onAbrirNido={(nidoId) => void handleAbrirNidoEnSituacion(nidoId)}
-          onDelete={(id) => void handleReservaEliminar(id)}
-          onRutaChange={(id, ruta) => void handleReservaRutaChange(id, ruta)}
-          colors={{ plata: PLATA, cyan: CYAN, gold: GOLD }}
+          onQuickAdd={handleReservaTacticaQuickAdd}
+          onEnviarUnidad={handleEnviarReservaASituacion}
+          onEnviarSeleccion={handleEnviarReservasSeleccionadas}
+          onAbrirNido={handleAbrirNidoEnSituacion}
+          onDelete={handleReservaEliminar}
+          onRutaChange={handleReservaRutaChange}
         />
 
         {showEntropyDebug && (

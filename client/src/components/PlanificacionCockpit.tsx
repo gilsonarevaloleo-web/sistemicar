@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Layers, Target } from "lucide-react";
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 type PlanTab = "operar" | "metricas" | "meta";
 
@@ -16,7 +16,7 @@ type Props = {
   segmentoChip?: ReactNode;
 };
 
-export default function PlanificacionCockpit({
+function PlanificacionCockpit({
   title = "Jornada",
   tagline = "Cierre de jornada con conciencia",
   compact,
@@ -122,3 +122,4 @@ export default function PlanificacionCockpit({
   );
 }
 
+export default memo(PlanificacionCockpit);

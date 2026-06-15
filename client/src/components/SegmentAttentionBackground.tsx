@@ -10,8 +10,8 @@ import {
   type Planilla,
   type UserProgression,
   type Vehicle,
-  reconcileGhostActiveVehicles,
 } from "@/lib/persistence";
+import { requestGhostReconcileAfterVehicleAction } from "@/lib/ghostReconcileScheduler";
 import { getJournalDateString } from "@/lib/segmentTime";
 import {
   clearCruceWarnedIds,
@@ -170,7 +170,7 @@ export function SegmentAttentionBackground() {
       resetInterval();
       burstConcienciaClockTick();
       void runTick();
-      if (user) void reconcileGhostActiveVehicles(user.uid);
+      if (user) requestGhostReconcileAfterVehicleAction(user.uid);
     };
 
     document.addEventListener("visibilitychange", onVisible);
