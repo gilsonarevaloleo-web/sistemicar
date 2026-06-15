@@ -646,6 +646,43 @@ describe("computeAnilloEstado", () => {
     assert.equal(b, c, "mismo instante debe dar mismo valor con o sin fantasma");
   });
 
+  it("freeze impide reset a cero si el motor crudo parpadea en hueco", () => {
+    resetLiveEntropyMonotonic();
+    const now = limaAt(2026, 4, 18, 8, 15);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const peak = computeLiveEntropy({ segmentos, vehiculos: [], now }).dayStats.entropiaMin;
+    assert.ok(peak > 1, "baseline con hueco");
+    const archivedCover: Vehicle = {
+      id: "v-archived-flicker",
+      titulo: "Sesión cerrada",
+      criterioFin: "manual",
+      criterioDetalle: "",
+      tiempoInicio: new Date(limaAt(2026, 4, 18, 8, 0)),
+      ejes: {
+        enfoque: { text: "", trifecta: "pendiente" },
+        conflicto: { text: "", trifecta: "pendiente" },
+        pasos: { text: "", trifecta: "pendiente" },
+        limite: { text: "", trifecta: "pendiente" },
+      },
+      status: "cumplido",
+      userId: "u1",
+      createdAt: new Date(limaAt(2026, 4, 18, 8, 0)),
+      tipoFlota: "tiempo",
+      aperturaAt: limaAt(2026, 4, 18, 8, 0),
+      cierreAt: limaAt(2026, 4, 18, 8, 5),
+      duracionFinal: 5,
+    };
+    const afterStale = computeLiveEntropy({
+      segmentos,
+      vehiculos: [archivedCover],
+      now,
+    }).dayStats.entropiaMin;
+    assert.ok(
+      afterStale + 0.05 >= peak,
+      `entropía visible no debe resetear (${peak} → ${afterStale})`
+    );
+  });
+
   it("activo cruzando 05:00 sin filtro de anillo aún muestra conquista en motor", () => {
     const now = limaAt(2026, 4, 18, 9, 0);
     const journalStart = getJournalDayStartMs(now);

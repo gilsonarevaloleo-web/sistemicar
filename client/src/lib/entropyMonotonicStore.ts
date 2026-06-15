@@ -3,6 +3,7 @@
  * Evita resets espurios por reconcile Firebase / cobertura intermitente.
  */
 import { clearLiveGapClock } from "./entropyGapClock";
+import { resetLiveEntropyFreeze } from "./entropyLiveFreeze";
 import { getJournalDayStartMs } from "./segmentTime";
 
 const STATE_KEY = "sistemicar_entropy_monotonic_v2";
@@ -122,6 +123,8 @@ function writeLaunchGate(gate: ConsciousLaunchGate | null, persist: boolean): vo
 }
 
 export function resetEntropyMonotonicState(): void {
+  clearLiveGapClock();
+  resetLiveEntropyFreeze();
   memoryState = null;
   memoryLaunchGate = null;
   if (typeof localStorage !== "undefined") {
@@ -137,6 +140,7 @@ export function resetEntropyMonotonicState(): void {
 /** Llamar al lanzar vehículo consciente legítimo (Flota, Express, desglosador). */
 export function recordConsciousVehicleLaunch(nowMs = Date.now()): void {
   clearLiveGapClock();
+  resetLiveEntropyFreeze(nowMs);
   writeLaunchGate({ atMs: nowMs, consumed: false }, true);
 }
 

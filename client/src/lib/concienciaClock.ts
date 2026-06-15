@@ -3,9 +3,22 @@
  * aunque no haya vehículos activos ni cambios de estado en segmentos.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const CONCIENCIA_CLOCK_TICK_EVENT = "sistemicar-conciencia-clock-tick";
+
+/** Móvil / pantalla estrecha: métricas densas cada 5 s, puntero cada 1 s. */
+export function isCoarseConcienciaDevice(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      window.matchMedia("(pointer: coarse)").matches ||
+      window.matchMedia("(max-width: 768px)").matches
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function dispatchConcienciaClockTick(): void {
   if (typeof window === "undefined") return;
@@ -21,13 +34,36 @@ export function burstConcienciaClockTick(bursts = 3, gapMs = 120): void {
   }
 }
 
-/** Suscripción al reloj global (1 s en primer plano, 5 s en background). */
+/** Suscripción al reloj global (1 s) — puntero visual. */
 export function useConcienciaClockTick(): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const onClock = () => setTick(t => t + 1);
     window.addEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
     dispatchConcienciaClockTick();
+    return () => window.removeEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
+  }, []);
+  return tick;
+}
+
+/**
+ * Tick para métricas pesadas (entropía, arcos): 1 s escritorio, ~5 s móvil.
+ */
+export function useConcienciaMetricTick(): number {
+  const [tick, setTick] = useState(0);
+  const skipRef = useRef(0);
+  const coarseRef = useRef(isCoarseConcienciaDevice());
+  useEffect(() => {
+    const onClock = () => {
+      const step = coarseRef.current ? 5 : 1;
+      skipRef.current += 1;
+      if (skipRef.current >= step) {
+        skipRef.current = 0;
+        setTick(t => t + 1);
+      }
+    };
+    window.addEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
+    setTick(t => t + 1);
     return () => window.removeEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
   }, []);
   return tick;

@@ -3,10 +3,11 @@ import AnilloConciencia from "@/components/AnilloConciencia";
 import {
   computeLiveEntropy,
   formatMinutosJornada,
+  nowToClockDeg,
   nowToHalfDayLap,
   type SegmentoAnilloLite,
 } from "@/engines/ConcienciaEngine";
-import { useConcienciaClockTick } from "@/lib/concienciaClock";
+import { useConcienciaClockTick, useConcienciaMetricTick } from "@/lib/concienciaClock";
 import type { Vehicle } from "@/lib/persistence";
 
 const BLOOD = "#FF3131";
@@ -24,7 +25,8 @@ export interface AnilloConcienciaLiveProps {
 }
 
 /**
- * Anillo + contador inconsciente en vivo. Aísla el tick de 1 s del resto de Jornada.
+ * Anillo + contador inconsciente en vivo. Aísla ticks del resto de Jornada.
+ * Métricas pesadas: 1 s escritorio / ~5 s móvil. Puntero: cada 1 s (barato).
  */
 function AnilloConcienciaLiveInner({
   segmentos,
@@ -35,9 +37,11 @@ function AnilloConcienciaLiveInner({
   className,
   showDayStats = false,
 }: AnilloConcienciaLiveProps) {
-  const tick = useConcienciaClockTick();
+  const pointerTick = useConcienciaClockTick();
+  const metricTick = useConcienciaMetricTick();
+
   const model = useMemo(() => {
-    void tick;
+    void metricTick;
     const nowMs = Date.now();
     const timeline = computeLiveEntropy({
       segmentos,
@@ -51,12 +55,21 @@ function AnilloConcienciaLiveInner({
       segs: segmentos,
       metricas: timeline.metricas,
       anilloEstado: timeline.anilloEstado,
-      pointerLap: nowToHalfDayLap(nowMs),
       timelineArcs: timeline.timelineArcs,
       dayStats: timeline.dayStats,
       segConquistados,
     };
-  }, [segmentos, vehicles, tick]);
+  }, [segmentos, vehicles, metricTick]);
+
+  const pointerDeg = useMemo(() => {
+    void pointerTick;
+    return nowToClockDeg(Date.now());
+  }, [pointerTick]);
+
+  const pointerLap = useMemo(() => {
+    void pointerTick;
+    return nowToHalfDayLap(Date.now());
+  }, [pointerTick]);
 
   const ring = (
     <AnilloConciencia
@@ -67,8 +80,8 @@ function AnilloConcienciaLiveInner({
       conquistaPulse={conquistaPulse}
       size={size}
       segmentos={model.segs}
-      pointerDeg={model.anilloEstado.deg}
-      pointerLap={model.pointerLap}
+      pointerDeg={pointerDeg}
+      pointerLap={pointerLap}
       pointerMode={model.anilloEstado.mode}
       centerGuide={model.anilloEstado.centerGuide}
     />

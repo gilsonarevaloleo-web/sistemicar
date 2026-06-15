@@ -62,17 +62,22 @@ export function getLiveGapClockState(nowMs = Date.now()): LiveGapClockState | nu
   return state;
 }
 
-/** Inicia o congela un hueco inconsciente con baseline inmutable. */
+/** Inicia o congela un hueco inconsciente con baseline inmutable (nunca baja). */
 export function armLiveGapClock(params: {
   gapAnchorMs: number;
   baselineEntropyMin: number;
   nowMs?: number;
 }): LiveGapClockState {
   const nowMs = params.nowMs ?? Date.now();
+  const existing = getLiveGapClockState(nowMs);
   const state: LiveGapClockState = {
     journalDayMs: getJournalDayStartMs(nowMs),
     gapAnchorMs: params.gapAnchorMs,
-    baselineEntropyMin: Math.max(0, params.baselineEntropyMin),
+    baselineEntropyMin: Math.max(
+      0,
+      params.baselineEntropyMin,
+      existing?.baselineEntropyMin ?? 0
+    ),
   };
   writeGapToStorage(state);
   return state;

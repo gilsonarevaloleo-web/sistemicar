@@ -18,10 +18,10 @@ import {
 } from "@/lib/entropyMonotonicStore";
 import {
   armLiveGapClock,
-  clearLiveGapClock,
   computeTimestampGapEntropyMin,
   getLiveGapClockState,
 } from "@/lib/entropyGapClock";
+import { clampLiveEntropyDisplay } from "@/lib/entropyLiveFreeze";
 import {
   CENTINELA_GRACE_MS,
   CENTINELA_GRACE_MIN,
@@ -1244,7 +1244,10 @@ export function armEntropyGapOnConsciousClose(params: {
   });
   armLiveGapClock({
     gapAnchorMs: params.cierreAt,
-    baselineEntropyMin: timeline.dayStats.entropiaMin,
+    baselineEntropyMin: Math.max(
+      timeline.dayStats.entropiaMin,
+      getEntropyMonotonicDebugState(params.cierreAt)?.floorMin ?? 0
+    ),
     nowMs: params.cierreAt,
   });
 }
@@ -1264,10 +1267,6 @@ export function computeLiveEntropy(params: {
   const filtered = resolveCoverageVehicles(params.vehiculos, now);
   const consciousNow = filtered.some(v => vehicleCoversConsciousnessAt(v, now));
 
-  if (consciousNow) {
-    clearLiveGapClock();
-  }
-
   const timeline = buildConcienciaTimeline({
     segmentos: params.segmentos,
     vehiculos: filtered,
@@ -1282,10 +1281,12 @@ export function computeLiveEntropy(params: {
       const mono = getEntropyMonotonicDebugState(now);
       const noVehicleSince = readNoVehicleSinceMs();
       const gapAnchorMs = mono?.gapAnchorMs ?? noVehicleSince ?? now;
-      const baselineEntropyMin =
-        gapAnchorMs < now - 1000
-          ? (mono?.floorMin ?? raw)
-          : raw;
+      const floor = mono?.floorMin ?? 0;
+      const baselineEntropyMin = Math.max(
+        floor,
+        gapAnchorMs < now - 1000 ? floor : raw,
+        raw
+      );
       gapState = armLiveGapClock({
         gapAnchorMs,
         baselineEntropyMin,
@@ -1304,12 +1305,16 @@ export function computeLiveEntropy(params: {
     return patchTimelineEntropy(timeline, raw);
   }
 
-  const entropiaMin = applyMonotonicLiveEntropy({
-    rawMin: raw,
-    nowMs: now,
-    consciousNow,
-    persist: typeof localStorage !== "undefined",
-  });
+  const entropiaMin = clampLiveEntropyDisplay(
+    applyMonotonicLiveEntropy({
+      rawMin: raw,
+      nowMs: now,
+      consciousNow,
+      persist: typeof localStorage !== "undefined",
+    }),
+    now,
+    consciousNow
+  );
 
   if (Math.abs(entropiaMin - timeline.dayStats.entropiaMin) < 0.05) return timeline;
 
