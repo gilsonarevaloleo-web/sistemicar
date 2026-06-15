@@ -12,7 +12,7 @@ import {
   resolveLocalVehicleMatch,
   wasVehicleRecentlyClosed,
 } from "./persistence";
-import { recoverMissingJournalDayActives } from "./ghostVehicleEngine";
+import { recoverMissingJournalDayActives, excludeGhostActivesFromReconcile } from "./ghostVehicleEngine";
 import {
   archiveOrphanDesglosadorInterrupts,
   mergeActiveVehicleSessionState,
@@ -157,6 +157,7 @@ export function reconcileVehicleList(params: ReconcileVehicleListParams): Vehicl
   merged = archiveOrphanDesglosadorInterrupts(merged, nowMs);
   merged = dedupeVehiclesPreferClosed(merged);
   merged = dedupeActiveDesglosadorParents(merged);
+  merged = excludeGhostActivesFromReconcile(merged, nowMs);
 
   return merged.map(v => {
     if (v.status !== "activo" || !isBlocked(v)) return v;

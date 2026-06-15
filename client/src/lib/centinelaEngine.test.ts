@@ -6,6 +6,7 @@ import {
   isCentinelaBlockedByVehicles,
   listActiveCentinelas,
 } from "./centinelaEngine.ts";
+import { getJournalDayStartMs } from "./segmentTime.ts";
 
 const centinela = (id: string): Vehicle =>
   ({
@@ -30,11 +31,21 @@ const consciente = (id: string, extra: Partial<Vehicle> = {}): Vehicle =>
   }) as Vehicle;
 
 describe("centinelaEngine exclusión mutua", () => {
-  it("isCentinelaBlockedByVehicles con desglosador activo (sin filtro fantasma)", () => {
+  it("isCentinelaBlockedByVehicles con consciente real en jornada", () => {
     assert.equal(
       isCentinelaBlockedByVehicles([centinela("c1"), consciente("v1")]),
       true
     );
+  });
+
+  it("isCentinelaBlockedByVehicles ignora fantasma stale (mismo filtro que anillo)", () => {
+    const now = Date.now();
+    const dayStart = getJournalDayStartMs(now);
+    const stale = consciente("ghost", {
+      aperturaAt: dayStart - 4 * 3600_000,
+      createdAt: new Date(dayStart - 4 * 3600_000),
+    });
+    assert.equal(isCentinelaBlockedByVehicles([centinela("c1"), stale], now), false);
   });
 
   it("isCentinelaBlockedByVehicles solo con centinela", () => {

@@ -7,11 +7,20 @@ import {
   segmentWindowMs,
 } from "@/lib/segmentTime";
 import {
-  filterVehiclesForAnilloCoverage,
   isGhostActiveVehicle,
 } from "@/lib/ghostVehicleEngine";
 import type { Vehicle } from "@/lib/persistence";
 import { NO_VEHICLE_SINCE_KEY, listActiveCentinelas } from "@/lib/centinelaEngine";
+import {
+  applyMonotonicLiveEntropy,
+  getEntropyMonotonicDebugState,
+  resetEntropyMonotonicState,
+} from "@/lib/entropyMonotonicStore";
+import {
+  CENTINELA_GRACE_MS,
+  CENTINELA_GRACE_MIN,
+  resolveCoverageVehicles,
+} from "@/lib/entropyTimePolicy";
 
 export type NivelFatiga = 'Optimo' | 'Distraccion' | 'Confusion' | 'Aburrimiento' | 'Cansancio';
 
@@ -237,8 +246,7 @@ function subtractMsIntervals(base: MsInterval[], subtract: MsInterval[]): MsInte
 }
 
 /** Colchón centinela (2 min): aplica en cierre de jornada y sellado retroactivo, no en el puntero en vivo. */
-export const CENTINELA_GRACE_MIN = 2;
-export const CENTINELA_GRACE_MS = CENTINELA_GRACE_MIN * 60_000;
+export { CENTINELA_GRACE_MIN, CENTINELA_GRACE_MS };
 
 /** Recorta los primeros 2 min de cada hueco continuo; el excedente es entropía contable en cierre. */
 export function applyCentinelaGraceToGaps(gaps: MsInterval[]): MsInterval[] {
@@ -1098,6 +1106,7 @@ export interface EntropyDebugSnapshot {
   noVehicleSinceMs: number | null;
   noVehicleSinceAgeSec: number | null;
   clockIntervalHint: string;
+  monotonicFloorMin: number | null;
 }
 
 /** Desglose interno para panel ?debug=entropia (no usar en producción). */
@@ -1108,7 +1117,7 @@ export function buildEntropyDebugSnapshot(params: {
 }): EntropyDebugSnapshot {
   const nowMs = params.now ?? Date.now();
   const dayStart = getJournalDayStartMs(nowMs);
-  const filtered = filterVehiclesForAnilloCoverage(params.vehiculos, nowMs);
+  const filtered = resolveCoverageVehicles(params.vehiculos, nowMs);
   const filteredIds = new Set(filtered.map(v => v.id));
   const timeline = buildConcienciaTimeline({
     segmentos: params.segmentos,
@@ -1190,19 +1199,18 @@ export function buildEntropyDebugSnapshot(params: {
     noVehicleSinceAgeSec:
       noVehicleSinceMs != null ? Math.round((nowMs - noVehicleSinceMs) / 1000) : null,
     clockIntervalHint,
+    monotonicFloorMin: getEntropyMonotonicDebugState(nowMs)?.floorMin ?? null,
   };
 }
 
-let liveEntropyMonotonic: { journalDay: number; maxEntropia: number } | null = null;
-
 /** Reinicia acumulador monótono (tests y cambio de jornada manual). */
 export function resetLiveEntropyMonotonic(): void {
-  liveEntropyMonotonic = null;
+  resetEntropyMonotonicState();
 }
 
 /**
- * Entrada unificada para UI en vivo: filtra fantasmas una sola vez y evita
- * caídas espurias del acumulado cuando la cobertura fluctúa sin vehículo consciente real.
+ * Entrada unificada para UI en vivo: filtra fantasmas, aplica política temporal
+ * y persiste acumulado monótono (localStorage) para evitar resets por sync.
  */
 export function computeLiveEntropy(params: {
   segmentos: SegmentoAnilloLite[];
@@ -1212,7 +1220,7 @@ export function computeLiveEntropy(params: {
   applyMonotonic?: boolean;
 }): ConcienciaTimeline {
   const now = params.now ?? Date.now();
-  const filtered = filterVehiclesForAnilloCoverage(params.vehiculos, now);
+  const filtered = resolveCoverageVehicles(params.vehiculos, now);
   const timeline = buildConcienciaTimeline({
     segmentos: params.segmentos,
     vehiculos: filtered,
@@ -1221,25 +1229,17 @@ export function computeLiveEntropy(params: {
 
   if (params.applyMonotonic === false) return timeline;
 
-  const journalDay = getJournalDayStartMs(now);
-  if (!liveEntropyMonotonic || liveEntropyMonotonic.journalDay !== journalDay) {
-    liveEntropyMonotonic = { journalDay, maxEntropia: 0 };
-  }
-
-  const raw = timeline.dayStats.entropiaMin;
   const consciousNow = filtered.some(v => vehicleCoversConsciousnessAt(v, now));
+  const raw = timeline.dayStats.entropiaMin;
+  const entropiaMin = applyMonotonicLiveEntropy({
+    rawMin: raw,
+    nowMs: now,
+    consciousNow,
+    persist: typeof localStorage !== "undefined",
+  });
 
-  if (raw >= liveEntropyMonotonic.maxEntropia) {
-    liveEntropyMonotonic.maxEntropia = raw;
-    return timeline;
-  }
+  if (Math.abs(entropiaMin - raw) < 0.05) return timeline;
 
-  if (consciousNow) {
-    liveEntropyMonotonic.maxEntropia = Math.max(liveEntropyMonotonic.maxEntropia, raw);
-    return timeline;
-  }
-
-  const entropiaMin = liveEntropyMonotonic.maxEntropia;
   const jornadaMin = timeline.metricas.jornadaMin;
   const entropiaArcPct =
     jornadaMin > 0 ? Math.round((entropiaMin / jornadaMin) * 100) : 0;

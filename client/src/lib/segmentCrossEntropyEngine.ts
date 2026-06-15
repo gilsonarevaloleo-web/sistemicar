@@ -7,7 +7,9 @@ import {
 } from "./segmentVehicleAssign";
 import { isDesglosadorCrossSegmentExempt } from "./vehicleOperationalSlots";
 
-export const CRUCE_GRACE_MIN = 8;
+import { ENTROPY_TIME_POLICY } from "./entropyTimePolicy";
+
+export const CRUCE_GRACE_MIN = ENTROPY_TIME_POLICY.CRUCE_GRACE_MIN;
 export const CRUCE_WARNING_MIN = 6;
 
 export type SegmentCrossEntropyEvent =

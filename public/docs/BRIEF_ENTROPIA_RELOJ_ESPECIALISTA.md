@@ -76,10 +76,12 @@ Nueva API en `ConcienciaEngine.ts`:
 computeLiveEntropy({ segmentos, vehiculos, now?, applyMonotonic? })
 ```
 
-1. **Un solo filtro:** `filterVehiclesForAnilloCoverage` antes de `buildConcienciaTimeline`.
-2. **Monotonía del acumulado visible:** si `entropiaMin` baja sin cobertura consciente en `now`, se mantiene el pico del día-jornada (salvo cobertura real activa).
+1. **Política temporal única** (`entropyTimePolicy.ts`): 0 min vivo, 120 s centinela, 2 min cierre, 5 min puerta, 8 min cruce.
+2. **Filtro unificado** (`resolveCoverageVehicles`): centinela + anillo + sellado retroactivo usan la misma lista.
+3. **Reconcile estable** (`excludeGhostActivesFromReconcile` + caché de sesión fantasma): Firebase no reintroduce cobertura intermitente.
+4. **Monotonía persistida** (`entropyMonotonicStore.ts`): piso en localStorage; solo baja tras `recordConsciousVehicleLaunch` (lanzamiento real).
 
-UI de Jornada (`anilloModel`) migrada a `computeLiveEntropy`.
+UI de Jornada (`anilloModel`) migrada a `computeLiveEntropy`. Puntero rojo/morado sin cambios (`anilloEstado.mode` + `AnilloConciencia`).
 
 ## Panel de diagnóstico (dev)
 

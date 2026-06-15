@@ -1,13 +1,19 @@
 ﻿import type { Planilla, SegmentoV5, Vehicle } from "./persistence";
 import { listRetroactiveCentinelaGapsToPersist } from "@/engines/ConcienciaEngine";
 import {
+  ENTROPY_TIME_POLICY,
+  hasActiveConsciousCoverage,
+  resolveCoverageVehicles,
+} from "./entropyTimePolicy";
+import { recordConsciousVehicleLaunch } from "./entropyMonotonicStore";
+import {
   getJournalDayStartMs,
   isPastJournalDayStart,
   JOURNAL_DAY_START,
   segmentWindowMs,
 } from "./segmentTime";
 
-export const CENTINELA_DELAY_MS = 120_000;
+export const CENTINELA_DELAY_MS = ENTROPY_TIME_POLICY.CENTINELA_DELAY_MS;
 export const NO_VEHICLE_SINCE_KEY = "sistemicar_no_vehicle_since";
 export const CENTINELA_TITULO = "Modo Centinela";
 
@@ -161,10 +167,10 @@ export function listActiveCentinelas(vehicles: Vehicle[]): Vehicle[] {
 
 /**
  * Exclusión mutua centinela ↔ consciente.
- * Cualquier `activo` no-autoVerdad (sin filtro fantasma): si la UI lo muestra, el centinela cede.
+ * Misma lista filtrada que el anillo (`resolveCoverageVehicles`).
  */
-export function isCentinelaBlockedByVehicles(vehicles: Vehicle[], _nowMs = Date.now()): boolean {
-  return vehicles.some(v => v.status === "activo" && !v.autoVerdad);
+export function isCentinelaBlockedByVehicles(vehicles: Vehicle[], nowMs = Date.now()): boolean {
+  return hasActiveConsciousCoverage(vehicles, nowMs);
 }
 
 export function buildCentinelaArchiveFields(
@@ -225,6 +231,7 @@ export async function closeCentinelasBeforeConsciousLaunch(
 ): Promise<string[]> {
   suppressCentinela();
   resetCentinelaTimerState();
+  recordConsciousVehicleLaunch();
   return archiveActiveCentinelas(userId, vehicles);
 }
 
@@ -330,9 +337,10 @@ export async function materializeRetroactiveCentinelas(
   if (isCentinelaSuppressed()) return [];
   if (isCentinelaBlockedByVehicles(vehicles, nowMs)) return [];
 
+  const coverageVehicles = resolveCoverageVehicles(vehicles, nowMs);
   const gaps = listRetroactiveCentinelaGapsToPersist({
     segmentos: planilla.segmentos,
-    vehiculos: vehicles,
+    vehiculos: coverageVehicles,
     now: nowMs,
   });
   if (gaps.length === 0) return [];

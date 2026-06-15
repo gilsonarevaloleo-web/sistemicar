@@ -129,6 +129,9 @@ export function EntropiaDebugPanel({ segmentos, vehicles, tick }: EntropiaDebugP
       <p>
         <span className="text-slate-500">entropiaMin</span> raw={snapshot.entropiaMinRaw.toFixed(2)} rounded=
         {snapshot.entropiaMinRounded} display={snapshot.entropiaMinDisplay}
+        {snapshot.monotonicFloorMin != null && (
+          <> · floor={snapshot.monotonicFloorMin.toFixed(2)}</>
+        )}
       </p>
       <p>
         <span className="text-slate-500">desglose</span> seg={snapshot.segmentEntropyMin.toFixed(2)} centNet=

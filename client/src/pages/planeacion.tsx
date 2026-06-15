@@ -150,6 +150,7 @@ import {
   filterVehiclesForEntropy,
   isGhostActiveVehicle,
   recoverMissingJournalDayActives,
+  resetGhostSessionCache,
   shouldPreserveLocalActivo,
 } from "@/lib/ghostVehicleEngine";
 import {
@@ -447,7 +448,7 @@ import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
-import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, formatMinutosJornada, nowToHalfDayLap } from "@/engines/ConcienciaEngine";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, formatMinutosJornada, nowToHalfDayLap, resetLiveEntropyMonotonic } from "@/engines/ConcienciaEngine";
 import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/EntropiaDebugPanel";
 import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
 
@@ -1647,6 +1648,8 @@ export default function Planeacion() {
     const onDayChange = () => {
       setJournalDayKey(getJournalDayStartMs());
       setYesterdayPS(null);
+      resetLiveEntropyMonotonic();
+      resetGhostSessionCache();
       loadYesterday();
       void reconcileGhostActiveVehicles(user.uid);
     };

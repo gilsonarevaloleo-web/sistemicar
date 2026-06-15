@@ -73,6 +73,44 @@ export function isGhostActiveVehicle(
   return false;
 }
 
+/** Una vez fantasma en la sesión, no vuelve a contar como cobertura hasta cerrarse. */
+const sessionGhostIds = new Set<string>();
+
+export function resetGhostSessionCache(): void {
+  sessionGhostIds.clear();
+}
+
+export function isGhostActiveVehicleStable(
+  v: Vehicle,
+  nowMs: number,
+  dayStartMs: number,
+  vehiclesById?: Map<string, Vehicle>
+): boolean {
+  if (v.status !== "activo" || v.autoVerdad) {
+    sessionGhostIds.delete(v.id);
+    return false;
+  }
+  if (sessionGhostIds.has(v.id)) return true;
+  const ghost = isGhostActiveVehicle(v, nowMs, dayStartMs, vehiclesById);
+  if (ghost) sessionGhostIds.add(v.id);
+  return ghost;
+}
+
+/**
+ * Reconcile: no reincorporar activos clasificados como fantasma (evita flicker Firebase).
+ */
+export function excludeGhostActivesFromReconcile(
+  vehicles: Vehicle[],
+  nowMs = Date.now()
+): Vehicle[] {
+  const dayStart = getJournalDayStartMs(nowMs);
+  const byId = new Map(vehicles.map(v => [v.id, v]));
+  return vehicles.filter(v => {
+    if (v.status !== "activo" || v.autoVerdad) return true;
+    return !isGhostActiveVehicleStable(v, nowMs, dayStart, byId);
+  });
+}
+
 /**
  * Preservar activos locales ausentes del snapshot de Firebase.
  * Cualquier vehículo consciente abierto en el día-jornada actual se mantiene
@@ -121,7 +159,7 @@ export function recoverMissingJournalDayActives(
 export function filterVehiclesForEntropy(vehicles: Vehicle[], nowMs = Date.now()): Vehicle[] {
   const dayStart = getJournalDayStartMs(nowMs);
   const byId = new Map(vehicles.map(v => [v.id, v]));
-  return vehicles.filter(v => !isGhostActiveVehicle(v, nowMs, dayStart, byId));
+  return vehicles.filter(v => !isGhostActiveVehicleStable(v, nowMs, dayStart, byId));
 }
 
 /**

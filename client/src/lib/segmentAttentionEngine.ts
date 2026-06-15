@@ -1,4 +1,5 @@
 import type { SegmentoV5 } from "./persistence";
+import { ENTROPY_TIME_POLICY } from "./entropyTimePolicy";
 import {
   getLimaDayStartMs,
   isPastSegmentEnd,
@@ -8,7 +9,7 @@ import {
 
 export type PuertaTiming = "antes_voz" | "despues_voz";
 
-export const PUERTA_MARGIN_MIN = 5;
+export const PUERTA_MARGIN_MIN = ENTROPY_TIME_POLICY.PUERTA_MARGIN_MIN;
 export const VOZ_OFFSET_MIN = 4;
 
 export type SegmentAttentionEvent =
