@@ -2,6 +2,7 @@
  * Acumulado monótono de entropía en vivo — persiste en localStorage por día-jornada.
  * Evita resets espurios por reconcile Firebase / cobertura intermitente.
  */
+import { clearLiveGapClock } from "./entropyGapClock";
 import { getJournalDayStartMs } from "./segmentTime";
 
 const STATE_KEY = "sistemicar_entropy_monotonic_v2";
@@ -112,6 +113,7 @@ export function resetEntropyMonotonicState(): void {
 
 /** Llamar al lanzar vehículo consciente legítimo (Flota, Express, desglosador). */
 export function recordConsciousVehicleLaunch(nowMs = Date.now()): void {
+  clearLiveGapClock();
   writeLaunchGate({ atMs: nowMs, consumed: false }, true);
 }
 

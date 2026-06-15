@@ -448,9 +448,10 @@ import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
-import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, formatMinutosJornada, nowToHalfDayLap, resetLiveEntropyMonotonic } from "@/engines/ConcienciaEngine";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, armEntropyGapOnConsciousClose, formatMinutosJornada, nowToHalfDayLap, resetLiveEntropyMonotonic } from "@/engines/ConcienciaEngine";
 import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/EntropiaDebugPanel";
 import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
+import { sealVehicleSessionClose } from "@/lib/vehicleSessionSeal";
 
 const GOLD = "#D4AF37";
 const AZURE = "#1E90FF";
@@ -4329,6 +4330,11 @@ export default function Planeacion() {
     const psRuta = subsConRuta.reduce((sum, s) => sum + computeRutaPrivilegioPS(s), 0);
 
     notifyVehicleClosed(vehicleId, vehicle.clientRequestId);
+    sealVehicleSessionClose(vehicleId, {
+      cierreAt,
+      status: "cumplido",
+      clientRequestId: vehicle.clientRequestId,
+    });
 
     // Si quedó una interrupción situacional abierta, archivarla al cerrar el ciclo del padre.
     const childInterrupts = vehiclesRef.current.filter(
@@ -4432,6 +4438,11 @@ export default function Planeacion() {
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
     saveLocalVehicles(vehiclesRef.current);
+    armEntropyGapOnConsciousClose({
+      segmentos: planilla?.segmentos || [],
+      vehiculosAfterClose: vehiclesRef.current,
+      cierreAt,
+    });
     triggerConquistaPulse();
     try {
       await updateVehicle(user.uid, vehicleId, closePatch);

@@ -13,6 +13,7 @@ import {
   wasVehicleRecentlyClosed,
 } from "./persistence";
 import { recoverMissingJournalDayActives, excludeGhostActivesFromReconcile } from "./ghostVehicleEngine";
+import { applyVehicleSessionSeal, sealVehicleSessionClose } from "./vehicleSessionSeal";
 import {
   archiveOrphanDesglosadorInterrupts,
   mergeActiveVehicleSessionState,
@@ -160,8 +161,9 @@ export function reconcileVehicleList(params: ReconcileVehicleListParams): Vehicl
   merged = excludeGhostActivesFromReconcile(merged, nowMs);
 
   return merged.map(v => {
-    if (v.status !== "activo" || !isBlocked(v)) return v;
-    return applyClosedOverride(v, localSources);
+    const sealed = applyVehicleSessionSeal(v);
+    if (sealed.status !== "activo" || !isBlocked(sealed)) return sealed;
+    return applyClosedOverride(sealed, localSources);
   });
 }
 
@@ -175,6 +177,13 @@ export interface CloseVehicleLocallyParams {
 /** Cierre optimista atómico: guard + estado local coherente. */
 export function closeVehicleLocally(params: CloseVehicleLocallyParams): Vehicle[] {
   notifyVehicleClosed(params.vehicleId, params.clientRequestId);
+  if (params.patch.status !== "activo" && params.patch.cierreAt != null) {
+    sealVehicleSessionClose(params.vehicleId, {
+      cierreAt: params.patch.cierreAt,
+      status: params.patch.status,
+      clientRequestId: params.clientRequestId,
+    });
+  }
   return params.currentList.map(v =>
     v.id === params.vehicleId ? { ...v, ...params.patch } : v
   );

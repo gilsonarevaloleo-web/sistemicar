@@ -1,6 +1,7 @@
 import type { Vehicle } from "./persistence";
 import { getJournalDayStartMs } from "./segmentTime";
 import { isOrphanDesglosadorInterrupt } from "./situacionSessionMerge";
+import { applyVehicleSessionSeal, isVehicleSessionSealed } from "./vehicleSessionSeal";
 
 /** Sesión consciente activa más allá de esto se considera fantasma obsoleta. */
 export const GHOST_MAX_SESSION_MS = 12 * 3600_000;
@@ -73,7 +74,13 @@ export function isGhostActiveVehicle(
   return false;
 }
 
-/** Una vez fantasma en la sesión, no vuelve a contar como cobertura hasta cerrarse. */
+/** Desglosador `activo` con todos los subs cerrados — cascarón que bloquea entropía/anillo. */
+export function isZombieDesglosadorShell(v: Vehicle): boolean {
+  if (v.tipoReloj !== "desglosador" || v.status !== "activo" || v.autoVerdad) return false;
+  const subs = v.subVehiculos ?? [];
+  if (subs.length === 0) return false;
+  return subs.every(s => s.status === "cumplido" || s.status === "fallado");
+}
 const sessionGhostIds = new Set<string>();
 
 export function resetGhostSessionCache(): void {
@@ -169,7 +176,11 @@ export function filterVehiclesForEntropy(vehicles: Vehicle[], nowMs = Date.now()
  */
 export function filterVehiclesForAnilloCoverage(vehicles: Vehicle[], nowMs = Date.now()): Vehicle[] {
   const dayStart = getJournalDayStartMs(nowMs);
-  return filterVehiclesForEntropy(vehicles, nowMs).filter(v => {
+  return filterVehiclesForEntropy(vehicles, nowMs)
+    .map(applyVehicleSessionSeal)
+    .filter(v => {
+    if (isVehicleSessionSealed(v.id, v.clientRequestId) && v.status === "activo") return false;
+    if (isZombieDesglosadorShell(v)) return false;
     // Centinela (autoVerdad): sesiones selladas de entropía — siempre incluir.
     if (v.autoVerdad) return true;
     if (v.status !== "activo") return true;

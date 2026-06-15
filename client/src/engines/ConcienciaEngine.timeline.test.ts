@@ -5,6 +5,7 @@ import {
   clockMinutesToDeg,
   computeAnilloEstado,
   computeLiveEntropy,
+  armEntropyGapOnConsciousClose,
   computeTimelineClockArcs,
   computeTimelineDayStats,
   getUmbralConcienciaMin,
@@ -605,6 +606,44 @@ describe("computeAnilloEstado", () => {
       now,
     }).dayStats.entropiaMin;
     assert.ok(clamped + 0.05 >= peak, "sin coverNow el acumulado visible no debe caer bajo el pico");
+  });
+
+  it("reloj por timestamp mantiene entropia estable si vehículos parpadean en Firebase", () => {
+    resetLiveEntropyMonotonic();
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const gapStart = limaAt(2026, 4, 18, 8, 0);
+    const t1 = limaAt(2026, 4, 18, 8, 3);
+    const t2 = limaAt(2026, 4, 18, 8, 6);
+    armEntropyGapOnConsciousClose({
+      segmentos,
+      vehiculosAfterClose: [],
+      cierreAt: gapStart,
+    });
+    const a = computeLiveEntropy({ segmentos, vehiculos: [], now: t1 }).dayStats.entropiaMin;
+    const ghostCover: Vehicle = {
+      id: "ghost-cover",
+      titulo: "Desglosador zombie",
+      criterioFin: "manual",
+      criterioDetalle: "",
+      tiempoInicio: new Date(gapStart),
+      ejes: {
+        enfoque: { text: "", trifecta: "pendiente" },
+        conflicto: { text: "", trifecta: "pendiente" },
+        pasos: { text: "", trifecta: "pendiente" },
+        limite: { text: "", trifecta: "pendiente" },
+      },
+      status: "activo",
+      userId: "u1",
+      createdAt: new Date(gapStart),
+      tipoFlota: "tiempo",
+      tipoReloj: "desglosador",
+      aperturaAt: gapStart,
+      subVehiculos: [{ id: "s1", titulo: "A", status: "cumplido" }],
+    };
+    const b = computeLiveEntropy({ segmentos, vehiculos: [ghostCover], now: t2 }).dayStats.entropiaMin;
+    const c = computeLiveEntropy({ segmentos, vehiculos: [], now: t2 }).dayStats.entropiaMin;
+    assert.ok(b + 0.05 >= a, "fantasma no debe reducir entropía");
+    assert.equal(b, c, "mismo instante debe dar mismo valor con o sin fantasma");
   });
 
   it("activo cruzando 05:00 sin filtro de anillo aún muestra conquista en motor", () => {

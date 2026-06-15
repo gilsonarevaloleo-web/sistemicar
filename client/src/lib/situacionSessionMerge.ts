@@ -1,4 +1,5 @@
 import type { DetalleSubTarea, SubTarea, SubVehiculo, Vehicle } from "./persistence";
+import { applyVehicleSessionSeal, isVehicleSessionSealed } from "./vehicleSessionSeal";
 
 function countSubTareasEnCronometro(v: Vehicle): number {
   return v.subTareas?.filter(st => st.enDesgloseCronometro).length ?? 0;
@@ -295,13 +296,18 @@ function mergeTermoDecisionSnapshots(
 }
 
 export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehicle | undefined): Vehicle {
-  if (!localV) return firebaseV;
+  const sealedRemote = applyVehicleSessionSeal(firebaseV);
+  if (!localV) return sealedRemote;
 
-  if (localV.status !== "activo" && firebaseV.status === "activo") {
+  if (isVehicleSessionSealed(sealedRemote.id, sealedRemote.clientRequestId)) {
+    return finalizeSessionMerge(sealedRemote, sealedRemote, localV);
+  }
+
+  if (localV.status !== "activo" && sealedRemote.status === "activo") {
     return finalizeSessionMerge(
       {
-        ...firebaseV,
-        aperturaAt: pickMergedAperturaAt(firebaseV, localV),
+        ...sealedRemote,
+        aperturaAt: pickMergedAperturaAt(sealedRemote, localV),
         status: localV.status,
         ...(localV.cierreAt != null ? { cierreAt: localV.cierreAt } : {}),
         ...(localV.duracionFinal != null ? { duracionFinal: localV.duracionFinal } : {}),
@@ -314,43 +320,54 @@ export function mergeActiveVehicleSessionState(firebaseV: Vehicle, localV: Vehic
           : {}),
         situacionCronometro: localV.situacionCronometro ?? null,
         situacionCupoAnchor: localV.situacionCupoAnchor ?? null,
+        subVehiculos: localV.subVehiculos ?? sealedRemote.subVehiculos,
       },
-      firebaseV,
+      sealedRemote,
       localV
     );
   }
 
-  if (firebaseV.status !== "activo" || localV.status !== "activo") {
-    return finalizeSessionMerge(firebaseV, firebaseV, localV);
+  if (sealedRemote.status !== "activo" || localV.status !== "activo") {
+    return finalizeSessionMerge(sealedRemote, sealedRemote, localV);
   }
 
   let merged: Vehicle = {
-    ...firebaseV,
-    aperturaAt: pickMergedAperturaAt(firebaseV, localV),
+    ...sealedRemote,
+    aperturaAt: pickMergedAperturaAt(sealedRemote, localV),
   };
 
   if (localV.desglosadorBloqueDepthPsGranted != null) {
     merged = { ...merged, desglosadorBloqueDepthPsGranted: localV.desglosadorBloqueDepthPsGranted };
   }
-  // Prefer local pause flags (including explicit clears after cerrar interrupción).
-  if (firebaseV.tipoReloj === "desglosador" && localV.tipoReloj === "desglosador") {
+  if (sealedRemote.tipoReloj === "desglosador" && localV.tipoReloj === "desglosador") {
+    const localSubsDone =
+      (localV.subVehiculos?.length ?? 0) > 0 &&
+      localV.subVehiculos!.every(s => s.status === "cumplido" || s.status === "fallado");
+    const localClosed = localV.status !== "activo" || localV.cierreAt != null;
     const keepPause = localV.interrupcionActiva === true && !!localV.desglosadorPausa?.subActivoId;
     merged = {
       ...merged,
+      ...(localSubsDone && localClosed
+        ? {
+            status: localV.status !== "activo" ? localV.status : "cumplido",
+            cierreAt: localV.cierreAt,
+            duracionFinal: localV.duracionFinal,
+            cierreManual: localV.cierreManual,
+            interrupcionActiva: false,
+            desglosadorPausa: undefined,
+          }
+        : {}),
       interrupcionActiva: keepPause || localV.interrupcionActiva === true,
       desglosadorPausa: keepPause
         ? localV.desglosadorPausa
         : localV.interrupcionActiva
           ? localV.desglosadorPausa
           : undefined,
-      subVehiculos:
-        (localV.subVehiculos?.length ?? 0) >= (firebaseV.subVehiculos?.length ?? 0)
-          ? localV.subVehiculos
-          : merged.subVehiculos,
+      subVehiculos: localV.subVehiculos ?? merged.subVehiculos,
     };
   }
 
-  return finalizeSessionMerge(merged, firebaseV, localV);
+  return finalizeSessionMerge(merged, sealedRemote, localV);
 }
 
 /**

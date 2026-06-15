@@ -17,6 +17,12 @@ import {
   resetEntropyMonotonicState,
 } from "@/lib/entropyMonotonicStore";
 import {
+  armLiveGapClock,
+  clearLiveGapClock,
+  computeTimestampGapEntropyMin,
+  getLiveGapClockState,
+} from "@/lib/entropyGapClock";
+import {
   CENTINELA_GRACE_MS,
   CENTINELA_GRACE_MIN,
   resolveCoverageVehicles,
@@ -1208,6 +1214,41 @@ export function resetLiveEntropyMonotonic(): void {
   resetEntropyMonotonicState();
 }
 
+function readNoVehicleSinceMs(): number | null {
+  if (typeof localStorage === "undefined") return null;
+  const raw = parseInt(localStorage.getItem(NO_VEHICLE_SINCE_KEY) || "0", 10);
+  return raw > 0 ? raw : null;
+}
+
+function patchTimelineEntropy(timeline: ConcienciaTimeline, entropiaMin: number): ConcienciaTimeline {
+  const jornadaMin = timeline.metricas.jornadaMin;
+  const entropiaArcPct = jornadaMin > 0 ? Math.round((entropiaMin / jornadaMin) * 100) : 0;
+  return {
+    ...timeline,
+    dayStats: { ...timeline.dayStats, entropiaMin },
+    metricas: { ...timeline.metricas, entropiaMin, entropiaArcPct },
+  };
+}
+
+/** Congela baseline al cerrar cobertura consciente (desglosador, flota, etc.). */
+export function armEntropyGapOnConsciousClose(params: {
+  segmentos: SegmentoAnilloLite[];
+  vehiculosAfterClose: Vehicle[];
+  cierreAt: number;
+}): void {
+  const filtered = resolveCoverageVehicles(params.vehiculosAfterClose, params.cierreAt);
+  const timeline = buildConcienciaTimeline({
+    segmentos: params.segmentos,
+    vehiculos: filtered,
+    now: params.cierreAt,
+  });
+  armLiveGapClock({
+    gapAnchorMs: params.cierreAt,
+    baselineEntropyMin: timeline.dayStats.entropiaMin,
+    nowMs: params.cierreAt,
+  });
+}
+
 /**
  * Entrada unificada para UI en vivo: filtra fantasmas, aplica política temporal
  * y persiste acumulado monótono (localStorage) para evitar resets por sync.
@@ -1221,16 +1262,48 @@ export function computeLiveEntropy(params: {
 }): ConcienciaTimeline {
   const now = params.now ?? Date.now();
   const filtered = resolveCoverageVehicles(params.vehiculos, now);
+  const consciousNow = filtered.some(v => vehicleCoversConsciousnessAt(v, now));
+
+  if (consciousNow) {
+    clearLiveGapClock();
+  }
+
   const timeline = buildConcienciaTimeline({
     segmentos: params.segmentos,
     vehiculos: filtered,
     now,
   });
 
-  if (params.applyMonotonic === false) return timeline;
+  let raw = timeline.dayStats.entropiaMin;
 
-  const consciousNow = filtered.some(v => vehicleCoversConsciousnessAt(v, now));
-  const raw = timeline.dayStats.entropiaMin;
+  if (!consciousNow && params.applyMonotonic !== false) {
+    let gapState = getLiveGapClockState(now);
+    if (!gapState) {
+      const mono = getEntropyMonotonicDebugState(now);
+      const noVehicleSince = readNoVehicleSinceMs();
+      const gapAnchorMs = mono?.gapAnchorMs ?? noVehicleSince ?? now;
+      const baselineEntropyMin =
+        gapAnchorMs < now - 1000
+          ? (mono?.floorMin ?? raw)
+          : raw;
+      gapState = armLiveGapClock({
+        gapAnchorMs,
+        baselineEntropyMin,
+        nowMs: now,
+      });
+    }
+    raw = computeTimestampGapEntropyMin({
+      segmentos: params.segmentos,
+      nowMs: now,
+      gapState,
+    });
+  }
+
+  if (params.applyMonotonic === false) {
+    if (Math.abs(raw - timeline.dayStats.entropiaMin) < 0.05) return timeline;
+    return patchTimelineEntropy(timeline, raw);
+  }
+
   const entropiaMin = applyMonotonicLiveEntropy({
     rawMin: raw,
     nowMs: now,
@@ -1238,17 +1311,9 @@ export function computeLiveEntropy(params: {
     persist: typeof localStorage !== "undefined",
   });
 
-  if (Math.abs(entropiaMin - raw) < 0.05) return timeline;
+  if (Math.abs(entropiaMin - timeline.dayStats.entropiaMin) < 0.05) return timeline;
 
-  const jornadaMin = timeline.metricas.jornadaMin;
-  const entropiaArcPct =
-    jornadaMin > 0 ? Math.round((entropiaMin / jornadaMin) * 100) : 0;
-
-  return {
-    ...timeline,
-    dayStats: { ...timeline.dayStats, entropiaMin },
-    metricas: { ...timeline.metricas, entropiaMin, entropiaArcPct },
-  };
+  return patchTimelineEntropy(timeline, entropiaMin);
 }
 
 export const debeEstarAbierto = (horaInicio: number): boolean => {
