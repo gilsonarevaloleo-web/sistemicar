@@ -447,7 +447,8 @@ import { SituacionCasaPanel } from "@/components/SituacionCasaPanel";
 import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
-import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, formatMinutosJornada, nowToHalfDayLap } from "@/engines/ConcienciaEngine";
+import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, formatMinutosJornada, nowToHalfDayLap } from "@/engines/ConcienciaEngine";
+import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/EntropiaDebugPanel";
 import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
 
 const GOLD = "#D4AF37";
@@ -1548,10 +1549,9 @@ export default function Planeacion() {
     void anilloTick;
     const segs = planilla?.segmentos || [];
     const nowMs = Date.now();
-    const vehiculosAnillo = filterVehiclesForAnilloCoverage(vehicles, nowMs);
-    const timeline = buildConcienciaTimeline({
+    const timeline = computeLiveEntropy({
       segmentos: segs,
-      vehiculos: vehiculosAnillo,
+      vehiculos: vehicles,
       now: nowMs,
     });
     const segConquistados = segs.filter((s: any) => s.estado === "cerrado_manual").length;
@@ -1565,6 +1565,8 @@ export default function Planeacion() {
       segConquistados,
     };
   }, [planilla, vehicles, anilloTick]);
+
+  const showEntropyDebug = useMemo(() => isEntropyDebugEnabled(), []);
 
   useEffect(() => {
     if (!user) return;
@@ -9577,6 +9579,14 @@ export default function Planeacion() {
           onRutaChange={(id, ruta) => void handleReservaRutaChange(id, ruta)}
           colors={{ plata: PLATA, cyan: CYAN, gold: GOLD }}
         />
+
+        {showEntropyDebug && (
+          <EntropiaDebugPanel
+            segmentos={planilla?.segmentos || []}
+            vehicles={vehicles}
+            tick={anilloTick}
+          />
+        )}
       </div>
     </div>
   );

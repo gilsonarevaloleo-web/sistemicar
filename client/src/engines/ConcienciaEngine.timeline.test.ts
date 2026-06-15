@@ -4,16 +4,19 @@ import {
   calcularBalanceConquistaJornada,
   clockMinutesToDeg,
   computeAnilloEstado,
+  computeLiveEntropy,
   computeTimelineClockArcs,
   computeTimelineDayStats,
   getUmbralConcienciaMin,
   limaNowToClockDeg,
   listRetroactiveCentinelaGapsToPersist,
+  resetLiveEntropyMonotonic,
   resolveConsciousSessionStart,
   UMBRAL_CONTINGENCIA_MIN,
 } from "./ConcienciaEngine.ts";
 import { getJournalDayStartMs } from "../lib/segmentTime.ts";
 import { filterVehiclesForAnilloCoverage } from "../lib/ghostVehicleEngine.ts";
+import type { Vehicle } from "../lib/persistence.ts";
 
 /** Hora civil en Lima (UTC-5) como timestamp UTC. */
 function limaAt(y: number, mo: number, d: number, h: number, min = 0): number {
@@ -490,6 +493,118 @@ describe("computeAnilloEstado", () => {
     const stats = computeTimelineDayStats({ segmentos, vehiculos, now });
     assert.equal(st.mode, "entropia");
     assert.ok(stats.entropiaMin > 0);
+  });
+
+  it("entropiaMin acumulada no decrece: hueco, centinela y apertura consciente", () => {
+    resetLiveEntropyMonotonic();
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const consciente: Vehicle = {
+      id: "v-conscious",
+      titulo: "Enfoque test",
+      criterioFin: "manual",
+      criterioDetalle: "",
+      tiempoInicio: new Date(limaAt(2026, 4, 18, 8, 35)),
+      ejes: {
+        enfoque: { text: "", trifecta: "pendiente" },
+        conflicto: { text: "", trifecta: "pendiente" },
+        pasos: { text: "", trifecta: "pendiente" },
+        limite: { text: "", trifecta: "pendiente" },
+      },
+      status: "activo",
+      userId: "u1",
+      createdAt: new Date(limaAt(2026, 4, 18, 8, 35)),
+      tipoFlota: "tiempo",
+      tipoReloj: "desglosador",
+      aperturaAt: limaAt(2026, 4, 18, 8, 35),
+    };
+
+    const steps: { now: number; vehiculos: Vehicle[] }[] = [
+      { now: limaAt(2026, 4, 18, 8, 5), vehiculos: [] },
+      { now: limaAt(2026, 4, 18, 8, 7), vehiculos: [sesionCentinela(limaAt(2026, 4, 18, 8, 5)) as Vehicle] },
+      { now: limaAt(2026, 4, 18, 8, 35), vehiculos: [sesionCentinela(limaAt(2026, 4, 18, 8, 5), { cierreAt: limaAt(2026, 4, 18, 8, 35), status: "archivado" }) as Vehicle, consciente] },
+      { now: limaAt(2026, 4, 18, 9, 0), vehiculos: [sesionCentinela(limaAt(2026, 4, 18, 8, 5), { cierreAt: limaAt(2026, 4, 18, 8, 35), status: "archivado" }) as Vehicle, consciente] },
+    ];
+
+    let prev = 0;
+    for (const step of steps) {
+      const stats = computeLiveEntropy({
+        segmentos,
+        vehiculos: step.vehiculos,
+        now: step.now,
+      }).dayStats;
+      assert.ok(
+        stats.entropiaMin + 0.05 >= prev,
+        `entropiaMin no debe decrecer (${prev} → ${stats.entropiaMin})`
+      );
+      prev = stats.entropiaMin;
+    }
+  });
+
+  it("vehículo fantasma stale no reduce entropiaMin en computeLiveEntropy", () => {
+    resetLiveEntropyMonotonic();
+    const now = limaAt(2026, 4, 18, 8, 10);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const baseline = computeLiveEntropy({ segmentos, vehiculos: [], now }).dayStats.entropiaMin;
+    const staleGhost: Vehicle = {
+      id: "ghost-stale",
+      titulo: "Fantasma nocturno arrastrado",
+      criterioFin: "manual",
+      criterioDetalle: "",
+      tiempoInicio: new Date(limaAt(2026, 4, 17, 21, 0)),
+      ejes: {
+        enfoque: { text: "", trifecta: "pendiente" },
+        conflicto: { text: "", trifecta: "pendiente" },
+        pasos: { text: "", trifecta: "pendiente" },
+        limite: { text: "", trifecta: "pendiente" },
+      },
+      status: "activo",
+      userId: "u1",
+      createdAt: new Date(limaAt(2026, 4, 17, 21, 0)),
+      tipoFlota: "tiempo",
+      aperturaAt: limaAt(2026, 4, 17, 21, 0),
+    };
+    const withGhost = computeLiveEntropy({ segmentos, vehiculos: [staleGhost], now }).dayStats.entropiaMin;
+    assert.equal(withGhost, baseline, "fantasma filtrado no debe cubrir el hueco");
+  });
+
+  it("monotonic mantiene pico si el motor crudo baja sin cobertura consciente en now", () => {
+    resetLiveEntropyMonotonic();
+    const now = limaAt(2026, 4, 18, 8, 10);
+    const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+    const peak = computeLiveEntropy({ segmentos, vehiculos: [], now }).dayStats.entropiaMin;
+    const archivedCover: Vehicle = {
+      id: "v-archived",
+      titulo: "Sesión cerrada",
+      criterioFin: "manual",
+      criterioDetalle: "",
+      tiempoInicio: new Date(limaAt(2026, 4, 18, 8, 0)),
+      ejes: {
+        enfoque: { text: "", trifecta: "pendiente" },
+        conflicto: { text: "", trifecta: "pendiente" },
+        pasos: { text: "", trifecta: "pendiente" },
+        limite: { text: "", trifecta: "pendiente" },
+      },
+      status: "cumplido",
+      userId: "u1",
+      createdAt: new Date(limaAt(2026, 4, 18, 8, 0)),
+      tipoFlota: "tiempo",
+      aperturaAt: limaAt(2026, 4, 18, 8, 0),
+      cierreAt: limaAt(2026, 4, 18, 8, 5),
+      duracionFinal: 5,
+    };
+    const raw = computeLiveEntropy({
+      segmentos,
+      vehiculos: [archivedCover],
+      now,
+      applyMonotonic: false,
+    }).dayStats.entropiaMin;
+    assert.ok(raw < peak, "histórico cubierto reduce entropía en motor crudo");
+    const clamped = computeLiveEntropy({
+      segmentos,
+      vehiculos: [archivedCover],
+      now,
+    }).dayStats.entropiaMin;
+    assert.ok(clamped + 0.05 >= peak, "sin coverNow el acumulado visible no debe caer bajo el pico");
   });
 
   it("activo cruzando 05:00 sin filtro de anillo aún muestra conquista en motor", () => {

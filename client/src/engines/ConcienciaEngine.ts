@@ -6,6 +6,12 @@ import {
   segmentTimeToMinutes,
   segmentWindowMs,
 } from "@/lib/segmentTime";
+import {
+  filterVehiclesForAnilloCoverage,
+  isGhostActiveVehicle,
+} from "@/lib/ghostVehicleEngine";
+import type { Vehicle } from "@/lib/persistence";
+import { NO_VEHICLE_SINCE_KEY, listActiveCentinelas } from "@/lib/centinelaEngine";
 
 export type NivelFatiga = 'Optimo' | 'Distraccion' | 'Confusion' | 'Aburrimiento' | 'Cansancio';
 
@@ -535,6 +541,10 @@ interface TimelineCore {
   livedPlannedMin: number;
   /** Huecos inconscientes dentro de lo vivido (para pintar arcos rojos). */
   entropiaIntervals: MsInterval[];
+  /** Huecos planificados sin cobertura consciente (componente de entropía). */
+  segmentEntropyIntervals: MsInterval[];
+  /** Centinela neto tras restar cobertura (componente de entropía). */
+  centinelaNetIntervals: MsInterval[];
   /** Sesiones centinela recortadas al día vivido. */
   centinelaMerged: MsInterval[];
 }
@@ -629,6 +639,8 @@ function buildTimelineCore(params: {
     totalPlannedMin,
     livedPlannedMin,
     entropiaIntervals,
+    segmentEntropyIntervals: segmentEntropy,
+    centinelaNetIntervals: centinelaNet,
     centinelaMerged,
   };
 }
@@ -1051,6 +1063,192 @@ export function formatMinutosJornada(min: number): string {
   const h = Math.floor(m / 60);
   const r = m % 60;
   return r > 0 ? `${h}h ${r}m` : `${h}h`;
+}
+
+export interface EntropyDebugCoverVehicle {
+  id?: string;
+  titulo?: string;
+  ghost?: boolean;
+  status?: string;
+  autoVerdad?: boolean;
+  tipoFlota?: string;
+  tipoReloj?: string;
+  coversNow: boolean;
+  inFilteredList: boolean;
+}
+
+export interface EntropyDebugSnapshot {
+  ts: number;
+  nowIso: string;
+  corePresent: boolean;
+  entropiaMinRaw: number;
+  entropiaMinRounded: number;
+  entropiaMinDisplay: string;
+  segmentEntropyMin: number;
+  centinelaNetMin: number;
+  centinelaMergedMin: number;
+  coverMergedMin: number;
+  conquistaMinRaw: number;
+  pointerMode: AnilloPointerMode;
+  centinelaActiveCount: number;
+  consciousCoverNow: boolean;
+  coverVehicles: EntropyDebugCoverVehicle[];
+  filteredVehicleCount: number;
+  rawVehicleCount: number;
+  noVehicleSinceMs: number | null;
+  noVehicleSinceAgeSec: number | null;
+  clockIntervalHint: string;
+}
+
+/** Desglose interno para panel ?debug=entropia (no usar en producción). */
+export function buildEntropyDebugSnapshot(params: {
+  segmentos: SegmentoAnilloLite[];
+  vehiculos: Vehicle[];
+  now?: number;
+}): EntropyDebugSnapshot {
+  const nowMs = params.now ?? Date.now();
+  const dayStart = getJournalDayStartMs(nowMs);
+  const filtered = filterVehiclesForAnilloCoverage(params.vehiculos, nowMs);
+  const filteredIds = new Set(filtered.map(v => v.id));
+  const timeline = buildConcienciaTimeline({
+    segmentos: params.segmentos,
+    vehiculos: filtered,
+    now: nowMs,
+  });
+  const core = buildTimelineCore({
+    segmentos: params.segmentos,
+    vehiculos: filtered,
+    now: nowMs,
+  });
+
+  let noVehicleSinceMs: number | null = null;
+  if (typeof localStorage !== "undefined") {
+    const raw = parseInt(localStorage.getItem(NO_VEHICLE_SINCE_KEY) || "0", 10);
+    noVehicleSinceMs = raw > 0 ? raw : null;
+  }
+
+  const coverVehicles: EntropyDebugCoverVehicle[] = params.vehiculos
+    .filter(v => v.status === "activo" || v.autoVerdad)
+    .map(v => ({
+      id: v.id,
+      titulo: v.titulo,
+      ghost: isGhostActiveVehicle(v, nowMs, dayStart, new Map(params.vehiculos.map(x => [x.id, x]))),
+      status: v.status,
+      autoVerdad: v.autoVerdad,
+      tipoFlota: v.tipoFlota,
+      tipoReloj: v.tipoReloj,
+      coversNow: vehicleCoversConsciousnessAt(v, nowMs),
+      inFilteredList: filteredIds.has(v.id),
+    }));
+
+  const consciousCoverNow = filtered.some(v => vehicleCoversConsciousnessAt(v, nowMs));
+  const centinelaActiveCount = listActiveCentinelas(params.vehiculos).length;
+
+  let segmentEntropyMin = 0;
+  let centinelaNetMin = 0;
+  let centinelaMergedMin = 0;
+  let coverMergedMin = 0;
+  let entropiaMinRaw = 0;
+  let conquistaMinRaw = 0;
+
+  if (core) {
+    segmentEntropyMin = sumIntervalMinutes(core.segmentEntropyIntervals);
+    centinelaNetMin = sumIntervalMinutes(core.centinelaNetIntervals);
+    centinelaMergedMin = sumIntervalMinutes(core.centinelaMerged);
+    coverMergedMin = sumIntervalMinutes(core.coverMerged);
+    entropiaMinRaw = sumIntervalMinutes(core.entropiaIntervals);
+    const conquistaForStats = core.hasSegments
+      ? intersectIntervalsWithWindows(core.coverMerged, core.plannedLivedWindows)
+      : core.coverMerged;
+    conquistaMinRaw = sumIntervalMinutes(conquistaForStats);
+  }
+
+  const clockIntervalHint =
+    typeof document !== "undefined" && document.visibilityState === "hidden"
+      ? "5s (background)"
+      : "1s (visible)";
+
+  return {
+    ts: nowMs,
+    nowIso: new Date(nowMs).toISOString(),
+    corePresent: core != null,
+    entropiaMinRaw,
+    entropiaMinRounded: timeline.dayStats.entropiaMin,
+    entropiaMinDisplay: formatMinutosJornada(timeline.dayStats.entropiaMin),
+    segmentEntropyMin,
+    centinelaNetMin,
+    centinelaMergedMin,
+    coverMergedMin,
+    conquistaMinRaw,
+    pointerMode: timeline.anilloEstado.mode,
+    centinelaActiveCount,
+    consciousCoverNow,
+    coverVehicles,
+    filteredVehicleCount: filtered.length,
+    rawVehicleCount: params.vehiculos.length,
+    noVehicleSinceMs,
+    noVehicleSinceAgeSec:
+      noVehicleSinceMs != null ? Math.round((nowMs - noVehicleSinceMs) / 1000) : null,
+    clockIntervalHint,
+  };
+}
+
+let liveEntropyMonotonic: { journalDay: number; maxEntropia: number } | null = null;
+
+/** Reinicia acumulador monótono (tests y cambio de jornada manual). */
+export function resetLiveEntropyMonotonic(): void {
+  liveEntropyMonotonic = null;
+}
+
+/**
+ * Entrada unificada para UI en vivo: filtra fantasmas una sola vez y evita
+ * caídas espurias del acumulado cuando la cobertura fluctúa sin vehículo consciente real.
+ */
+export function computeLiveEntropy(params: {
+  segmentos: SegmentoAnilloLite[];
+  vehiculos: Vehicle[];
+  now?: number;
+  /** Desactivar clamp monótono (solo tests). */
+  applyMonotonic?: boolean;
+}): ConcienciaTimeline {
+  const now = params.now ?? Date.now();
+  const filtered = filterVehiclesForAnilloCoverage(params.vehiculos, now);
+  const timeline = buildConcienciaTimeline({
+    segmentos: params.segmentos,
+    vehiculos: filtered,
+    now,
+  });
+
+  if (params.applyMonotonic === false) return timeline;
+
+  const journalDay = getJournalDayStartMs(now);
+  if (!liveEntropyMonotonic || liveEntropyMonotonic.journalDay !== journalDay) {
+    liveEntropyMonotonic = { journalDay, maxEntropia: 0 };
+  }
+
+  const raw = timeline.dayStats.entropiaMin;
+  const consciousNow = filtered.some(v => vehicleCoversConsciousnessAt(v, now));
+
+  if (raw >= liveEntropyMonotonic.maxEntropia) {
+    liveEntropyMonotonic.maxEntropia = raw;
+    return timeline;
+  }
+
+  if (consciousNow) {
+    liveEntropyMonotonic.maxEntropia = Math.max(liveEntropyMonotonic.maxEntropia, raw);
+    return timeline;
+  }
+
+  const entropiaMin = liveEntropyMonotonic.maxEntropia;
+  const jornadaMin = timeline.metricas.jornadaMin;
+  const entropiaArcPct =
+    jornadaMin > 0 ? Math.round((entropiaMin / jornadaMin) * 100) : 0;
+
+  return {
+    ...timeline,
+    dayStats: { ...timeline.dayStats, entropiaMin },
+    metricas: { ...timeline.metricas, entropiaMin, entropiaArcPct },
+  };
 }
 
 export const debeEstarAbierto = (horaInicio: number): boolean => {
