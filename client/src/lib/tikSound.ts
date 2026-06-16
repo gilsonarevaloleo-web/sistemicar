@@ -127,3 +127,10 @@ export function setSituacionAlertsEnabled(on: boolean): void {
     /* noop */
   }
 }
+
+/** Enciende alertas + voz puerta + voz desglosador (p. ej. al probar voz). */
+export function enableAllVoiceChannels(): void {
+  setSituacionAlertsEnabled(true);
+  setPuertaVozEnabled(true);
+  setDesglosadorVoiceEnabled(true);
+}

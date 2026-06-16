@@ -11,7 +11,11 @@ import {
   isUbicacionSpeechActive,
   type UbicacionVoiceSource,
 } from "./speechQueue";
-import { isDesglosadorVoiceEnabled, isSituacionAlertsEnabled } from "./tikSound";
+import {
+  isDesglosadorVoiceEnabled,
+  isPuertaVozEnabled,
+  isSituacionAlertsEnabled,
+} from "./tikSound";
 
 type PendingVoice = {
   phrases: string[];
@@ -29,6 +33,7 @@ const MAX_RELIABLE_ATTEMPTS = 2;
 function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
   if (source === "desglosador") return isDesglosadorVoiceEnabled();
   if (source === "situacion") return isSituacionAlertsEnabled();
+  if (source === "puerta") return isPuertaVozEnabled();
   return true;
 }
 
@@ -63,7 +68,11 @@ function trySpeak(key: string): void {
   }
 
   entry.attempts += 1;
-  warmupSpeechSynthesis(true);
+  if (entry.attempts === 1) {
+    unlockSpeechSynthesis(true);
+  } else {
+    warmupSpeechSynthesis(true);
+  }
   recoverSpeechQueue();
 
   speakUbicacionQueue(entry.phrases, entry.cancelPrevious, entry.source, () => {

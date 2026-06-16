@@ -1,4 +1,4 @@
-import { warmupSpeechSynthesis } from "./speechQueue";
+import { unlockSpeechSynthesis, warmupSpeechSynthesis } from "./speechQueue";
 import { isPuntoCeroVoiceEnabled } from "./tikSound";
 import {
   pickCalmDeepSpanishVoice,
@@ -119,6 +119,7 @@ export function speakPuntoCeroSequence(
   if (filtered.length === 0 || !isPuntoCeroVoiceEnabled()) return;
   if (typeof window === "undefined" || !window.speechSynthesis) return;
 
+  unlockSpeechSynthesis(true);
   warmupSpeechSynthesis(true);
   pcProfile = profile;
 
@@ -174,7 +175,8 @@ export function speakPuntoCeroGuide(
   if (!text.trim() || !isPuntoCeroVoiceEnabled()) return;
   const profile = opts?.profile ?? "calm";
   if (opts?.rate != null || opts?.pitch != null || opts?.volume != null) {
-    warmupSpeechSynthesis(true);
+    unlockSpeechSynthesis(true);
+  warmupSpeechSynthesis(true);
     speakPleasant(text, opts);
     return;
   }

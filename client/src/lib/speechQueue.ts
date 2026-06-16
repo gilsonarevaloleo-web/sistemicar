@@ -20,6 +20,8 @@ let speaking = false;
 let lastWarmupMs = 0;
 let stuckTimer: ReturnType<typeof setTimeout> | null = null;
 let voicesPrimed = false;
+/** Safari/iOS/Chrome bloquean TTS hasta un speak() dentro de un gesto del usuario. */
+let speechUnlocked = false;
 let pendingOnPhraseStarted: (() => void) | null = null;
 const idleListeners = new Set<() => void>();
 let lastQueuedPhrase = "";
@@ -53,9 +55,14 @@ function getSynth(): SpeechSynthesis | null {
 }
 
 function primeVoicesOnce(): void {
-  if (voicesPrimed) return;
-  voicesPrimed = true;
   primeSpanishVoices();
+  if (!voicesPrimed) voicesPrimed = true;
+}
+
+function primeSpanishVoicesReady(): boolean {
+  primeVoicesOnce();
+  if (typeof window === "undefined" || !window.speechSynthesis) return false;
+  return window.speechSynthesis.getVoices().length > 0;
 }
 
 function resumeSynthIfPaused(): void {
@@ -130,6 +137,10 @@ export function recoverSpeechQueue(): void {
     clearStuckTimer();
   }
 
+  if (queue.length > 0 && !speaking && !speechUnlocked) {
+    return;
+  }
+
   if (queue.length > 0 && !speaking) {
     processQueue();
     return;
@@ -144,6 +155,47 @@ export function recoverSpeechQueue(): void {
   }
 }
 
+export function isSpeechSynthesisUnlocked(): boolean {
+  return speechUnlocked;
+}
+
+/**
+ * Desbloquea speechSynthesis (obligatorio en móvil).
+ * Debe llamarse sincrónicamente dentro de pointerdown/click del usuario.
+ */
+export function unlockSpeechSynthesis(fromUserGesture = false): void {
+  const synth = getSynth();
+  if (!synth) return;
+  primeVoicesOnce();
+  resumeSynthIfPaused();
+  lastWarmupMs = Date.now();
+
+  if (speechUnlocked && !fromUserGesture) return;
+
+  try {
+    const u = new SpeechSynthesisUtterance("\u200b");
+    applyCalmSpanishUtterance(u);
+    u.volume = fromUserGesture ? 0.02 : 0.001;
+    u.rate = 1.15;
+    u.onend = () => {
+      speechUnlocked = true;
+      processQueue();
+    };
+    u.onerror = () => {
+      speechUnlocked = true;
+      processQueue();
+    };
+    synth.speak(u);
+    if (fromUserGesture) speechUnlocked = true;
+  } catch {
+    if (fromUserGesture) speechUnlocked = true;
+  }
+
+  if (speechUnlocked && queue.length > 0 && !speaking) {
+    processQueue();
+  }
+}
+
 function processQueue(): void {
   if (speaking || queue.length === 0) return;
   const synth = getSynth();
@@ -152,14 +204,23 @@ function processQueue(): void {
     return;
   }
 
+  if (!speechUnlocked) return;
+
   primeVoicesOnce();
   resumeSynthIfPaused();
+
+  if (!primeSpanishVoicesReady()) {
+    const retry = () => processQueue();
+    synth.addEventListener("voiceschanged", retry, { once: true });
+    window.setTimeout(retry, 450);
+    return;
+  }
 
   const text = queue.shift()!;
   speaking = true;
   armStuckReset();
   let phraseRetries = 0;
-  const maxPhraseRetries = 1;
+  const maxPhraseRetries = 2;
 
   const speakPhrase = () => {
     try {
@@ -214,7 +275,11 @@ function processQueue(): void {
  * Desbloquea TTS tras gesto del usuario.
  * Se re-ejecuta si pasó tiempo (navegadores revocan autoplay al cabo de rato).
  */
-export function warmupSpeechSynthesis(force = false): void {
+export function warmupSpeechSynthesis(force = false, fromUserGesture = false): void {
+  if (fromUserGesture) {
+    unlockSpeechSynthesis(true);
+    return;
+  }
   const synth = getSynth();
   if (!synth) return;
   const now = Date.now();
@@ -226,6 +291,12 @@ export function warmupSpeechSynthesis(force = false): void {
   } catch {
     /* noop */
   }
+}
+
+/** Prueba audible — usar solo dentro de un click del usuario. */
+export function speakVoiceProbe(source: UbicacionVoiceSource = "puerta"): void {
+  unlockSpeechSynthesis(true);
+  speakUbicacionQueue(["SISTEMICAR. Voz activa, operador."], true, source);
 }
 
 /**
@@ -250,7 +321,12 @@ export function speakUbicacionQueue(
     return;
   }
 
-  warmupSpeechSynthesis(true);
+  if (!speechUnlocked) {
+    warmupSpeechSynthesis(true);
+  } else {
+    resumeSynthIfPaused();
+    primeVoicesOnce();
+  }
 
   if (cancelPrevious) {
     try {

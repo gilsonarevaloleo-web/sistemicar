@@ -64,6 +64,7 @@ import { useSovereigntyToast } from "@/components/sovereignty-toast";
 import { DoctorIAChat } from "@/components/doctor-ia-chat";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { runStartupStorageHygiene } from "@/lib/storageHygiene";
+import { unlockSpeechSynthesis } from "@/lib/speechQueue";
 
 interface AuthContextType {
   user: AppUser | null;
@@ -394,6 +395,19 @@ function SovereigntyListener() {
   return null;
 }
 
+function VoiceBootstrap() {
+  useEffect(() => {
+    const unlock = () => unlockSpeechSynthesis(true);
+    window.addEventListener("pointerdown", unlock, { capture: true });
+    window.addEventListener("keydown", unlock, { capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock, { capture: true });
+      window.removeEventListener("keydown", unlock, { capture: true });
+    };
+  }, []);
+  return null;
+}
+
 function App() {
   useEffect(() => {
     const report = runStartupStorageHygiene();
@@ -410,6 +424,7 @@ function App() {
       <DoctorIAChat />
       <CierreJornadaModal />
       <SovereigntyListener />
+      <VoiceBootstrap />
       <SegmentAttentionBackground />
       <CentinelaEngine />
       <Toaster />

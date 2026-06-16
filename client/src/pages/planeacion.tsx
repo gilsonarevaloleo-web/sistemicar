@@ -209,7 +209,7 @@ import {
   RutaSeguimientoPicker,
   rutaSeguimientoPickerCanConfirm,
 } from "@/components/RutaSeguimientoPicker";
-import { speakUbicacionQueue, speakUbicacionSingle, warmupSpeechSynthesis, recoverSpeechQueue, subscribeSpeechQueueIdle } from "@/lib/speechQueue";
+import { speakUbicacionQueue, speakUbicacionSingle, speakVoiceProbe, unlockSpeechSynthesis, warmupSpeechSynthesis, recoverSpeechQueue, subscribeSpeechQueueIdle } from "@/lib/speechQueue";
 import { speakDesglosadorVoiceReliable } from "@/lib/desglosadorVoice";
 import {
   flushMissedPuertaVoiceOnVisible,
@@ -228,6 +228,7 @@ import {
   setSituacionAlertsEnabled,
   isPuertaVozEnabled,
   setPuertaVozEnabled,
+  enableAllVoiceChannels,
   isDesglosadorVoiceEnabled,
   setDesglosadorVoiceEnabled,
 } from "@/lib/tikSound";
@@ -1846,7 +1847,7 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    const warm = () => warmupSpeechSynthesis(true);
+    const warm = () => unlockSpeechSynthesis(true);
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       warm();
@@ -1859,7 +1860,6 @@ export default function Planeacion() {
     };
     window.addEventListener("pointerdown", warm);
     document.addEventListener("visibilitychange", onVisible);
-    warm();
     return () => {
       window.removeEventListener("pointerdown", warm);
       document.removeEventListener("visibilitychange", onVisible);
@@ -6278,6 +6278,7 @@ export default function Planeacion() {
           setPuertaVozEnabledState(next);
           setPuertaVozEnabled(next);
           if (next) {
+            unlockSpeechSynthesis(true);
             void requestNotificationPermission().then(ok => {
               if (ok && planilla) scheduleSegmentNotifications(planilla.segmentos);
             });
@@ -6346,6 +6347,28 @@ export default function Planeacion() {
           style={{ color: tikSoundEnabled ? GOLD : "#475569" }}
         >
           Tick {tikSoundEnabled ? "ON" : "OFF"}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          enableAllVoiceChannels();
+          setSituacionAlertsEnabledState(true);
+          setPuertaVozEnabledState(true);
+          setDesglosadorVozEnabledState(true);
+          speakVoiceProbe("puerta");
+        }}
+        className={`flex items-center gap-1 rounded-md border transition-all ${compact ? "px-2 py-1" : "px-2 py-1"}`}
+        style={{
+          borderColor: `${GOLD}50`,
+          backgroundColor: `${GOLD}12`,
+        }}
+        title="Probar voz del sistema (requiere un toque en pantalla)"
+        data-testid="button-voice-probe"
+      >
+        <Volume2 size={10} style={{ color: GOLD }} />
+        <span className="text-[8px] font-bold uppercase tracking-widest whitespace-nowrap" style={{ color: GOLD }}>
+          Probar voz
         </span>
       </button>
     </>
@@ -6958,14 +6981,13 @@ export default function Planeacion() {
           </motion.div>
         )}
 
-        {(planLayout === "full" || planTab === "meta") && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col gap-2 p-2.5 rounded-xl border sm:flex-row sm:items-center sm:justify-between"
-            style={{ backgroundColor: "rgba(0,0,0,0.35)", borderColor: "rgba(255,255,255,0.08)" }}
-            data-testid="sound-controls-bar"
-          >
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex flex-col gap-2 p-2.5 rounded-xl border sm:flex-row sm:items-center sm:justify-between"
+          style={{ backgroundColor: "rgba(0,0,0,0.35)", borderColor: "rgba(255,255,255,0.08)" }}
+          data-testid="sound-controls-bar"
+        >
             <div className="min-w-0">
               <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · {JORNADA_MODULE.title}</p>
               <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
@@ -6974,12 +6996,6 @@ export default function Planeacion() {
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles(true)}</div>
           </motion.div>
-        )}
-
-        {(planLayout === "full" || planTab === "meta") && (
-          <>
-          </>
-        )}
 
         {/* RADIOGRAFÍA DEL OPERADOR — mini barra de progreso de tokens */}
         {(planLayout === "full" || planTab === "meta") && (() => {
