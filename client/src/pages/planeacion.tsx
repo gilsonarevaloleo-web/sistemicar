@@ -1373,7 +1373,9 @@ export default function Planeacion() {
   const presentSituacionDesgloseCelebration = useCallback(
     (vehicleId: string, titulo: string, vehicleForSummary: Vehicle) => {
       const summary = computeSituacionDesgloseSummary(vehicleForSummary);
-      openSituacionDesgloseCelebration(vehicleId, titulo, summary);
+      window.requestAnimationFrame(() => {
+        openSituacionDesgloseCelebration(vehicleId, titulo, summary);
+      });
       return summary;
     },
     [openSituacionDesgloseCelebration]
@@ -1847,10 +1849,9 @@ export default function Planeacion() {
   }, [user]);
 
   useEffect(() => {
-    const warm = () => unlockSpeechSynthesis(true);
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      warm();
+      warmupSpeechSynthesis();
       recoverSpeechQueue();
       const flushed = flushMissedPuertaVoiceOnVisible();
       if (flushed > 0) {
@@ -1858,10 +1859,8 @@ export default function Planeacion() {
       }
       runSegmentAttentionTickNow();
     };
-    window.addEventListener("pointerdown", warm);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.removeEventListener("pointerdown", warm);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
@@ -2248,6 +2247,22 @@ export default function Planeacion() {
   const persistVehiclesRef = () => {
     saveLocalVehicles(vehiclesRef.current);
   };
+
+  const persistVehiclesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushPersistVehiclesRef = useCallback(() => {
+    if (persistVehiclesTimerRef.current) {
+      clearTimeout(persistVehiclesTimerRef.current);
+      persistVehiclesTimerRef.current = null;
+    }
+    saveLocalVehicles(vehiclesRef.current);
+  }, []);
+  const schedulePersistVehiclesRef = useCallback((delayMs = 350) => {
+    if (persistVehiclesTimerRef.current) clearTimeout(persistVehiclesTimerRef.current);
+    persistVehiclesTimerRef.current = window.setTimeout(() => {
+      persistVehiclesTimerRef.current = null;
+      saveLocalVehicles(vehiclesRef.current);
+    }, delayMs);
+  }, []);
 
   const checkTraslado50Ref = useRef<(() => Promise<void>) | null>(null);
 
@@ -4490,13 +4505,13 @@ export default function Planeacion() {
     };
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
-    saveLocalVehicles(vehiclesRef.current);
+    schedulePersistVehiclesRef(0);
     armEntropyGapOnConsciousClose({
       segmentos: planilla?.segmentos || [],
       vehiculosAfterClose: vehiclesRef.current,
       cierreAt,
     });
-    triggerConquistaPulse();
+    window.requestAnimationFrame(() => triggerConquistaPulse());
     try {
       await updateVehicle(user.uid, vehicleId, closePatch);
       await updateVehicleStatus(user.uid, vehicleId, "cumplido");
@@ -4512,7 +4527,7 @@ export default function Planeacion() {
       vehiclesRef.current = vehiclesRef.current.map(v =>
         v.id === vehicleId ? { ...v, ...depthOnly } : v
       );
-      saveLocalVehicles(vehiclesRef.current);
+      schedulePersistVehiclesRef();
     }
     const closePatchFinal = { ...closePatch, desglosadorBloqueDepthPsGranted: depthPsGranted };
 
@@ -4549,7 +4564,7 @@ export default function Planeacion() {
       vehiclesRef.current = vehiclesRef.current.map(v =>
         v.id === vehicleId ? { ...v, ...closePatchFinal, subVehiculos: subsSettled } : v
       );
-      saveLocalVehicles(vehiclesRef.current);
+      flushPersistVehiclesRef();
 
       if (vehicle.proyectoId && vehicle.proyectoPeldanoId) {
         void markPeldanoConquistadoTiempo(
@@ -4892,7 +4907,7 @@ export default function Planeacion() {
     const updatedVehicle: Vehicle = { ...vehicleSnapshot, subTareas, situacionCronometro };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? updatedVehicle : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? updatedVehicle : v));
-    persistVehiclesRef();
+    schedulePersistVehiclesRef();
 
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
@@ -4925,9 +4940,11 @@ export default function Planeacion() {
           }
         });
       }
-      void playSituacionChimes(3);
-      setGoldenFlash(true);
-      setTimeout(() => setGoldenFlash(false), 3000);
+      window.requestAnimationFrame(() => {
+        void playSituacionChimes(3);
+        setGoldenFlash(true);
+        setTimeout(() => setGoldenFlash(false), 3000);
+      });
       return true;
     } catch (e) {
       console.error("[tryFinalizeSituacionDesgloseBloque]", e);
@@ -4966,7 +4983,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v =>
       v.id === vehicleId ? { ...v, subTareas, situacionCronometro: situacionCronometroFinal, situacionCupoAnchor: null } : v
     );
-    persistVehiclesRef();
+    schedulePersistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, {
         subTareas,
@@ -4985,9 +5002,11 @@ export default function Planeacion() {
         situacionCupoAnchor: null,
       };
       presentSituacionDesgloseCelebration(vehicleId, vehicle.titulo, closedVehicle);
-      void playSituacionChimes(2);
-      setGoldenFlash(true);
-      setTimeout(() => setGoldenFlash(false), 2500);
+      window.requestAnimationFrame(() => {
+        void playSituacionChimes(2);
+        setGoldenFlash(true);
+        setTimeout(() => setGoldenFlash(false), 2500);
+      });
       const bolsa = situacionCronometroFinal.bolsaSegundoRetoMin ?? 0;
       toast.info("Ronda cerrada de golpe", {
         description:

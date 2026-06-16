@@ -32,7 +32,7 @@ import {
 import { registerNotificationStateProvider } from "@/lib/notificationState";
 import { dispatchConcienciaClockTick, burstConcienciaClockTick } from "@/lib/concienciaClock";
 import { isMobilePerfMode, MOBILE_PERF } from "@/lib/mobilePerf";
-import { recoverSpeechQueue, unlockSpeechSynthesis, warmupSpeechSynthesis } from "@/lib/speechQueue";
+import { recoverSpeechQueue, warmupSpeechSynthesis } from "@/lib/speechQueue";
 
 const TICK_MS_FOREGROUND = 10_000;
 const TICK_MS_BACKGROUND = 15_000;
@@ -170,8 +170,7 @@ export function SegmentAttentionBackground() {
     };
 
     const onVisible = () => {
-      warmupSpeechSynthesis(true);
-      unlockSpeechSynthesis(true);
+      warmupSpeechSynthesis();
       recoverSpeechQueue();
       const flushed = flushMissedPuertaVoiceOnVisible();
       if (flushed > 0) {

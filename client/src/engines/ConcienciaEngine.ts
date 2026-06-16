@@ -1500,20 +1500,27 @@ export function armEntropyGapOnConsciousClose(params: {
   vehiculosAfterClose: Vehicle[];
   cierreAt: number;
 }): void {
-  const filtered = resolveCoverageVehicles(params.vehiculosAfterClose, params.cierreAt);
-  const timeline = buildConcienciaTimeline({
-    segmentos: params.segmentos,
-    vehiculos: filtered,
-    now: params.cierreAt,
-  });
-  armLiveGapClock({
-    gapAnchorMs: params.cierreAt,
-    baselineEntropyMin: Math.max(
-      timeline.dayStats.entropiaMin,
-      getEntropyMonotonicDebugState(params.cierreAt)?.floorMin ?? 0
-    ),
-    nowMs: params.cierreAt,
-  });
+  const run = () => {
+    const filtered = resolveCoverageVehicles(params.vehiculosAfterClose, params.cierreAt);
+    const timeline = buildConcienciaTimeline({
+      segmentos: params.segmentos,
+      vehiculos: filtered,
+      now: params.cierreAt,
+    });
+    armLiveGapClock({
+      gapAnchorMs: params.cierreAt,
+      baselineEntropyMin: Math.max(
+        timeline.dayStats.entropiaMin,
+        getEntropyMonotonicDebugState(params.cierreAt)?.floorMin ?? 0
+      ),
+      nowMs: params.cierreAt,
+    });
+  };
+  if (typeof requestIdleCallback !== "undefined") {
+    requestIdleCallback(run, { timeout: 800 });
+  } else {
+    window.setTimeout(run, 0);
+  }
 }
 
 /**

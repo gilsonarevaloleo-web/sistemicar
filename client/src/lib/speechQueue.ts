@@ -170,7 +170,11 @@ export function unlockSpeechSynthesis(fromUserGesture = false): void {
   resumeSynthIfPaused();
   lastWarmupMs = Date.now();
 
-  if (speechUnlocked && !fromUserGesture) return;
+  // Ya desbloqueado: no volver a synth.speak() en cada pointerdown (congela TTS en móvil).
+  if (speechUnlocked) {
+    if (queue.length > 0 && !speaking) processQueue();
+    return;
+  }
 
   try {
     const u = new SpeechSynthesisUtterance("\u200b");
