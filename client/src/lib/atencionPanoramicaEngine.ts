@@ -1,5 +1,5 @@
 import type { SegmentoV5 } from "./persistence";
-import { getJournalDayStartMs, segmentWindowMs } from "./segmentTime";
+import { getLimaDayStartMs, segmentWindowMs } from "./segmentTime";
 import type { PuertaTiming } from "./segmentAttentionEngine";
 import { isWithinPuertaWindow } from "./segmentAttentionEngine";
 
@@ -57,7 +57,7 @@ export function computeAtencionPanoramicaDia(params: {
   dayStartMs?: number;
 }): AtencionPanoramicaDia {
   const nowMs = params.nowMs ?? Date.now();
-  const dayStartMs = params.dayStartMs ?? getJournalDayStartMs(nowMs);
+  const dayStartMs = params.dayStartMs ?? getLimaDayStartMs(nowMs);
 
   const segmentosOut: SegmentoAtencion[] = params.segmentos.map(seg => {
     const { end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);

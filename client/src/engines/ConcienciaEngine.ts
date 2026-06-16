@@ -3,6 +3,7 @@ import {
   getLimaDayStartMs,
   getLimaMinutesFromMidnight,
   getLimaSecondsFromMidnight,
+  getSegmentCalendarDayStartMs,
   segmentTimeToMinutes,
   segmentWindowMs,
 } from "@/lib/segmentTime";
@@ -358,12 +359,12 @@ export function listRetroactiveCentinelaGapsToPersist(params: {
   const now = params.now ?? Date.now();
   if (params.segmentos.length === 0) return [];
 
-  const limaDayStartMs = getLimaDayStartMs(now);
+  const segmentDayStartMs = getSegmentCalendarDayStartMs(now);
   const umbralMin = getUmbralConcienciaMin(params.segmentos);
-  const nowMin = getNowMinutesLocal(Math.min(now, getJournalDayStartMs(now) + 86400000), limaDayStartMs);
+  const nowMin = getNowMinutesLocal(Math.min(now, getJournalDayStartMs(now) + 86400000), segmentDayStartMs);
   if (nowMin < umbralMin) return [];
 
-  const livedStartMs = limaDayStartMs + umbralMin * 60000;
+  const livedStartMs = segmentDayStartMs + umbralMin * 60000;
   const nowMs = Math.min(now, getJournalDayStartMs(now) + 86400000);
   if (nowMs <= livedStartMs) return [];
 
@@ -385,7 +386,7 @@ export function listRetroactiveCentinelaGapsToPersist(params: {
 
   const intervals = computeRetroactiveCentinelaIntervalsMs(
     params.segmentos,
-    limaDayStartMs,
+    segmentDayStartMs,
     livedStartMs,
     nowMs,
     coverSessions,
@@ -462,8 +463,10 @@ export function limaNowToHalfDayLap(nowMs: number = Date.now()): 0 | 1 {
   return getHalfDayLap(getLimaMinutesFromMidnight(nowMs));
 }
 
-/** Convierte instante local (ms desde medianoche) a grados del reloj 12h. */
-export function msToClockDeg(ms: number, dayStartMs: number): number {
+/** Convierte instante absoluto a grados del reloj 12h (medianoche Lima del mismo día civil). */
+export function msToClockDeg(ms: number, _dayStartMs?: number): number {
+  void _dayStartMs;
+  const dayStartMs = getLimaDayStartMs(ms);
   const minutesFromMidnight = (ms - dayStartMs) / 60000;
   return clockMinutesToDeg(minutesFromMidnight);
 }
@@ -614,16 +617,16 @@ function buildTimelineCore(params: {
   now?: number;
 }): TimelineCore | null {
   const now = params.now ?? Date.now();
-  const limaDayStartMs = getLimaDayStartMs(now);
+  const segmentDayStartMs = getSegmentCalendarDayStartMs(now);
   const journalEndMs = getJournalDayStartMs(now) + 86400000;
   const nowMs = Math.min(now, journalEndMs);
-  const nowMin = getNowMinutesLocal(nowMs, limaDayStartMs);
+  const nowMin = getNowMinutesLocal(nowMs, segmentDayStartMs);
   const segmentos = params.segmentos ?? [];
   const umbralMin = getUmbralConcienciaMin(segmentos);
 
   if (nowMin < umbralMin) return null;
 
-  const livedStartMs = limaDayStartMs + umbralMin * 60000;
+  const livedStartMs = segmentDayStartMs + umbralMin * 60000;
   const livedEndMs = nowMs;
   if (livedEndMs <= livedStartMs) return null;
 
@@ -649,7 +652,7 @@ function buildTimelineCore(params: {
   const retroactiveCentinela = hasSegments
     ? computeRetroactiveCentinelaIntervalsMs(
         segmentos,
-        limaDayStartMs,
+        segmentDayStartMs,
         livedStartMs,
         nowMs,
         coverSessions,
@@ -659,7 +662,7 @@ function buildTimelineCore(params: {
   const centinelaMerged = mergeMsIntervals([...centinelaRealMerged, ...retroactiveCentinela]);
 
   const plannedLivedWindows = hasSegments
-    ? plannedSegmentWindowsMs(segmentos, limaDayStartMs, livedStartMs, nowMs)
+    ? plannedSegmentWindowsMs(segmentos, segmentDayStartMs, livedStartMs, nowMs)
     : [{ start: livedStartMs, end: livedEndMs }];
   const livedPlannedMin = sumIntervalMinutes(plannedLivedWindows);
   const totalPlannedMin = hasSegments
@@ -670,7 +673,7 @@ function buildTimelineCore(params: {
   if (hasSegments) {
     segmentEntropy = computePlannedEntropyGapsMs(
       segmentos,
-      limaDayStartMs,
+      segmentDayStartMs,
       livedStartMs,
       nowMs,
       coverSessions
@@ -684,7 +687,7 @@ function buildTimelineCore(params: {
   const entropiaIntervals = mergeMsIntervals([...segmentEntropy, ...centinelaNet]);
 
   return {
-    limaDayStartMs,
+    limaDayStartMs: segmentDayStartMs,
     nowMs,
     nowMin,
     umbralMin,
@@ -893,7 +896,7 @@ export function computeSegmentClockArcs(
   segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>,
   nowMs: number = Date.now()
 ): SegmentClockArc[] {
-  const dayStartMs = getLimaDayStartMs(nowMs);
+  const dayStartMs = getSegmentCalendarDayStartMs(nowMs);
   const out: SegmentClockArc[] = [];
   segmentos.forEach((seg, idx) => {
     if (!seg?.horaInicio || !seg.horaFin) return;

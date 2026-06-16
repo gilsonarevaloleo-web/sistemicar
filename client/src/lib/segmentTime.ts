@@ -35,9 +35,17 @@ export function getLimaDayStartMs(fromMs: number = Date.now()): number {
   return fromMs - msSinceMidnight;
 }
 
-/** Día calendario para el anillo y segmentos (hora local del usuario). */
+/** Día calendario para el anillo y segmentos HH:mm (medianoche Lima, UTC-5). */
 export function getClockDayStartMs(fromMs: number = Date.now()): number {
-  return getLocalDayStartMs(fromMs);
+  return getLimaDayStartMs(fromMs);
+}
+
+/**
+ * Medianoche Lima del día calendario de la jornada activa (fecha planilla / 05:00).
+ * Entre 00:00 y 05:00 sigue anclando al calendario de la jornada anterior.
+ */
+export function getSegmentCalendarDayStartMs(fromMs: number = Date.now()): number {
+  return getLimaDayStartMs(getJournalDayStartMs(fromMs));
 }
 
 const LIMA_OFFSET_MS = -5 * 60 * 60 * 1000;
@@ -77,6 +85,14 @@ export function getJournalDateString(fromMs: number = Date.now()): string {
 export function isPastJournalDayStart(nowMs: number = Date.now()): boolean {
   const calDayStart = getLimaDayStartMs(nowMs);
   return nowMs >= segmentClockMs(JOURNAL_DAY_START, calDayStart);
+}
+
+/** HH:mm en hora Lima (UTC-5), alineado con puntero del anillo. */
+export function formatLimaTimeHM(fromMs: number = Date.now()): string {
+  const min = getLimaMinutesFromMidnight(fromMs);
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 /** Próxima medianoche Lima (inicio del siguiente día calendario). */

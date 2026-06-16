@@ -1,14 +1,45 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  formatLimaTimeHM,
+  getClockDayStartMs,
+  getJournalDayStartMs,
   getLimaDayStartMs,
   getNextLimaMidnightMs,
+  getSegmentCalendarDayStartMs,
   isPastSegmentEnd,
   isWithinSegmentTimeMargin,
   segmentDurationMinutes,
   segmentWindowMs,
   validateSegmentTimes,
 } from "./segmentTime.ts";
+
+describe("getClockDayStartMs", () => {
+  it("usa medianoche Lima, no hora local del navegador", () => {
+    const now = Date.UTC(2026, 4, 18, 15, 0, 0);
+    assert.equal(getClockDayStartMs(now), getLimaDayStartMs(now));
+  });
+});
+
+describe("getSegmentCalendarDayStartMs", () => {
+  it("entre 00:00 y 05:00 Lima ancla al calendario de la jornada anterior", () => {
+    const twoAmLima = Date.UTC(2026, 4, 18, 7, 0, 0);
+    const journalStart = getJournalDayStartMs(twoAmLima);
+    assert.equal(getSegmentCalendarDayStartMs(twoAmLima), getLimaDayStartMs(journalStart));
+  });
+
+  it("después de las 05:00 coincide con medianoche Lima del día", () => {
+    const tenAmLima = Date.UTC(2026, 4, 18, 15, 0, 0);
+    assert.equal(getSegmentCalendarDayStartMs(tenAmLima), getLimaDayStartMs(tenAmLima));
+  });
+});
+
+describe("formatLimaTimeHM", () => {
+  it("formatea hora Lima", () => {
+    const nineThirty = Date.UTC(2026, 4, 18, 14, 30, 0);
+    assert.equal(formatLimaTimeHM(nineThirty), "09:30");
+  });
+});
 
 describe("segmentDurationMinutes", () => {
   it("misma jornada", () => {

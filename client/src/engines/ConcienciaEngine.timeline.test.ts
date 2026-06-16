@@ -12,6 +12,7 @@ import {
   computeTimelineDayStats,
   getUmbralConcienciaMin,
   limaNowToClockDeg,
+  msToClockDeg,
   listRetroactiveCentinelaGapsToPersist,
   resetLiveEntropyMonotonic,
   resolveConsciousSessionStart,
@@ -56,6 +57,12 @@ describe("clockMinutesToDeg / puntero 12h", () => {
   it("limaNowToClockDeg usa hora Lima", () => {
     const now = limaAt(2026, 4, 18, 9, 30);
     assert.equal(limaNowToClockDeg(now), clockMinutesToDeg(9 * 60 + 30));
+  });
+
+  it("msToClockDeg alinea sesiones al reloj 12h del día civil del instante", () => {
+    const tenAm = limaAt(2026, 4, 18, 10, 0);
+    assert.equal(msToClockDeg(tenAm), clockMinutesToDeg(10 * 60));
+    assert.equal(msToClockDeg(tenAm), limaNowToClockDeg(tenAm));
   });
 });
 

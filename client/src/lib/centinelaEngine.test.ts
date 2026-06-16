@@ -3,10 +3,11 @@ import { describe, it } from "node:test";
 import type { Vehicle } from "./persistence";
 import {
   buildCentinelaArchiveFields,
+  findSegmentCoveringNow,
   isCentinelaBlockedByVehicles,
   listActiveCentinelas,
 } from "./centinelaEngine.ts";
-import { getJournalDayStartMs } from "./segmentTime.ts";
+import { getJournalDayStartMs, getSegmentCalendarDayStartMs, segmentWindowMs } from "./segmentTime.ts";
 
 const centinela = (id: string): Vehicle =>
   ({
@@ -66,5 +67,20 @@ describe("centinelaEngine exclusión mutua", () => {
     );
     assert.equal(fields.status, "archivado");
     assert.equal(fields.duracionFinal, 30);
+  });
+
+  it("findSegmentCoveringNow usa medianoche calendario, no 05:00 jornada", () => {
+    const tenAmLima = Date.UTC(2026, 4, 18, 15, 0, 0);
+    const dayStart = getSegmentCalendarDayStartMs(tenAmLima);
+    const seg = {
+      id: "s1",
+      nombre: "Mañana",
+      horaInicio: "09:00",
+      horaFin: "12:00",
+      estado: "pendiente",
+    } as import("./persistence").SegmentoV5;
+    const { start } = segmentWindowMs("09:00", "12:00", dayStart);
+    assert.notEqual(start, getJournalDayStartMs(tenAmLima) + 9 * 3600_000);
+    assert.equal(findSegmentCoveringNow([seg], tenAmLima)?.id, "s1");
   });
 });

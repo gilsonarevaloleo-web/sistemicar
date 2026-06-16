@@ -8,6 +8,7 @@ import {
 import { recordConsciousVehicleLaunch } from "./entropyMonotonicStore";
 import {
   getJournalDayStartMs,
+  getSegmentCalendarDayStartMs,
   isPastJournalDayStart,
   JOURNAL_DAY_START,
   segmentWindowMs,
@@ -88,8 +89,8 @@ export function findSegmentCoveringNow(
   nowMs: number
 ): SegmentoV5 | undefined {
   const dayStarts = [
-    getJournalDayStartMs(nowMs),
-    getJournalDayStartMs(nowMs) - 86400000,
+    getSegmentCalendarDayStartMs(nowMs),
+    getSegmentCalendarDayStartMs(nowMs) - 86400000,
   ];
   for (const dayStart of dayStarts) {
     for (const seg of segmentos) {
@@ -105,11 +106,11 @@ function findFirstJournalSegment(
   nowMs: number
 ): SegmentoV5 | undefined {
   if (segmentos.length === 0) return undefined;
-  const journalStart = getJournalDayStartMs(nowMs);
+  const calDayStart = getSegmentCalendarDayStartMs(nowMs);
   return [...segmentos].sort(
     (a, b) =>
-      segmentWindowMs(a.horaInicio, a.horaFin, journalStart).start -
-      segmentWindowMs(b.horaInicio, b.horaFin, journalStart).start
+      segmentWindowMs(a.horaInicio, a.horaFin, calDayStart).start -
+      segmentWindowMs(b.horaInicio, b.horaFin, calDayStart).start
   )[0];
 }
 
@@ -149,8 +150,8 @@ export function getCentinelaSegmentGate(
 
   const first = findFirstJournalSegment(planilla.segmentos, nowMs);
   if (first) {
-    const journalStart = getJournalDayStartMs(nowMs);
-    const { start } = segmentWindowMs(first.horaInicio, first.horaFin, journalStart);
+    const calDayStart = getSegmentCalendarDayStartMs(nowMs);
+    const { start } = segmentWindowMs(first.horaInicio, first.horaFin, calDayStart);
     if (nowMs >= start) {
       return { allowed: true, segContext: first };
     }

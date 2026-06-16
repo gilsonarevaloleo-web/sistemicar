@@ -8,7 +8,7 @@ import {
   type SegmentoAnilloLite,
   type VehiculoAnilloLite,
 } from "./ConcienciaEngine";
-import { getLimaDayStartMs, segmentWindowMs } from "@/lib/segmentTime";
+import { getSegmentCalendarDayStartMs, segmentWindowMs } from "@/lib/segmentTime";
 
 export const HORIZON_WINDOW_MIN_DEFAULT = 480;
 export const HORIZON_VISIBLE_DEG = 240;
@@ -68,7 +68,7 @@ export function computeHorizonProjection(params: {
   const nowMs = params.now ?? Date.now();
   const windowMin = params.windowMin ?? HORIZON_WINDOW_MIN_DEFAULT;
   const halfWindowMs = (windowMin / 2) * 60000;
-  const dayStartMs = getLimaDayStartMs(nowMs);
+  const dayStartMs = getSegmentCalendarDayStartMs(nowMs);
 
   const arcs: HorizonArc[] = [
     { startDeg: -HORIZON_VISIBLE_DEG / 2, endDeg: HORIZON_VISIBLE_DEG / 2, kind: "fondo" },

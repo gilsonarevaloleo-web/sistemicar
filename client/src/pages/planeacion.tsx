@@ -385,6 +385,7 @@ import {
   getJournalDateString,
   getJournalDayStartMs,
   getLimaDayStartMs,
+  getSegmentCalendarDayStartMs,
 } from "@/lib/segmentTime";
 import {
   classifyPuertaTiming,
@@ -2946,7 +2947,7 @@ export default function Planeacion() {
       return;
     }
     const nowMs = Date.now();
-    const dayStart = getLimaDayStartMs(nowMs);
+    const dayStart = getSegmentCalendarDayStartMs(nowMs);
     if (!isWithinPuertaWindow(nowMs, seg.horaInicio, dayStart)) {
       toast.warning("Ventana de puerta cerrada", {
         description: `Abre la puerta de atención solo ±5 min de ${seg.horaInicio}.`,
@@ -3036,7 +3037,7 @@ export default function Planeacion() {
 
     if (seg.horaFin) {
       const nowMs = Date.now();
-      const dayStart = getLimaDayStartMs(nowMs);
+      const dayStart = getSegmentCalendarDayStartMs(nowMs);
       const dentroVentana = isWithinSegmentTimeMargin(nowMs, seg.horaInicio, seg.horaFin, "fin", 5, dayStart);
       if (!dentroVentana) {
         toast.warning("La puerta está sellada", {
@@ -7731,7 +7732,7 @@ export default function Planeacion() {
                         const isPendiente = seg.estado === "pendiente";
                         const nowMsSeg = Date.now();
                         // Segmentos están anclados a HH:mm sobre medianoche Lima (no inicio de jornada 05:00)
-                        const dayStartSeg = getLimaDayStartMs(nowMsSeg);
+                        const dayStartSeg = getSegmentCalendarDayStartMs(nowMsSeg);
                         const puertaVentanaAbierta = isWithinPuertaWindow(
                           nowMsSeg, seg.horaInicio, dayStartSeg
                         );

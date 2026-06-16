@@ -13,6 +13,7 @@ import {
   type SegmentoAnilloLite,
 } from "@/engines/ConcienciaEngine";
 import { computeHorizonProjection } from "@/engines/ConcienciaHorizonEngine";
+import { formatLimaTimeHM } from "@/lib/segmentTime";
 import {
   readAnilloViewMode,
   subscribeAnilloViewMode,
@@ -129,6 +130,11 @@ function AnilloConcienciaLiveInner({
     return nowToHalfDayLap(Date.now());
   }, [pointerTick]);
 
+  const limaClockLabel = useMemo(() => {
+    void pointerTick;
+    return formatLimaTimeHM(Date.now());
+  }, [pointerTick]);
+
   const toggle = showViewToggle ? (
     <div
       className="flex rounded-lg border overflow-hidden mb-1"
@@ -188,6 +194,7 @@ function AnilloConcienciaLiveInner({
           pointerLap={pointerLap}
           pointerMode={model.anilloEstado.mode}
           centerGuide={model.anilloEstado.centerGuide}
+          limaClockLabel={limaClockLabel}
         />
       )}
     </AnilloRingErrorBoundary>

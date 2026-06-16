@@ -33,6 +33,8 @@ interface AnilloConcienciaProps {
   pointerLap?: 0 | 1;
   pointerMode?: AnilloPointerMode;
   centerGuide?: string;
+  /** Hora Lima (HH:mm) alineada con el puntero del anillo. */
+  limaClockLabel?: string;
 }
 
 type HalfDayLap = 0 | 1;
@@ -95,6 +97,7 @@ export default function AnilloConciencia({
   pointerLap = 0,
   pointerMode = "libre",
   centerGuide,
+  limaClockLabel,
 }: AnilloConcienciaProps) {
   const [tooltipOrdinal, setTooltipOrdinal] = useState<number | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -615,6 +618,18 @@ export default function AnilloConciencia({
             >
               {ampm}
             </text>
+            {limaClockLabel ? (
+              <text
+                x={cx}
+                y={cy + 42}
+                textAnchor="middle"
+                fill="rgba(255,255,255,0.38)"
+                fontSize={size * 0.055}
+                fontFamily="JetBrains Mono, monospace"
+              >
+                {limaClockLabel}
+              </text>
+            ) : null}
             <text
               x={cx}
               y={cy + 20}
