@@ -89,23 +89,54 @@ export function applyDayRolloverEntropia(
   return { segmentos: next, events, changed };
 }
 
+/** Evita tormenta de catch-up: máx. transiciones por tick del motor global. */
+export const MAX_SEGMENT_ATTENTION_TRANSITIONS_PER_TICK = 4;
+
+export type SegmentAttentionTickResult = {
+  segmentos: SegmentoV5[];
+  events: SegmentAttentionEvent[];
+  changed: boolean;
+  /** Quedan segmentos vencidos por procesar en el próximo tick. */
+  catchUpPending: boolean;
+};
+
 /** Transiciones de atención panorámica: entropía por puerta perdida o cierre omitido. */
 export function applySegmentAttentionTick(
   segmentos: SegmentoV5[],
   nowMs: number,
-  dayStartMs?: number
-): { segmentos: SegmentoV5[]; events: SegmentAttentionEvent[]; changed: boolean } {
+  dayStartMs?: number,
+  options?: { maxTransitions?: number }
+): SegmentAttentionTickResult {
   // dayStart = medianoche calendario de la jornada (no las 05:00).
   const dayStart = dayStartMs ?? getSegmentCalendarDayStartMs(nowMs);
+  const maxTransitions = options?.maxTransitions ?? Number.POSITIVE_INFINITY;
   const events: SegmentAttentionEvent[] = [];
   let changed = false;
+  let transitions = 0;
+  let catchUpPending = false;
 
   const next = segmentos.map(seg => {
+    if (transitions >= maxTransitions) {
+      if (
+        (seg.estado === "pendiente" &&
+          ((!!seg.horaFin &&
+            isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin, PUERTA_MARGIN_MIN, dayStart)) ||
+            isPastPuertaWindow(nowMs, seg.horaInicio, dayStart))) ||
+        (seg.estado === "activo" &&
+          seg.horaFin &&
+          isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin, PUERTA_MARGIN_MIN, dayStart))
+      ) {
+        catchUpPending = true;
+      }
+      return seg;
+    }
+
     if (seg.estado === "pendiente") {
       const pastEnd =
         !!seg.horaFin &&
         isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin, PUERTA_MARGIN_MIN, dayStart);
       if (pastEnd) {
+        transitions += 1;
         changed = true;
         events.push({
           type: "entropia",
@@ -116,6 +147,7 @@ export function applySegmentAttentionTick(
         return { ...seg, estado: "entropia" as const, cerradoAt: nowMs, psGanados: 0 };
       }
       if (isPastPuertaWindow(nowMs, seg.horaInicio, dayStart)) {
+        transitions += 1;
         changed = true;
         events.push({
           type: "auto_apertura",
@@ -136,6 +168,7 @@ export function applySegmentAttentionTick(
 
     if (seg.estado === "activo" && seg.horaFin) {
       if (isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin, PUERTA_MARGIN_MIN, dayStart)) {
+        transitions += 1;
         changed = true;
         events.push({ type: "entropia", segId: seg.id, nombre: seg.nombre, reason: "past_end" });
         return { ...seg, estado: "entropia" as const, cerradoAt: nowMs, psGanados: 0 };
@@ -145,7 +178,7 @@ export function applySegmentAttentionTick(
     return seg;
   });
 
-  return { segmentos: next, events, changed };
+  return { segmentos: next, events, changed, catchUpPending };
 }
 
 /** Segmentos pendientes que deben recibir voz en minuto 4 (una vez por día). */

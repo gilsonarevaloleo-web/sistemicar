@@ -937,17 +937,22 @@ function intervalsInSegmentWindow(
   return intersectIntervalsWithWindows(intervals, [{ start: livedStart, end: livedEnd }]);
 }
 
-function buildSegmentBattleIntervals(params: {
-  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
-  vehiculos: VehiculoAnilloLite[];
-  now?: number;
-}): SegmentBattleInterval[] {
+function buildSegmentBattleIntervals(
+  params: {
+    segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
+    vehiculos: VehiculoAnilloLite[];
+    now?: number;
+  },
+  coreIn?: ReturnType<typeof buildTimelineCore>
+): SegmentBattleInterval[] {
   const now = params.now ?? Date.now();
-  const core = buildTimelineCore({
-    vehiculos: params.vehiculos,
-    segmentos: params.segmentos,
-    now,
-  });
+  const core =
+    coreIn ??
+    buildTimelineCore({
+      vehiculos: params.vehiculos,
+      segmentos: params.segmentos,
+      now,
+    });
   if (!core?.hasSegments) return [];
 
   const dayStartMs = core.limaDayStartMs;
@@ -991,23 +996,28 @@ export function buildSegmentBattleIntervalsForHorizon(params: {
 }
 
 /** Overlays morado/rojo dentro de cada ventana de segmento (batalla en territorio). */
-export function computeSegmentBattleArcs(params: {
-  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
-  vehiculos: VehiculoAnilloLite[];
-  now?: number;
-}): SegmentBattleArc[] {
+export function computeSegmentBattleArcs(
+  params: {
+    segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
+    vehiculos: VehiculoAnilloLite[];
+    now?: number;
+  },
+  coreIn?: ReturnType<typeof buildTimelineCore>
+): SegmentBattleArc[] {
   const now = params.now ?? Date.now();
-  const core = buildTimelineCore({
-    vehiculos: params.vehiculos,
-    segmentos: params.segmentos,
-    now,
-  });
+  const core =
+    coreIn ??
+    buildTimelineCore({
+      vehiculos: params.vehiculos,
+      segmentos: params.segmentos,
+      now,
+    });
   if (!core?.hasSegments) return [];
 
   const dayStartMs = core.limaDayStartMs;
   const out: SegmentBattleArc[] = [];
 
-  for (const battle of buildSegmentBattleIntervals(params)) {
+  for (const battle of buildSegmentBattleIntervals(params, core)) {
     for (const arc of intervalToClockArcs(
       { start: battle.startMs, end: battle.endMs },
       dayStartMs,
@@ -1026,17 +1036,22 @@ export function computeSegmentBattleArcs(params: {
   return out;
 }
 
-export function computeSegmentArcStats(params: {
-  segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
-  vehiculos: VehiculoAnilloLite[];
-  now?: number;
-}): SegmentArcStats[] {
+export function computeSegmentArcStats(
+  params: {
+    segmentos: Array<SegmentoAnilloLite & { estado?: string; nombre?: string }>;
+    vehiculos: VehiculoAnilloLite[];
+    now?: number;
+  },
+  coreIn?: ReturnType<typeof buildTimelineCore>
+): SegmentArcStats[] {
   const now = params.now ?? Date.now();
-  const core = buildTimelineCore({
-    vehiculos: params.vehiculos,
-    segmentos: params.segmentos,
-    now,
-  });
+  const core =
+    coreIn ??
+    buildTimelineCore({
+      vehiculos: params.vehiculos,
+      segmentos: params.segmentos,
+      now,
+    });
   if (!core?.hasSegments) return [];
 
   const dayStartMs = core.limaDayStartMs;
@@ -1568,6 +1583,27 @@ export function computeLiveEntropy(params: {
   if (Math.abs(entropiaMin - timeline.dayStats.entropiaMin) < 0.05) return timeline;
 
   return patchTimelineEntropy(timeline, entropiaMin);
+}
+
+/** Modelo unificado del anillo: un solo buildTimelineCore para arcos de batalla y stats. */
+export function computeAnilloRingModelBundle(params: {
+  segmentos: SegmentoAnilloLite[];
+  vehiculos: Vehicle[];
+  now?: number;
+}) {
+  const now = params.now ?? Date.now();
+  const segs = params.segmentos;
+  const vehiculos = Array.isArray(params.vehiculos) ? params.vehiculos : [];
+  const filtered = resolveCoverageVehicles(vehiculos, now);
+  const core = buildTimelineCore({ vehiculos: filtered, segmentos: segs, now });
+  const timeline = computeLiveEntropy({ segmentos: segs, vehiculos, now });
+  const battleParams = { segmentos: segs, vehiculos: filtered, now };
+  return {
+    timeline,
+    segmentClockArcs: computeSegmentClockArcs(segs, now),
+    segmentBattleArcs: computeSegmentBattleArcs(battleParams, core),
+    segmentArcStats: computeSegmentArcStats(battleParams, core),
+  };
 }
 
 export const debeEstarAbierto = (horaInicio: number): boolean => {

@@ -3,10 +3,6 @@ import AnilloConciencia from "@/components/AnilloConciencia";
 import AnilloConcienciaHorizon from "@/components/AnilloConcienciaHorizon";
 import { AnilloRingErrorBoundary } from "@/components/AnilloRingErrorBoundary";
 import {
-  computeLiveEntropy,
-  computeSegmentArcStats,
-  computeSegmentBattleArcs,
-  computeSegmentClockArcs,
   formatMinutosJornada,
   nowToClockDeg,
   nowToHalfDayLap,
@@ -14,6 +10,7 @@ import {
 } from "@/engines/ConcienciaEngine";
 import { computeHorizonProjection } from "@/engines/ConcienciaHorizonEngine";
 import { formatLimaTimeHM } from "@/lib/segmentTime";
+import { getSharedAnilloLiveModel } from "@/lib/anilloLiveModelCache";
 import {
   readAnilloViewMode,
   subscribeAnilloViewMode,
@@ -32,9 +29,9 @@ function sanitizeSegmentos(segmentos: SegmentoAnilloLite[]): SegmentoAnilloLite[
 function emptyAnilloModel(segs: SegmentoAnilloLite[]) {
   return {
     segs,
-    segmentClockArcs: [] as ReturnType<typeof computeSegmentClockArcs>,
-    segmentBattleArcs: [] as ReturnType<typeof computeSegmentBattleArcs>,
-    segmentArcStats: [] as ReturnType<typeof computeSegmentArcStats>,
+    segmentClockArcs: [] as ReturnType<typeof getSharedAnilloLiveModel>["segmentClockArcs"],
+    segmentBattleArcs: [] as ReturnType<typeof getSharedAnilloLiveModel>["segmentBattleArcs"],
+    segmentArcStats: [] as ReturnType<typeof getSharedAnilloLiveModel>["segmentArcStats"],
     horizonProjection: computeHorizonProjection({ segmentos: [], vehiculos: [] }),
     metricas: {
       planificacionPct: 0,
@@ -47,7 +44,7 @@ function emptyAnilloModel(segs: SegmentoAnilloLite[]) {
       horasCubiertas: 0,
     },
     anilloEstado: { mode: "libre" as const, centerGuide: "", deg: 0, umbralMin: 360, sinSegmentos: true },
-    timelineArcs: [] as ReturnType<typeof computeLiveEntropy>["timelineArcs"],
+    timelineArcs: [] as ReturnType<typeof getSharedAnilloLiveModel>["timelineArcs"],
     dayStats: { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 },
     segConquistados: 0,
   };
@@ -89,34 +86,11 @@ function AnilloConcienciaLiveInner({
 
   const model = useMemo(() => {
     void metricTick;
-    const nowMs = Date.now();
-    const segs = sanitizeSegmentos(segmentos);
-    const vehiculos = Array.isArray(vehicles) ? vehicles : [];
     try {
-      const timeline = computeLiveEntropy({
-        segmentos: segs,
-        vehiculos,
-        now: nowMs,
-      });
-      const segConquistados = segs.filter(
-        s => (s as { estado?: string }).estado === "cerrado_manual"
-      ).length;
-      const battleParams = { segmentos: segs, vehiculos, now: nowMs };
-      return {
-        segs,
-        segmentClockArcs: computeSegmentClockArcs(segs, nowMs),
-        segmentBattleArcs: computeSegmentBattleArcs(battleParams),
-        segmentArcStats: computeSegmentArcStats(battleParams),
-        horizonProjection: computeHorizonProjection(battleParams),
-        metricas: timeline.metricas,
-        anilloEstado: timeline.anilloEstado,
-        timelineArcs: timeline.timelineArcs,
-        dayStats: timeline.dayStats,
-        segConquistados,
-      };
+      return getSharedAnilloLiveModel(segmentos, vehicles, Date.now());
     } catch (err) {
       console.error("[AnilloConcienciaLive] model", err);
-      return emptyAnilloModel(segs);
+      return emptyAnilloModel(sanitizeSegmentos(segmentos));
     }
   }, [segmentos, vehicles, metricTick]);
 

@@ -328,6 +328,9 @@ export async function activateCentinelaVehicle(
  * Persiste sesiones centinela archivadas para huecos pasados en segmentos planificados
  * (p. ej. usuario entró tarde). Solo corre cuando hay segmentos; no aplica sin planilla.
  */
+/** Máx. huecos centinela retro por ejecución — evita tormenta de vehículos al abrir Jornada. */
+const MAX_RETRO_CENTINELA_GAPS_PER_RUN = 4;
+
 export async function materializeRetroactiveCentinelas(
   userId: string,
   planilla: Planilla | null,
@@ -349,7 +352,7 @@ export async function materializeRetroactiveCentinelas(
   const { addVehicle, updateVehicle, updateVehicleStatus } = await import("./persistence");
   const createdIds: string[] = [];
 
-  for (const gap of gaps) {
+  for (const gap of gaps.slice(0, MAX_RETRO_CENTINELA_GAPS_PER_RUN)) {
     const duracionFinal = Math.max(1, Math.round((gap.cierreAt - gap.aperturaAt) / 60000));
     try {
       const id = await addVehicle(userId, {

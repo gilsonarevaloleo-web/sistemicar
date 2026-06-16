@@ -18,6 +18,7 @@ import {
   applyDayRolloverEntropia,
   applySegmentAttentionTick,
   collectVozPuertaEvents,
+  MAX_SEGMENT_ATTENTION_TRANSITIONS_PER_TICK,
   segmentOrdinalIndex,
   type SegmentAttentionEvent,
 } from "./segmentAttentionEngine";
@@ -112,15 +113,21 @@ export async function runSegmentAttentionCycle(
   }
 
   const dayStart = getSegmentCalendarDayStartMs(nowMs);
-  const { segmentos: nextSegmentos, events, changed: segChanged } = applySegmentAttentionTick(
+  const {
+    segmentos: nextSegmentos,
+    events,
+    changed: segChanged,
+    catchUpPending,
+  } = applySegmentAttentionTick(
     planilla.segmentos,
     nowMs,
-    dayStart
+    dayStart,
+    { maxTransitions: MAX_SEGMENT_ATTENTION_TRANSITIONS_PER_TICK }
   );
 
   const freshEvents = filterNewAttentionEvents(fechaHoy, events);
-  const batchEntropy =
-    freshEvents.filter(e => e.type === "entropia" || e.type === "auto_apertura").length > 2;
+  const entropyLike = freshEvents.filter(e => e.type === "entropia" || e.type === "auto_apertura");
+  const batchEntropy = entropyLike.length > 1 || catchUpPending;
 
   let segmentosAfterVoz = nextSegmentos;
   let vozChanged = false;
@@ -176,19 +183,25 @@ export async function runSegmentAttentionCycle(
   }
 
   if (batchEntropy) {
-    const n = freshEvents.filter(e => e.type === "entropia" || e.type === "auto_apertura").length;
+    const n = entropyLike.length;
+    const suffix = catchUpPending ? " (sincronizando en segundo plano…)" : "";
     attentionToast(
       "error",
       "Entropía acumulada",
-      `${n} segmentos requirieron cierre automático al sincronizar el horario. Revisa la lista de segmentos del día.`,
-      9000
+      `${n > 0 ? n : "Varios"} segmento(s) requirieron cierre automático al sincronizar el horario${suffix}. Revisa la lista del día.`,
+      7000
     );
     for (const ev of freshEvents) {
       if (ev.type !== "auto_apertura") continue;
       setActiveSegmento(userId, ev.segId);
-      void deductSovereigntyPoints(userId, 2, "Puerta sistema (entropía): " + ev.nombre).catch(e =>
-        console.error("[auto_apertura] deductPS", e)
-      );
+    }
+    const autoCount = freshEvents.filter(e => e.type === "auto_apertura").length;
+    if (autoCount > 0) {
+      void deductSovereigntyPoints(
+        userId,
+        autoCount * 2,
+        `Puerta sistema (entropía): ${autoCount} segmento(s)`
+      ).catch(e => console.error("[auto_apertura] deductPS", e));
     }
   }
 

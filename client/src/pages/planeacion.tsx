@@ -452,6 +452,7 @@ import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
 import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, armEntropyGapOnConsciousClose, formatMinutosJornada, resetLiveEntropyMonotonic } from "@/engines/ConcienciaEngine";
+import { getSharedAnilloLiveModel } from "@/lib/anilloLiveModelCache";
 import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/EntropiaDebugPanel";
 import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
 import { sealVehicleSessionClose } from "@/lib/vehicleSessionSeal";
@@ -1583,16 +1584,12 @@ export default function Planeacion() {
 
   const anilloSnapshotForEscalera = useMemo(() => {
     const segs = planilla?.segmentos || [];
-    const timeline = computeLiveEntropy({
-      segmentos: segs,
-      vehiculos: vehicles,
-      now: Date.now(),
-    });
+    const model = getSharedAnilloLiveModel(segs, vehicles, Date.now());
     return {
-      dayStats: timeline.dayStats,
-      metricas: timeline.metricas,
+      dayStats: model.dayStats,
+      metricas: model.metricas,
     };
-  }, [planilla, vehicles, segmentTick]);
+  }, [planilla?.segmentos, vehicles, segmentTick]);
 
   const showEntropyDebug = useMemo(() => isEntropyDebugEnabled(), []);
 
@@ -1708,14 +1705,14 @@ export default function Planeacion() {
     getPlanillaDailySnapshotForDate(user.uid, yesterdayFecha)
       .then(setYesterdayTermoSnapshot)
       .catch(() => setYesterdayTermoSnapshot(null));
-  }, [user, planillaFecha, dailyPS, vehicles]);
+  }, [user, planillaFecha, dailyPS]);
 
   useEffect(() => {
     if (!user) return;
     getPlanillaDailySnapshots(user.uid, 14)
       .then(setDisciplinaSnapshots)
       .catch(() => setDisciplinaSnapshots([]));
-  }, [user, planillaFecha, dailyPS, vehicles]);
+  }, [user, planillaFecha, dailyPS]);
 
   const todayTermoLive = useMemo(() => {
     const nowMs = Date.now();
@@ -1891,12 +1888,25 @@ export default function Planeacion() {
     setRutinaBanner(match || null);
   }, [planilla, plantillasRutina]);
 
-  // Programar notificaciones cuando cambia la planilla
+  const segmentNotifSig = useMemo(
+    () =>
+      planilla?.segmentos
+        .map(s => `${s.id}:${s.horaInicio}:${s.horaFin}:${s.estado}`)
+        .join("|") ?? "",
+    [planilla?.segmentos]
+  );
+
+  // Programar notificaciones solo cuando cambia la firma de segmentos (debounced)
   useEffect(() => {
     if (!planilla) return;
-    scheduleSegmentNotifications(planilla.segmentos);
-    return () => cancelAllNotifications();
-  }, [planilla]);
+    const t = window.setTimeout(() => {
+      scheduleSegmentNotifications(planilla.segmentos);
+    }, 1200);
+    return () => {
+      clearTimeout(t);
+      cancelAllNotifications();
+    };
+  }, [segmentNotifSig, planilla?.fecha]);
 
   useEffect(() => {
     if (segmentoActivo && user) {
@@ -1975,12 +1985,14 @@ export default function Planeacion() {
     ) {
       return;
     }
-    const updated = { ...planilla, atencionSnapshot: snap };
-    savePlanilla(user.uid, updated).catch(() => {});
-    setPlanilla(updated);
+    const t = window.setTimeout(() => {
+      savePlanilla(user.uid, { ...planilla, atencionSnapshot: snap }).catch(() => {});
+    }, 3000);
+    return () => clearTimeout(t);
   }, [
     user?.uid,
     planilla?.fecha,
+    planilla?.segmentos,
     atencionLive.indiceAtencion,
     atencionLive.puertasAbiertas,
     atencionLive.ratioAntesVoz,

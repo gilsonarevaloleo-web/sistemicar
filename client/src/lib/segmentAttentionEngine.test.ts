@@ -88,6 +88,24 @@ describe("applySegmentAttentionTick", () => {
     expect(changed).toBe(false);
     expect(segmentos[0]).toEqual(closed);
   });
+
+  it("limita transiciones por tick en catch-up masivo", () => {
+    const segments = Array.from({ length: 8 }, (_, i) =>
+      seg({
+        id: `s${i}`,
+        estado: "pendiente",
+        horaInicio: `${String(6 + i).padStart(2, "0")}:00`,
+        horaFin: `${String(6 + i).padStart(2, "0")}:05`,
+        nombre: `Seg ${i}`,
+      })
+    );
+    const nowMs = dayStart + 12 * 3600000;
+    const { events, catchUpPending } = applySegmentAttentionTick(segments, nowMs, dayStart, {
+      maxTransitions: 4,
+    });
+    expect(events.length).toBeLessThanOrEqual(4);
+    expect(catchUpPending).toBe(true);
+  });
 });
 
 describe("classifyPuertaTiming", () => {

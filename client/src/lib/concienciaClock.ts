@@ -47,7 +47,7 @@ export function useConcienciaClockTick(): number {
 }
 
 /**
- * Tick para métricas pesadas (entropía, arcos): 1 s escritorio, ~5 s móvil.
+ * Tick para métricas pesadas (entropía, arcos): ~3 s escritorio, ~5 s móvil.
  */
 export function useConcienciaMetricTick(): number {
   const [tick, setTick] = useState(0);
@@ -55,7 +55,7 @@ export function useConcienciaMetricTick(): number {
   const coarseRef = useRef(isCoarseConcienciaDevice());
   useEffect(() => {
     const onClock = () => {
-      const step = coarseRef.current ? 5 : 1;
+      const step = coarseRef.current ? 5 : 3;
       skipRef.current += 1;
       if (skipRef.current >= step) {
         skipRef.current = 0;

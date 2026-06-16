@@ -235,7 +235,7 @@ export function CentinelaEngine() {
     void checkExpiredCentinela();
     void reconcileGhostActiveVehicles(user.uid);
     void tickUi();
-    setTimeout(() => { void runRetroMaterialize(); }, 2500);
+    setTimeout(() => { void runRetroMaterialize(); }, 12_000);
 
     const uiInterval = setInterval(() => { void tickUi(); }, 1000);
     const activateInterval = setInterval(() => {

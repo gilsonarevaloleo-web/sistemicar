@@ -37,6 +37,9 @@ const TICK_MS_FOREGROUND = 10_000;
 const TICK_MS_BACKGROUND = 15_000;
 const CLOCK_MS_FOREGROUND = 1_000;
 const CLOCK_MS_BACKGROUND = 5_000;
+/** Deferir primer catch-up para no bloquear apertura de Jornada. */
+const INITIAL_TICK_DEFER_MS = 6_000;
+const MIN_TICK_GAP_MS = 4_000;
 
 /**
  * Motor global de segmentos: puertas, entropía y cierres por cruce.
@@ -48,6 +51,7 @@ export function SegmentAttentionBackground() {
   const vehiclesRef = useRef<Vehicle[]>([]);
   const planillaFechaRef = useRef(getJournalDateString());
   const tickingRef = useRef(false);
+  const lastTickFinishedAt = useRef(0);
   const hasAccessRef = useRef(false);
   const progressionRef = useRef<UserProgression | null>(null);
 
@@ -109,10 +113,12 @@ export function SegmentAttentionBackground() {
       e => console.error("[SegmentAttentionBackground] vehicles", e)
     );
 
-    const runTick = async () => {
+    const runTick = async (opts?: { force?: boolean }) => {
       if (!hasAccessRef.current || tickingRef.current) return;
       const planilla = planillaRef.current;
       if (!planilla) return;
+      const now = Date.now();
+      if (!opts?.force && now - lastTickFinishedAt.current < MIN_TICK_GAP_MS) return;
 
       tickingRef.current = true;
       try {
@@ -134,16 +140,17 @@ export function SegmentAttentionBackground() {
         console.error("[SegmentAttentionBackground] tick", e);
       } finally {
         tickingRef.current = false;
+        lastTickFinishedAt.current = Date.now();
       }
     };
 
     const unregisterForce = registerSegmentAttentionForceTick(() => {
-      void runTick();
+      void runTick({ force: true });
     });
 
     let intervalMs = TICK_MS_FOREGROUND;
     let intervalId = window.setInterval(() => void runTick(), intervalMs);
-    void runTick();
+    const initialTickId = window.setTimeout(() => void runTick({ force: true }), INITIAL_TICK_DEFER_MS);
 
     let clockMs = CLOCK_MS_FOREGROUND;
     let clockId = window.setInterval(dispatchConcienciaClockTick, clockMs);
@@ -169,7 +176,7 @@ export function SegmentAttentionBackground() {
       }
       resetInterval();
       burstConcienciaClockTick();
-      void runTick();
+      void runTick({ force: true });
       if (user) requestGhostReconcileAfterVehicleAction(user.uid);
     };
 
@@ -183,6 +190,7 @@ export function SegmentAttentionBackground() {
       unsubPlanilla();
       unsubVehicles();
       unregisterForce();
+      clearTimeout(initialTickId);
       clearInterval(intervalId);
       clearInterval(clockId);
       cancelAllNotifications();

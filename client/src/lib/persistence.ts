@@ -5412,27 +5412,64 @@ function saveLocalPlanilla(planilla: Planilla): boolean {
 
 function syncPlanillaToFirebase(userId: string, planilla: Planilla): void {
   if (!isFirebaseConfigured() || !db) return;
-  void (async () => {
-    try {
-      const path = getPrivatePath(userId, "planillas");
-      const q = query(collection(db, path), where("fecha", "==", planilla.fecha));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) {
-        await addDoc(collection(db, path), {
-          ...planilla,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        await updateDoc(doc(db, path, snapshot.docs[0].id), {
-          segmentos: planilla.segmentos,
-          updatedAt: serverTimestamp(),
-        });
-      }
-    } catch (error) {
-      console.error("Error saving planilla to Firebase:", error);
+  scheduleDebouncedPlanillaFirebaseSync(userId, planilla);
+}
+
+const planillaFirebaseSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const planillaFirebaseSyncPending = new Map<string, Planilla>();
+const planillaFirebaseLastHash = new Map<string, string>();
+
+function planillaSegmentosHash(planilla: Planilla): string {
+  return JSON.stringify({
+    fecha: planilla.fecha,
+    segmentos: planilla.segmentos,
+    atencionSnapshot: planilla.atencionSnapshot ?? null,
+  });
+}
+
+function scheduleDebouncedPlanillaFirebaseSync(userId: string, planilla: Planilla): void {
+  const key = `${userId}:${planilla.fecha}`;
+  planillaFirebaseSyncPending.set(key, planilla);
+  const prev = planillaFirebaseSyncTimers.get(key);
+  if (prev) clearTimeout(prev);
+  planillaFirebaseSyncTimers.set(
+    key,
+    setTimeout(() => {
+      planillaFirebaseSyncTimers.delete(key);
+      const pending = planillaFirebaseSyncPending.get(key);
+      planillaFirebaseSyncPending.delete(key);
+      if (!pending) return;
+      void flushPlanillaFirebaseSync(userId, pending);
+    }, 600)
+  );
+}
+
+async function flushPlanillaFirebaseSync(userId: string, planilla: Planilla): Promise<void> {
+  if (!isFirebaseConfigured() || !db) return;
+  const key = `${userId}:${planilla.fecha}`;
+  const hash = planillaSegmentosHash(planilla);
+  if (planillaFirebaseLastHash.get(key) === hash) return;
+  try {
+    const path = getPrivatePath(userId, "planillas");
+    const q = query(collection(db, path), where("fecha", "==", planilla.fecha));
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+      await addDoc(collection(db, path), {
+        ...planilla,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await updateDoc(doc(db, path, snapshot.docs[0].id), {
+        segmentos: planilla.segmentos,
+        atencionSnapshot: planilla.atencionSnapshot ?? null,
+        updatedAt: serverTimestamp(),
+      });
     }
-  })();
+    planillaFirebaseLastHash.set(key, hash);
+  } catch (error) {
+    console.error("Error saving planilla to Firebase:", error);
+  }
 }
 
 function getTodayDateString(): string {
