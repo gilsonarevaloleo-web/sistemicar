@@ -256,7 +256,9 @@ export default function AnilloConciencia({
                   fontFamily="JetBrains Mono, monospace"
                   fontWeight="bold"
                 >
-                  {arc.nombre ? arc.nombre.slice(0, 8) : `#${arc.ordinal}`}
+                  {arc.nombre != null && String(arc.nombre).trim()
+                    ? String(arc.nombre).slice(0, 8)
+                    : `#${arc.ordinal}`}
                 </text>
               )}
             </g>
@@ -536,7 +538,7 @@ export default function AnilloConciencia({
 
           <circle cx={cx} cy={cy} r={2.5} fill={needleColor} opacity={0.85} />
 
-          <>
+          <g>
             <text
               x={cx}
               y={cy - 8}
@@ -580,7 +582,7 @@ export default function AnilloConciencia({
             >
               {showEntropia && showConquista ? fillLabel : showEntropia ? entropiaLabel : conquLabel}%
             </text>
-          </>
+          </g>
         </svg>
 
         {tooltipStats && (
@@ -593,7 +595,9 @@ export default function AnilloConciencia({
             }}
           >
             <p className="text-[8px] font-black text-white truncate">
-              {tooltipStats.nombre ?? `Segmento ${tooltipStats.ordinal}`}
+              {tooltipStats.nombre != null && String(tooltipStats.nombre).trim()
+                ? String(tooltipStats.nombre)
+                : `Segmento ${tooltipStats.ordinal}`}
             </p>
             <p className="text-[7px] text-slate-500">
               {tooltipStats.horaInicio}–{tooltipStats.horaFin}

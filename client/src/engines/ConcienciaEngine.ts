@@ -178,6 +178,7 @@ export interface MetricasAnilloConciencia {
 
 function sumMinutosPlaneados(segmentos: SegmentoAnilloLite[]): number {
   return segmentos.reduce((acc, s) => {
+    if (!s) return acc;
     const ini = parseSegMinutes(s.horaInicio || "");
     const fin = parseSegMinutes(s.horaFin || "");
     const dur = fin >= ini ? fin - ini : fin + 1440 - ini;
@@ -472,6 +473,7 @@ export function getUmbralConcienciaMin(segmentos: SegmentoAnilloLite[]): number 
   if (segmentos.length === 0) return UMBRAL_CONTINGENCIA_MIN;
   let min = MINUTOS_DIA;
   for (const s of segmentos) {
+    if (!s) continue;
     const ini = parseSegMinutes(s.horaInicio || "");
     if (ini < min) min = ini;
   }
@@ -894,7 +896,7 @@ export function computeSegmentClockArcs(
   const dayStartMs = getLimaDayStartMs(nowMs);
   const out: SegmentClockArc[] = [];
   segmentos.forEach((seg, idx) => {
-    if (!seg.horaInicio || !seg.horaFin) return;
+    if (!seg?.horaInicio || !seg.horaFin) return;
     const { start, end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);
     const isActive = seg.estado === "activo";
     const isNowInside = nowMs >= start && nowMs <= end;
@@ -949,7 +951,7 @@ function buildSegmentBattleIntervals(params: {
   const out: SegmentBattleInterval[] = [];
 
   params.segmentos.forEach((seg, idx) => {
-    if (!seg.horaInicio || !seg.horaFin) return;
+    if (!seg?.horaInicio || !seg?.horaFin) return;
     const { start, end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);
     const ordinal = idx + 1;
 
@@ -1036,6 +1038,17 @@ export function computeSegmentArcStats(params: {
 
   const dayStartMs = core.limaDayStartMs;
   return params.segmentos.map((seg, idx) => {
+    if (!seg) {
+      return {
+        ordinal: idx + 1,
+        nombre: undefined,
+        horaInicio: "",
+        horaFin: "",
+        estado: "pendiente",
+        conquistaMin: 0,
+        entropiaMin: 0,
+      };
+    }
     const horaInicio = seg.horaInicio ?? "";
     const horaFin = seg.horaFin ?? "";
     if (!horaInicio || !horaFin) {

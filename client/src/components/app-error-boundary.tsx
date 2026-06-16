@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { resetAnilloViewModeStorage } from "@/lib/anilloViewMode";
 import { emergencyPruneStorage } from "@/lib/storageHygiene";
 import {
   bumpPlaneacionCrashCount,
@@ -31,34 +32,36 @@ export class AppErrorBoundary extends Component<Props, State> {
     window.location.href = path;
   }
 
-  handleRecover = () => {
+  private runPlaneacionRecovery(archiveSituacion: boolean) {
     try {
       repairStuckSituacionVehicles();
       emergencyPruneStorage({ aggressive: true });
+      resetAnilloViewModeStorage();
     } catch {
       // ignore
     }
-    const crashes = getPlaneacionCrashCount();
-    if (crashes >= 2) {
+    if (archiveSituacion) {
       try {
         forceArchiveSituacionActivos();
-        clearPlaneacionCrashCount();
       } catch {
         // ignore
       }
     }
-    this.reloadTo("/planeacion");
-  };
-
-  handleForceSituacion = () => {
     try {
-      forceArchiveSituacionActivos();
-      repairStuckSituacionVehicles();
-      emergencyPruneStorage({ aggressive: true });
       clearPlaneacionCrashCount();
     } catch {
       // ignore
     }
+  }
+
+  handleRecover = () => {
+    const crashes = getPlaneacionCrashCount();
+    this.runPlaneacionRecovery(crashes >= 2);
+    this.reloadTo("/planeacion");
+  };
+
+  handleForceSituacion = () => {
+    this.runPlaneacionRecovery(true);
     this.reloadTo("/planeacion");
   };
 

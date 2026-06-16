@@ -24,10 +24,19 @@ export function writeAnilloViewMode(mode: AnilloViewMode): void {
 }
 
 export function subscribeAnilloViewMode(listener: (mode: AnilloViewMode) => void): () => void {
+  if (typeof window === "undefined") return () => {};
   const fn = (e: Event) => {
     const mode = (e as CustomEvent<{ mode: AnilloViewMode }>).detail?.mode;
     if (mode) listener(mode);
   };
   window.addEventListener("sistemicar-anillo-view-mode", fn);
   return () => window.removeEventListener("sistemicar-anillo-view-mode", fn);
+}
+
+export function resetAnilloViewModeStorage(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* noop */
+  }
 }

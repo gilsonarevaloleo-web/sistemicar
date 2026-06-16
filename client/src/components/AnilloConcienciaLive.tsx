@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import AnilloConciencia from "@/components/AnilloConciencia";
 import AnilloConcienciaHorizon from "@/components/AnilloConcienciaHorizon";
+import { AnilloRingErrorBoundary } from "@/components/AnilloRingErrorBoundary";
 import {
   computeLiveEntropy,
   computeSegmentArcStats,
@@ -22,6 +23,34 @@ import { useConcienciaClockTick, useConcienciaMetricTick } from "@/lib/concienci
 import type { Vehicle } from "@/lib/persistence";
 
 const BLOOD = "#FF3131";
+
+function sanitizeSegmentos(segmentos: SegmentoAnilloLite[]): SegmentoAnilloLite[] {
+  return segmentos.filter((s): s is SegmentoAnilloLite => !!s && typeof s === "object");
+}
+
+function emptyAnilloModel(segs: SegmentoAnilloLite[]) {
+  return {
+    segs,
+    segmentClockArcs: [] as ReturnType<typeof computeSegmentClockArcs>,
+    segmentBattleArcs: [] as ReturnType<typeof computeSegmentBattleArcs>,
+    segmentArcStats: [] as ReturnType<typeof computeSegmentArcStats>,
+    horizonProjection: computeHorizonProjection({ segmentos: [], vehiculos: [] }),
+    metricas: {
+      planificacionPct: 0,
+      conquistaMin: 0,
+      entropiaMin: 0,
+      jornadaMin: 0,
+      conquistaArcPct: 0,
+      entropiaArcPct: 0,
+      fillPct: 0,
+      horasCubiertas: 0,
+    },
+    anilloEstado: { mode: "libre" as const, centerGuide: "", deg: 0, umbralMin: 360, sinSegmentos: true },
+    timelineArcs: [] as ReturnType<typeof computeLiveEntropy>["timelineArcs"],
+    dayStats: { conquistaMin: 0, entropiaMin: 0, vacioMin: 0, centinelaMin: 0 },
+    segConquistados: 0,
+  };
+}
 
 export interface AnilloConcienciaLiveProps {
   segmentos: SegmentoAnilloLite[];
@@ -60,27 +89,34 @@ function AnilloConcienciaLiveInner({
   const model = useMemo(() => {
     void metricTick;
     const nowMs = Date.now();
-    const timeline = computeLiveEntropy({
-      segmentos,
-      vehiculos: vehicles,
-      now: nowMs,
-    });
-    const segConquistados = segmentos.filter(
-      s => (s as { estado?: string }).estado === "cerrado_manual"
-    ).length;
-    const battleParams = { segmentos, vehiculos: vehicles, now: nowMs };
-    return {
-      segs: segmentos,
-      segmentClockArcs: computeSegmentClockArcs(segmentos, nowMs),
-      segmentBattleArcs: computeSegmentBattleArcs(battleParams),
-      segmentArcStats: computeSegmentArcStats(battleParams),
-      horizonProjection: computeHorizonProjection(battleParams),
-      metricas: timeline.metricas,
-      anilloEstado: timeline.anilloEstado,
-      timelineArcs: timeline.timelineArcs,
-      dayStats: timeline.dayStats,
-      segConquistados,
-    };
+    const segs = sanitizeSegmentos(segmentos);
+    const vehiculos = Array.isArray(vehicles) ? vehicles : [];
+    try {
+      const timeline = computeLiveEntropy({
+        segmentos: segs,
+        vehiculos,
+        now: nowMs,
+      });
+      const segConquistados = segs.filter(
+        s => (s as { estado?: string }).estado === "cerrado_manual"
+      ).length;
+      const battleParams = { segmentos: segs, vehiculos, now: nowMs };
+      return {
+        segs,
+        segmentClockArcs: computeSegmentClockArcs(segs, nowMs),
+        segmentBattleArcs: computeSegmentBattleArcs(battleParams),
+        segmentArcStats: computeSegmentArcStats(battleParams),
+        horizonProjection: computeHorizonProjection(battleParams),
+        metricas: timeline.metricas,
+        anilloEstado: timeline.anilloEstado,
+        timelineArcs: timeline.timelineArcs,
+        dayStats: timeline.dayStats,
+        segConquistados,
+      };
+    } catch (err) {
+      console.error("[AnilloConcienciaLive] model", err);
+      return emptyAnilloModel(segs);
+    }
   }, [segmentos, vehicles, metricTick]);
 
   const pointerDeg = useMemo(() => {
@@ -126,33 +162,36 @@ function AnilloConcienciaLiveInner({
     </div>
   ) : null;
 
-  const ring =
-    viewMode === "horizonte" ? (
-      <AnilloConcienciaHorizon
-        projection={model.horizonProjection}
-        planificacionPct={model.metricas.planificacionPct}
-        conquistaArcPct={model.metricas.conquistaArcPct}
-        entropiaArcPct={model.metricas.entropiaArcPct}
-        size={size}
-      />
-    ) : (
-      <AnilloConciencia
-        planificacionPct={model.metricas.planificacionPct}
-        conquistaArcPct={model.metricas.conquistaArcPct}
-        entropiaArcPct={model.metricas.entropiaArcPct}
-        timelineArcs={model.timelineArcs}
-        conquistaPulse={conquistaPulse}
-        size={size}
-        segmentClockArcs={model.segmentClockArcs}
-        segmentBattleArcs={model.segmentBattleArcs}
-        segmentArcStats={model.segmentArcStats}
-        segmentos={model.segs}
-        pointerDeg={pointerDeg}
-        pointerLap={pointerLap}
-        pointerMode={model.anilloEstado.mode}
-        centerGuide={model.anilloEstado.centerGuide}
-      />
-    );
+  const ring = (
+    <AnilloRingErrorBoundary size={size}>
+      {viewMode === "horizonte" ? (
+        <AnilloConcienciaHorizon
+          projection={model.horizonProjection}
+          planificacionPct={model.metricas.planificacionPct}
+          conquistaArcPct={model.metricas.conquistaArcPct}
+          entropiaArcPct={model.metricas.entropiaArcPct}
+          size={size}
+        />
+      ) : (
+        <AnilloConciencia
+          planificacionPct={model.metricas.planificacionPct}
+          conquistaArcPct={model.metricas.conquistaArcPct}
+          entropiaArcPct={model.metricas.entropiaArcPct}
+          timelineArcs={model.timelineArcs}
+          conquistaPulse={conquistaPulse}
+          size={size}
+          segmentClockArcs={model.segmentClockArcs}
+          segmentBattleArcs={model.segmentBattleArcs}
+          segmentArcStats={model.segmentArcStats}
+          segmentos={model.segs}
+          pointerDeg={pointerDeg}
+          pointerLap={pointerLap}
+          pointerMode={model.anilloEstado.mode}
+          centerGuide={model.anilloEstado.centerGuide}
+        />
+      )}
+    </AnilloRingErrorBoundary>
+  );
 
   if (ringOnly) {
     return (

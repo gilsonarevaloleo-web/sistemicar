@@ -75,7 +75,7 @@ export function computeHorizonProjection(params: {
   ];
 
   params.segmentos.forEach((seg, idx) => {
-    if (!seg.horaInicio || !seg.horaFin) return;
+    if (!seg?.horaInicio || !seg?.horaFin) return;
     const { start, end } = segmentWindowMs(seg.horaInicio, seg.horaFin, dayStartMs);
     const isActive = seg.estado === "activo";
     arcs.push(
