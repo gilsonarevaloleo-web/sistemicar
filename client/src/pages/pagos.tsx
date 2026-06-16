@@ -98,7 +98,7 @@ const planificacionPlans: Plan[] = [
     features: [
       { name: "Escalera de Conciencia — 3 capas en Métricas", locked: false, highlight: true },
       { name: "Anillo de conciencia + segmentos", locked: false, highlight: true },
-      { name: "La Flota + motor de 4 ejes", locked: false },
+      { name: "La Flota — Conquista · Enfoque · Descanso · Verdad", locked: false },
       { name: "Disciplina, PS y cierre de jornada con sello", locked: false },
       { name: "Combustible de conciencia (decisiones)", locked: false },
     ],

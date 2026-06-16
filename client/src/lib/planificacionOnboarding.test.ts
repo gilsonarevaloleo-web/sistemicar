@@ -28,6 +28,13 @@ describe("planificacionOnboarding", () => {
     assert.equal(auto.cierre, true);
   });
 
+  it("tutorial paso 4 describe La Flota actual, no 4 ejes legacy", () => {
+    const step = getTutorialSteps("base")[3]!;
+    assert.match(step.title, /Flota/i);
+    assert.doesNotMatch(step.description, /4 ejes|Express|Profundo|conflicto.*alcance/i);
+    assert.match(step.description, /Conquista|Enfoque/i);
+  });
+
   it("getPrimerDiaItems incluye desglosador en produccion", () => {
     const keys = getPrimerDiaItems("produccion").map(i => i.key);
     assert.ok(keys.includes("desglosador"));

@@ -1,4 +1,5 @@
 import { JORNADA_MODULE } from "./jornadaBrand";
+import { FLOTA_BRAND, FLOTA_SELECTOR_DISCRIMINATOR } from "./flotaBrand";
 import { SISTEMICAR_CATEGORY } from "./sistemicarCategory";
 
 export type PlanificacionPlanProfile = "base" | "estudiante" | "produccion";
@@ -58,10 +59,10 @@ const STEPS_BASE: TutorialStep[] = [
     action: "Ve a «Segmentos del día» y revisa o crea tu tramo actual.",
   },
   {
-    title: "La Flota: tus misiones",
+    title: "La Flota: cuatro tipos de misión",
     description:
-      "Vehículo Express = nombre + tipo de fin en 30 segundos. Vehículo Profundo = 4 ejes (enfoque, conflicto, pasos, alcance) con más PS.",
-    action: "Lanza un Express con algo que harás hoy.",
+      `${FLOTA_SELECTOR_DISCRIMINATOR} **${FLOTA_BRAND.tiempo.label}** = unidades y ritmo. **${FLOTA_BRAND.situacion.label}** = decisiones selladas (ring y cupos). **${FLOTA_BRAND.descanso.label}** = recarga consciente. **${FLOTA_BRAND.verdad.label}** = sinceridad ante el vacío. Título + criterio de cierre; sin cumplido/archivado no hay PS.`,
+    action: `Lanza un vehículo de ${FLOTA_BRAND.tiempo.label} o ${FLOTA_BRAND.situacion.label} con algo concreto de hoy.`,
   },
   {
     title: "Cierra para ganar PS",
@@ -135,7 +136,7 @@ export function getPrimerDiaItems(profile: PlanificacionPlanProfile): PrimerDiaI
     {
       key: "vehiculo",
       label: "Lancé al menos un vehículo en La Flota",
-      hint: "Express para empezar rápido; Profundo si la misión importa.",
+      hint: `${FLOTA_BRAND.tiempo.label} para medir unidades; ${FLOTA_BRAND.situacion.label} para sellar decisiones; elige tipo al crear.`,
     },
     {
       key: "cierre",
@@ -272,7 +273,7 @@ export const PLANIFICACION_DOCTOR_QUICK_PROMPTS = [
   "¿Por dónde empiezo hoy?",
   "¿Qué es la Escalera de Conciencia?",
   "¿Qué es un segmento?",
-  "¿Express o vehículo profundo?",
+  "¿Conquista o Enfoque en La Flota?",
   "¿Cómo funciona el desglosador?",
   "¿Por qué no veo mis subs en termodinámica?",
 ] as const;

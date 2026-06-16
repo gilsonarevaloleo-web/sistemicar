@@ -82,6 +82,8 @@ export default function AnilloConciencia({
   planificacionPct,
   timelineArcs = [],
   segmentClockArcs = [],
+  segmentBattleArcs = [],
+  segmentArcStats = [],
   conquistaArcPct,
   entropiaArcPct: entropiaArcPctProp,
   conquistaPct,
@@ -94,6 +96,34 @@ export default function AnilloConciencia({
   pointerMode = "libre",
   centerGuide,
 }: AnilloConcienciaProps) {
+  const [tooltipOrdinal, setTooltipOrdinal] = useState<number | null>(null);
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showTooltip = useCallback((ordinal: number) => {
+    setTooltipOrdinal(ordinal);
+  }, []);
+
+  const hideTooltip = useCallback(() => {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+    setTooltipOrdinal(null);
+  }, []);
+
+  const bindSegmentPress = useCallback(
+    (ordinal: number) => ({
+      onMouseEnter: () => showTooltip(ordinal),
+      onMouseLeave: hideTooltip,
+      onTouchStart: () => {
+        longPressRef.current = setTimeout(() => showTooltip(ordinal), 450);
+      },
+      onTouchEnd: hideTooltip,
+      onTouchCancel: hideTooltip,
+    }),
+    [hideTooltip, showTooltip]
+  );
+
+  const tooltipStats =
+    tooltipOrdinal != null ? segmentArcStats.find(s => s.ordinal === tooltipOrdinal) : null;
+
   const resolvedConquista = conquistaArcPct ?? conquistaPct ?? 0;
   const resolvedEntropia = entropiaArcPctProp ?? entropiaPct ?? 0;
 
@@ -149,17 +179,31 @@ export default function AnilloConciencia({
   const segArcs = segmentClockArcs.map(arc => {
     const r = arc.lap === 0 ? segR : segR2;
     const { color, glow } = segmentArcColor(arc.estado);
+    const isLiveActive = Boolean(arc.isActive && arc.isNowInside);
     return {
       key: `seg-${arc.ordinal}-${arc.lap}-${arc.startDeg.toFixed(1)}`,
       path: arcPath(cx, cy, r, arc.startDeg, arc.endDeg),
       color,
       glow,
       isActive: arc.estado === "activo",
+      isLiveActive,
       lap: arc.lap as HalfDayLap,
       ordinal: arc.ordinal,
+      nombre: arc.nombre,
       strokeOpacity: arc.lap === 0 ? 1 : 0.82,
+      strokeWidth: isLiveActive ? segSW * 1.15 : arc.lap === 0 ? segSW : segSW * 0.9,
     };
   });
+
+  const battleEntropia = segmentBattleArcs.filter(a => a.kind === "entropia");
+  const battleConquista = segmentBattleArcs.filter(a => a.kind === "conquista");
+
+  const battleRail = (lap: HalfDayLap) => (lap === 0 ? segR - segSW * 0.38 : segR2 - segSW * 0.38);
+  const battleSW = segSW * 0.52;
+
+  const activeRailR = pointerLap === 1 ? timelineR2 : timelineR;
+  const activeRailSW = pointerLap === 1 ? timelineSW * 0.9 : timelineSW;
+  const activeHourMarks = [6, 9, 12];
 
   const pointerRailR = pointerLap === 1 ? timelineR2 : timelineR;
   const pointerRailSW = pointerLap === 1 ? timelineSW * 0.9 : timelineSW;

@@ -102,7 +102,7 @@ Cliente con **Sistema completo** (Base + Operativo + Soberanía ? **$89.96/mes**)
   - **Capa 2 · Entrada** — ¿aparezco al trabajo consciente? (disciplina)
   - **Capa 3 · Producción** — ¿convierto el tiempo en decisiones? (combustible + pulso)
 - Segmentos del día y monitor de omisión/entropía
-- **La Flota** + motor de **4 ejes**
+- **La Flota** — Conquista · Enfoque · Descanso · Verdad (misiones con cierre medido)
 - **Puntos de Soberanía (PS)** + economía de cierre
 - **Disciplina** — vehículos conscientes en segmento
 - **Visión panorámica** — entrenamiento amplitud/foco

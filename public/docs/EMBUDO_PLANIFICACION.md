@@ -81,14 +81,14 @@ Cada ítem incluye: **qué es**, **dolor**, **resultado**, **prueba en demo**, *
 
 ---
 
-### 3.3 La Flota + motor de 4 ejes
+### 3.3 La Flota (Conquista · Enfoque · Descanso · Verdad)
 
 | Campo | Contenido |
 |-------|-----------|
-| Qué es | Misiones express o profundas. Cuatro ejes (enfoque, conflicto, pasos, alcance) con profundidad automática (omisión → reto). |
+| Qué es | Cuatro tipos de misión en Jornada: **Conquista** (unidades y ritmo), **Enfoque** (decisiones con ring y cupos), **Descanso** (recarga consciente), **Verdad** (sinceridad). Título + criterio de cierre. |
 | Dolor | "Empiezo sin pensar" / "Salto al vacío" |
-| Resultado | Pensar antes de actuar; misión con criterio de cierre |
-| Prueba | Express 30 s vs Profundo 7 pasos en una misma idea |
+| Resultado | Pensar antes de actuar; misión con criterio de cierre medible |
+| Prueba | Crear vehículo Conquista o Enfoque → cumplido/archivado → PS |
 | Peldaño | **Base** |
 
 ---

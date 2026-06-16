@@ -243,7 +243,7 @@ export const MASTER_MANUALS: Record<ManualType, MasterManual> = {
     color: "#D4AF37",
     benefits: [
       "Segmentos que evitan la omisión (tiempo sin registro)",
-      "La Flota: misiones express o profundas con PS al cerrar",
+      "La Flota: Conquista, Enfoque, Descanso y Verdad — misiones con cierre medido",
       "Desglosadores que miden subs (bloques), no solo intención",
       "Termodinámica: dominio fluido y fricción vs ayer (Operativo)",
       "Proyectos con peldaños y claridad mental (Soberanía del día)",
@@ -263,31 +263,21 @@ export const MASTER_MANUALS: Record<ManualType, MasterManual> = {
       {
         title: "LA FLOTA",
         instruction:
-          "Cada vehículo es una misión. Express = nombre + tipo de fin rápido. Profundo = 4 ejes con niveles automáticos (blando → reto). Sin cumplido/archivado no hay PS.",
+          "Cuatro tipos: Conquista (unidades y ritmo), Enfoque (decisiones con ring y cupos), Descanso (recarga consciente), Verdad (sinceridad). Eliges tipo, título y criterio de fin. Sin cumplido/archivado no hay PS.",
         checklist: [
-          { key: "plan_flota_1", text: "Lancé un vehículo con título claro (express o profundo)" },
-          { key: "plan_flota_2", text: "Definí criterio de fin (hora, situación o cantidad)" },
+          { key: "plan_flota_1", text: "Lancé un vehículo con título claro y tipo de flota acorde (Conquista o Enfoque para empezar)" },
+          { key: "plan_flota_2", text: "Definí criterio de fin (hora, cantidad o situación según el tipo)" },
           { key: "plan_flota_3", text: "Marqué cumplido o archivado al terminar (no lo dejé activo)" }
         ]
       },
       {
         title: "DESGLOSADOR (BLOQUES)",
         instruction:
-          "Requiere add-on: Soberanía del día (situación, bloques 3+3) u Operativo (tiempo, unidades). En termodinámica: 1 bloque = desglosador cerrado; los subs cuentan aparte. Cierra cada sub y luego el desglosador padre.",
+          "Requiere add-on: Soberanía del día (Enfoque, bloques 3+3) u Operativo (Conquista, unidades). En termodinámica: 1 bloque = desglosador cerrado; los subs cuentan aparte. Cierra cada sub y luego el desglosador padre.",
         checklist: [
-          { key: "plan_desg_1", text: "Abrí un desglosador acorde a mi plan (situación o tiempo)" },
+          { key: "plan_desg_1", text: "Abrí un desglosador acorde a mi plan (Enfoque o Conquista)" },
           { key: "plan_desg_2", text: "Creé subs y los fui cerrando (cumplido/fallado)" },
           { key: "plan_desg_3", text: "Cerré el ciclo del desglosador al terminar la sesión" }
-        ]
-      },
-      {
-        title: "CUATRO EJES (VEHÍCULO PROFUNDO)",
-        instruction:
-          "Enfoque, conflicto, pasos, alcance. Más detalle en cada eje = mayor nivel (trifecta) y más PS. El sistema detecta el nivel por cantidad de detalles escritos.",
-        checklist: [
-          { key: "plan_ejes_1", text: "Enfoque: resultado claro, no solo actividad" },
-          { key: "plan_ejes_2", text: "Conflicto: nombré qué me puede frenar hoy" },
-          { key: "plan_ejes_3", text: "Pasos y alcance: secuencia ejecutable y límite de tiempo real" }
         ]
       },
       {

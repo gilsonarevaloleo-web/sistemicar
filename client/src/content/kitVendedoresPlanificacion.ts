@@ -128,7 +128,7 @@ export const CATALOGO_PELDAO = [
       "Anillo de conciencia — reloj del día (conquista vs entropía)",
       "Escalera de Conciencia — presencia · entrada · producción (Métricas)",
       "Segmentos del día y monitor de omisión/entropía",
-      "La Flota + motor de 4 ejes",
+      "La Flota — Conquista · Enfoque · Descanso · Verdad",
       "Puntos de Soberanía (PS) + economía de cierre",
       "Disciplina — vehículos conscientes en segmento",
       "Visión panorámica — entrenamiento amplitud/foco",
@@ -201,7 +201,7 @@ export const OBJECIONES = [
   },
   {
     q: "¿Es muy complicado?",
-    a: "Hay Express (30 segundos) y Profundo (7 pasos). Los desglosadores son para quien ya cierra bloques.",
+    a: "Empieza con Conquista (unidades) o Enfoque (decisiones). Los desglosadores son para quien ya cierra bloques (add-ons Operativo o Soberanía).",
   },
   {
     q: "¿Por qué capturar en el Imán si luego escribo en el desglosador?",
@@ -262,7 +262,7 @@ export const IMAN_FRASES = [
 ] as const;
 
 export const INVENTARIO_PRODUCTO = [
-  { area: "Segmentos + Flota + 4 ejes", estado: "Producción", nota: "Core — peldaño 1" },
+  { area: "Segmentos + La Flota (4 tipos)", estado: "Producción", nota: "Core — peldaño 1" },
   { area: "Escalera de Conciencia (Métricas)", estado: "Producción", nota: "Capas presencia/entrada/producción" },
   { area: "Desglosador conquista + récord", estado: "Producción", nota: "Peldaño 2 — vender primero" },
   { area: "Desglosador enfoque + Imán + proyectos", estado: "Producción", nota: "Peldaño 3 — avanzado" },
