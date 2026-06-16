@@ -17,7 +17,8 @@ import {
   writeAnilloViewMode,
   type AnilloViewMode,
 } from "@/lib/anilloViewMode";
-import { useConcienciaClockTick, useConcienciaMetricTick } from "@/lib/concienciaClock";
+import { useConcienciaClockTick, useConcienciaMetricTick, isCoarseConcienciaDevice } from "@/lib/concienciaClock";
+import { MOBILE_PERF } from "@/lib/mobilePerf";
 import type { Vehicle } from "@/lib/persistence";
 
 const BLOOD = "#FF3131";
@@ -84,15 +85,40 @@ function AnilloConcienciaLiveInner({
 
   useEffect(() => subscribeAnilloViewMode(setViewMode), []);
 
+  const [heavyReady, setHeavyReady] = useState(() => !isCoarseConcienciaDevice());
+
+  useEffect(() => {
+    if (heavyReady) return;
+    let cancelled = false;
+    const start = () => {
+      if (!cancelled) setHeavyReady(true);
+    };
+    const deferMs = isCoarseConcienciaDevice() ? MOBILE_PERF.ANILLO_DEFER_MS : 1500;
+    if (typeof requestIdleCallback !== "undefined") {
+      const id = requestIdleCallback(start, { timeout: deferMs });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(id);
+      };
+    }
+    const t = window.setTimeout(start, deferMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [heavyReady]);
+
   const model = useMemo(() => {
     void metricTick;
+    const segs = sanitizeSegmentos(segmentos);
+    if (!heavyReady) return emptyAnilloModel(segs);
     try {
       return getSharedAnilloLiveModel(segmentos, vehicles, Date.now());
     } catch (err) {
       console.error("[AnilloConcienciaLive] model", err);
-      return emptyAnilloModel(sanitizeSegmentos(segmentos));
+      return emptyAnilloModel(segs);
     }
-  }, [segmentos, vehicles, metricTick]);
+  }, [segmentos, vehicles, metricTick, heavyReady]);
 
   const pointerDeg = useMemo(() => {
     void pointerTick;

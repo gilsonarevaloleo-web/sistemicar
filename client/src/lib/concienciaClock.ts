@@ -55,7 +55,7 @@ export function useConcienciaMetricTick(): number {
   const coarseRef = useRef(isCoarseConcienciaDevice());
   useEffect(() => {
     const onClock = () => {
-      const step = coarseRef.current ? 5 : 3;
+      const step = coarseRef.current ? 8 : 3;
       skipRef.current += 1;
       if (skipRef.current >= step) {
         skipRef.current = 0;

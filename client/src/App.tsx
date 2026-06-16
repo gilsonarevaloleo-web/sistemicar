@@ -1,7 +1,7 @@
 import { Switch, Route, Redirect, useLocation } from "wouter";
 import { Toaster } from "@/components/ui/sonner";
 import { Layout } from "./components/layout";
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, lazy, Suspense } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { subscribeToProgression, UserProgression, verificarAccesoProspecto, registrarActividadProspecto, hasPlanificacionBaseAccess, hasSoberaniaDiaAccess } from "@/lib/persistence";
 import type { ModuleId } from "@shared/moduleAccess";
@@ -16,7 +16,7 @@ interface AppUser {
 import MenuPrincipal from "@/pages/menu-principal";
 import Tutorial from "@/pages/tutorial";
 import Console from "@/pages/console";
-import Planeacion from "@/pages/planeacion";
+const Planeacion = lazy(() => import("@/pages/planeacion"));
 import Esperanza from "@/pages/esperanza";
 import Rewards from "@/pages/rewards";
 import Analytics from "@/pages/analytics";
@@ -284,7 +284,18 @@ function Router() {
           {() => { window.location.replace("/espejo"); return null; }}
         </Route>
         <Route path="/planeacion">
-          <ModuleRoute component={Planeacion} requiredModule="planificacion_base" />
+          <Suspense
+            fallback={(
+              <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "#020202" }}>
+                <div className="text-center">
+                  <div className="w-12 h-12 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                  <p className="text-slate-400 text-sm">Cargando Jornada…</p>
+                </div>
+              </div>
+            )}
+          >
+            <ModuleRoute component={Planeacion} requiredModule="planificacion_base" />
+          </Suspense>
         </Route>
         <Route path="/proyectos">
           <ModuleRoute component={Proyectos} requiredModule="soberania_dia" />

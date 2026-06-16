@@ -4,8 +4,12 @@ import {
 } from "@/engines/ConcienciaEngine";
 import { computeHorizonProjection } from "@/engines/ConcienciaHorizonEngine";
 import type { Vehicle } from "@/lib/persistence";
+import { isCoarseConcienciaDevice } from "@/lib/concienciaClock";
+import { MOBILE_PERF } from "@/lib/mobilePerf";
 
-const CACHE_BUCKET_MS = 3_000;
+function cacheBucketMs(): number {
+  return isCoarseConcienciaDevice() ? MOBILE_PERF.ANILLO_CACHE_BUCKET_MS : 3_000;
+}
 
 type CachedAnilloModel = {
   segs: SegmentoAnilloLite[];
@@ -44,7 +48,7 @@ export function getSharedAnilloLiveModel(
 ): CachedAnilloModel {
   const segs = segmentos.filter((s): s is SegmentoAnilloLite => !!s && typeof s === "object");
   const vehiculos = Array.isArray(vehicles) ? vehicles : [];
-  const bucket = Math.floor(nowMs / CACHE_BUCKET_MS);
+  const bucket = Math.floor(nowMs / cacheBucketMs());
   const key = `${bucket}|${segmentSig(segs)}|${vehicleSig(vehiculos)}`;
   if (cache?.key === key) return cache.model;
 

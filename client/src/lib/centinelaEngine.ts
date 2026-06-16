@@ -13,6 +13,7 @@ import {
   JOURNAL_DAY_START,
   segmentWindowMs,
 } from "./segmentTime";
+import { isMobilePerfMode } from "./mobilePerf";
 
 export const CENTINELA_DELAY_MS = ENTROPY_TIME_POLICY.CENTINELA_DELAY_MS;
 export const NO_VEHICLE_SINCE_KEY = "sistemicar_no_vehicle_since";
@@ -338,6 +339,7 @@ export async function materializeRetroactiveCentinelas(
   nowMs = Date.now()
 ): Promise<string[]> {
   if (!planilla?.segmentos?.length) return [];
+  if (isMobilePerfMode()) return [];
   if (isCentinelaSuppressed()) return [];
   if (isCentinelaBlockedByVehicles(vehicles, nowMs)) return [];
 

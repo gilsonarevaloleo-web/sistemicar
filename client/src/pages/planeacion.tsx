@@ -452,6 +452,7 @@ import { PuntoCeroPanel } from "@/components/PuntoCeroPanel";
 import { SegmentoProyectoSelect } from "@/components/planeacion/SegmentoProyectoSelect";
 import { useSegmentoProyectoVinculo } from "@/hooks/useSegmentoProyectoVinculo";
 import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buildConcienciaTimeline, computeLiveEntropy, armEntropyGapOnConsciousClose, formatMinutosJornada, resetLiveEntropyMonotonic } from "@/engines/ConcienciaEngine";
+import { isCoarseConcienciaDevice } from "@/lib/concienciaClock";
 import { getSharedAnilloLiveModel } from "@/lib/anilloLiveModelCache";
 import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/EntropiaDebugPanel";
 import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
@@ -1116,6 +1117,7 @@ export default function Planeacion() {
   type PlanTab = "operar" | "metricas" | "meta";
   const [planLayout, setPlanLayout] = useState<"compact" | "full">(() => {
     try {
+      if (typeof window !== "undefined" && isCoarseConcienciaDevice()) return "compact";
       const raw = localStorage.getItem("sistemicar-plan-layout");
       return raw === "full" ? "full" : "compact";
     } catch {
@@ -1135,6 +1137,14 @@ export default function Planeacion() {
 
   useEffect(() => {
     try { localStorage.setItem("sistemicar-plan-layout", planLayout); } catch {}
+  }, [planLayout]);
+
+  useEffect(() => {
+    if (!isCoarseConcienciaDevice() || planLayout === "compact") return;
+    setPlanLayout("compact");
+    try {
+      localStorage.setItem("sistemicar-plan-layout", "compact");
+    } catch {}
   }, [planLayout]);
   useEffect(() => {
     try { localStorage.setItem("sistemicar-plan-tab", planTab); } catch {}
@@ -6397,7 +6407,10 @@ export default function Planeacion() {
             title={JORNADA_MODULE.title}
             tagline={JORNADA_MODULE.tagline}
             compact={compactLayout}
-            onToggleCompact={() => setPlanLayout(v => (v === "compact" ? "full" : "compact"))}
+            onToggleCompact={() => {
+              if (isCoarseConcienciaDevice()) return;
+              setPlanLayout(v => (v === "compact" ? "full" : "compact"));
+            }}
             tab={planTab}
             onTabChange={(tab) => {
               setPlanTab(tab);

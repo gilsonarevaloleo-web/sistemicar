@@ -31,6 +31,7 @@ import {
 } from "@/lib/notifications";
 import { registerNotificationStateProvider } from "@/lib/notificationState";
 import { dispatchConcienciaClockTick, burstConcienciaClockTick } from "@/lib/concienciaClock";
+import { isMobilePerfMode, MOBILE_PERF } from "@/lib/mobilePerf";
 import { recoverSpeechQueue, warmupSpeechSynthesis } from "@/lib/speechQueue";
 
 const TICK_MS_FOREGROUND = 10_000;
@@ -38,8 +39,9 @@ const TICK_MS_BACKGROUND = 15_000;
 const CLOCK_MS_FOREGROUND = 1_000;
 const CLOCK_MS_BACKGROUND = 5_000;
 /** Deferir primer catch-up para no bloquear apertura de Jornada. */
-const INITIAL_TICK_DEFER_MS = 6_000;
-const MIN_TICK_GAP_MS = 4_000;
+const INITIAL_TICK_DEFER_MS = isMobilePerfMode() ? MOBILE_PERF.ATTENTION_INITIAL_DEFER_MS : 6_000;
+const MIN_TICK_GAP_MS = isMobilePerfMode() ? MOBILE_PERF.ATTENTION_MIN_GAP_MS : 4_000;
+const TICK_MS_FOREGROUND_BASE = isMobilePerfMode() ? MOBILE_PERF.ATTENTION_TICK_MS : 10_000;
 
 /**
  * Motor global de segmentos: puertas, entropía y cierres por cruce.
@@ -148,7 +150,7 @@ export function SegmentAttentionBackground() {
       void runTick({ force: true });
     });
 
-    let intervalMs = TICK_MS_FOREGROUND;
+    let intervalMs = TICK_MS_FOREGROUND_BASE;
     let intervalId = window.setInterval(() => void runTick(), intervalMs);
     const initialTickId = window.setTimeout(() => void runTick({ force: true }), INITIAL_TICK_DEFER_MS);
 
@@ -158,7 +160,7 @@ export function SegmentAttentionBackground() {
 
     const resetInterval = () => {
       clearInterval(intervalId);
-      intervalMs = isAppInBackground() ? TICK_MS_BACKGROUND : TICK_MS_FOREGROUND;
+      intervalMs = isAppInBackground() ? TICK_MS_BACKGROUND : TICK_MS_FOREGROUND_BASE;
       intervalId = window.setInterval(() => void runTick(), intervalMs);
 
       clearInterval(clockId);
@@ -175,7 +177,7 @@ export function SegmentAttentionBackground() {
         console.log(`[Voz] Reproduciendo ${flushed} aviso(s) de segundo plano`);
       }
       resetInterval();
-      burstConcienciaClockTick();
+      burstConcienciaClockTick(isMobilePerfMode() ? 1 : 3, isMobilePerfMode() ? 200 : 120);
       void runTick({ force: true });
       if (user) requestGhostReconcileAfterVehicleAction(user.uid);
     };
