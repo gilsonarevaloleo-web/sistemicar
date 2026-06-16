@@ -1912,7 +1912,7 @@ export default function Planeacion() {
     const prevSegId = prevSegmentoIdRef.current;
     if (prevSegId && currentSegId && prevSegId !== currentSegId && user && planilla) {
       clearCruceWarnedIds();
-      const dayStartCruce = getLimaDayStartMs();
+      const dayStartCruce = getSegmentCalendarDayStartMs();
       const vehiculosCruzando = vehicles.filter(
         v =>
           v.status === "activo" &&

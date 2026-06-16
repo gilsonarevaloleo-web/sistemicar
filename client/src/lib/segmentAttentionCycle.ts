@@ -29,7 +29,8 @@ import {
 import { deliverSegmentEntropiaAlert, isAppInBackground } from "./backgroundAttentionAlerts";
 import { buildPuertaVozPreventionPhrase, speakEntropiaAtencionCruce, speakPuertaSegmento } from "./puertaAtencionVoice";
 import { setActiveSegmento } from "./evento-universal";
-import { getJournalDateString, getLimaDayStartMs } from "./segmentTime";
+import { getJournalDateString, getSegmentCalendarDayStartMs } from "./segmentTime";
+import { filterNewAttentionEvents } from "./segmentAttentionToastDedup";
 
 const PIZARRA = "#0a0a0a";
 const BLOOD = "#DC2626";
@@ -110,17 +111,21 @@ export async function runSegmentAttentionCycle(
     return { planilla, vehicles, dayRolloverFecha: fechaHoy, changed };
   }
 
-  const dayStart = getLimaDayStartMs(nowMs);
+  const dayStart = getSegmentCalendarDayStartMs(nowMs);
   const { segmentos: nextSegmentos, events, changed: segChanged } = applySegmentAttentionTick(
     planilla.segmentos,
     nowMs,
     dayStart
   );
 
+  const freshEvents = filterNewAttentionEvents(fechaHoy, events);
+  const batchEntropy =
+    freshEvents.filter(e => e.type === "entropia" || e.type === "auto_apertura").length > 2;
+
   let segmentosAfterVoz = nextSegmentos;
+  let vozChanged = false;
   const vozEvents = collectVozPuertaEvents(nextSegmentos, nowMs, dayStart);
   if (vozEvents.length > 0) {
-    let vozChanged = false;
     segmentosAfterVoz = nextSegmentos.map(seg => {
       const ve = vozEvents.find(v => v.segId === seg.id);
       if (!ve) return seg;
@@ -128,14 +133,13 @@ export async function runSegmentAttentionCycle(
       speakPuertaSegmento({ nombre: ve.nombre, ordinal: ve.ordinal, total: ve.total });
       return { ...seg, vozDisparadaAt: nowMs };
     });
-    if (vozChanged) {
-      planilla = { ...planilla, segmentos: segmentosAfterVoz };
-      await savePlanilla(userId, planilla);
-      changed = true;
-    }
+    if (vozChanged) changed = true;
   }
 
-  for (const ev of events as SegmentAttentionEvent[]) {
+  for (const ev of freshEvents as SegmentAttentionEvent[]) {
+    if (batchEntropy && (ev.type === "entropia" || ev.type === "auto_apertura")) {
+      continue;
+    }
     if (ev.type === "auto_apertura") {
       attentionToast(
         "error",
@@ -171,8 +175,28 @@ export async function runSegmentAttentionCycle(
     }
   }
 
-  let planillaForCruce = segChanged ? { ...planilla, segmentos: segmentosAfterVoz } : planilla;
-  if (segChanged) changed = true;
+  if (batchEntropy) {
+    const n = freshEvents.filter(e => e.type === "entropia" || e.type === "auto_apertura").length;
+    attentionToast(
+      "error",
+      "Entropía acumulada",
+      `${n} segmentos requirieron cierre automático al sincronizar el horario. Revisa la lista de segmentos del día.`,
+      9000
+    );
+    for (const ev of freshEvents) {
+      if (ev.type !== "auto_apertura") continue;
+      setActiveSegmento(userId, ev.segId);
+      void deductSovereigntyPoints(userId, 2, "Puerta sistema (entropía): " + ev.nombre).catch(e =>
+        console.error("[auto_apertura] deductPS", e)
+      );
+    }
+  }
+
+  let planillaForCruce =
+    segChanged || vozChanged
+      ? { ...planilla, segmentos: segmentosAfterVoz }
+      : planilla;
+  if (segChanged || vozChanged) changed = true;
 
   const { events: cruceEvents, vehicleVozPatches } = evaluateSegmentCrossEntropy({
     vehicles,
@@ -266,7 +290,7 @@ export async function runSegmentAttentionCycle(
     changed = true;
   }
 
-  if (planillaForCruce !== planilla || segChanged) {
+  if (planillaForCruce !== planilla || segChanged || vozChanged) {
     await savePlanilla(userId, planillaForCruce);
     planilla = planillaForCruce;
     changed = true;

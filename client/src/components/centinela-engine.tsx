@@ -81,7 +81,7 @@ export function CentinelaEngine() {
       if (!planillaRef.current?.segmentos?.length) return;
       if (retroMaterializing.current) return;
       const now = Date.now();
-      if (now - lastRetroMaterializeAt.current < 30_000) return;
+      if (now - lastRetroMaterializeAt.current < 120_000) return;
       retroMaterializing.current = true;
       try {
         const ids = await materializeRetroactiveCentinelas(
@@ -257,7 +257,9 @@ export function CentinelaEngine() {
       if (document.visibilityState !== "visible") return;
       console.log("[Centinela] App visible — reevaluando");
       void checkExpiredCentinela();
-      void runRetroMaterialize();
+      if (Date.now() - lastRetroMaterializeAt.current >= 120_000) {
+        void runRetroMaterialize();
+      }
       lastCheck.current = 0;
       setTimeout(() => forceCheckRef.current?.(), 3000);
     };

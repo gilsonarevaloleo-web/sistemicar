@@ -2,6 +2,7 @@ import type { SegmentoV5 } from "./persistence";
 import { ENTROPY_TIME_POLICY } from "./entropyTimePolicy";
 import {
   getLimaDayStartMs,
+  getSegmentCalendarDayStartMs,
   isPastSegmentEnd,
   segmentClockMs,
   segmentWindowMs,
@@ -94,14 +95,26 @@ export function applySegmentAttentionTick(
   nowMs: number,
   dayStartMs?: number
 ): { segmentos: SegmentoV5[]; events: SegmentAttentionEvent[]; changed: boolean } {
-  // dayStart debe ser medianoche calendario (Lima) para que "HH:mm" sea absoluto.
-  // El "día-jornada" (05:00) se usa para agrupar/snapshot, no para anclar horarios de segmentos.
-  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
+  // dayStart = medianoche calendario de la jornada (no las 05:00).
+  const dayStart = dayStartMs ?? getSegmentCalendarDayStartMs(nowMs);
   const events: SegmentAttentionEvent[] = [];
   let changed = false;
 
   const next = segmentos.map(seg => {
     if (seg.estado === "pendiente") {
+      const pastEnd =
+        !!seg.horaFin &&
+        isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin, PUERTA_MARGIN_MIN, dayStart);
+      if (pastEnd) {
+        changed = true;
+        events.push({
+          type: "entropia",
+          segId: seg.id,
+          nombre: seg.nombre,
+          reason: "missed_window",
+        });
+        return { ...seg, estado: "entropia" as const, cerradoAt: nowMs, psGanados: 0 };
+      }
       if (isPastPuertaWindow(nowMs, seg.horaInicio, dayStart)) {
         changed = true;
         events.push({
@@ -118,16 +131,6 @@ export function applySegmentAttentionTick(
           puertaSistema: true,
           psGanados: -2,
         };
-      }
-      if (seg.horaFin && isPastSegmentEnd(nowMs, seg.horaInicio, seg.horaFin, PUERTA_MARGIN_MIN, dayStart)) {
-        changed = true;
-        events.push({
-          type: "entropia",
-          segId: seg.id,
-          nombre: seg.nombre,
-          reason: "missed_window",
-        });
-        return { ...seg, estado: "entropia" as const, cerradoAt: nowMs, psGanados: 0 };
       }
     }
 
@@ -151,7 +154,7 @@ export function collectVozPuertaEvents(
   nowMs: number,
   dayStartMs?: number
 ): Array<{ segId: string; nombre: string; ordinal: number; total: number }> {
-  const dayStart = dayStartMs ?? getLimaDayStartMs(nowMs);
+  const dayStart = dayStartMs ?? getSegmentCalendarDayStartMs(nowMs);
   const total = segmentos.length;
   const out: Array<{ segId: string; nombre: string; ordinal: number; total: number }> = [];
 

@@ -5523,6 +5523,9 @@ export function mergePlanillaSegmentosWithLocal(
     const locRank = SEGMENT_STATE_RANK[local.estado] ?? 0;
     const pickLocal =
       locRank > fbRank ||
+      local.estado === "entropia" ||
+      local.estado === "cerrado_manual" ||
+      (local.cerradoAt != null && fbSeg.cerradoAt == null) ||
       (local.psGanados ?? 0) > (fbSeg.psGanados ?? 0) ||
       (local.activadoAt != null && fbSeg.activadoAt == null) ||
       (fbSeg.estado === "pendiente" &&

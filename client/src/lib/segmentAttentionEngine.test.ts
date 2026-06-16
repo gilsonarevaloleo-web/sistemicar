@@ -68,7 +68,7 @@ describe("applySegmentAttentionTick", () => {
     expect(events[0]).toMatchObject({ type: "entropia", reason: "past_end" });
   });
 
-  it("auto-apertura si pendiente pasó fin completo sin activar manualmente", () => {
+  it("entropía directa si pendiente pasó fin completo (sin auto-apertura intermedia)", () => {
     const { end } = segmentWindowMs("09:00", "09:05", dayStart);
     const nowMs = end + 6 * 60000;
     const { segmentos, events } = applySegmentAttentionTick(
@@ -76,9 +76,10 @@ describe("applySegmentAttentionTick", () => {
       nowMs,
       dayStart
     );
-    expect(segmentos[0].estado).toBe("activo");
-    expect(segmentos[0].puertaSistema).toBe(true);
-    expect(events[0]?.type).toBe("auto_apertura");
+    expect(segmentos[0].estado).toBe("entropia");
+    expect(segmentos[0].psGanados).toBe(0);
+    expect(events[0]?.type).toBe("entropia");
+    expect(events[0]).toMatchObject({ reason: "missed_window" });
   });
 
   it("no modifica segmentos ya cerrados manualmente", () => {
