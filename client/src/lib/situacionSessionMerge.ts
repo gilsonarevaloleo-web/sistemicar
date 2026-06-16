@@ -86,6 +86,14 @@ function pickSituacionCronometro(
     const localRetos = local.retosCompletados ?? 0;
     const fbRetos = fb.retosCompletados ?? 0;
     if (localRetos >= fbRetos) return local;
+    if ((local.depthBlockPsGranted ?? 0) > (fb.depthBlockPsGranted ?? 0)) return local;
+    // Mismo bloque cerrado en local (finalize / inactividad): no reabrir ring por snapshot stale.
+    if (
+      local.bloqueInicioAt != null &&
+      local.bloqueInicioAt === fb.bloqueInicioAt
+    ) {
+      return local;
+    }
   }
   const fbFin = fb.horaFinContratoMs ?? fb.horaFinMs ?? 0;
   const localFin = local.horaFinContratoMs ?? local.horaFinMs ?? 0;

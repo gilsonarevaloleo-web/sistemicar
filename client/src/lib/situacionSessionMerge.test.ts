@@ -367,6 +367,31 @@ describe("mergeActiveVehicleSessionState situacion", () => {
     assert.equal(merged.situacionCronometro?.retosCompletados, 1);
   });
 
+  it("prefers local ring pausado (mismo bloque) aunque firebase siga activo", () => {
+    const fb: Vehicle = {
+      ...baseVehicle(),
+      situacionCronometro: {
+        activo: true,
+        bloqueInicioAt: 5000,
+        horaFinMs: 8000,
+        depthBlockPsGranted: 0,
+        retosCompletados: 0,
+      },
+    };
+    const local: Vehicle = {
+      ...baseVehicle(),
+      situacionCronometro: {
+        activo: false,
+        bloqueInicioAt: 5000,
+        horaFinMs: 8000,
+        depthBlockPsGranted: 0,
+        retosCompletados: 0,
+      },
+    };
+    const merged = mergeActiveVehicleSessionState(fb, local);
+    assert.equal(merged.situacionCronometro?.activo, false);
+  });
+
   it("preserves local subTareas on closed situacion vehicle", () => {
     const now = Date.now();
     const localSubs = [

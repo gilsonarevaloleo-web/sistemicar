@@ -361,7 +361,7 @@ import type { PlanillaDailySnapshot } from "@/lib/termodinamicaAtencional";
 import { formatCombustibleResumen, formatCombustibleDetalle, formatCombustibleCelebracionBloque } from "@/lib/combustibleConciencia";
 import { buildEscaleraConciencia, serializeEscaleraForCierreWithStats } from "@/lib/escaleraConcienciaEngine";
 import { EscaleraCierreResumen } from "@/components/escalera-cierre-resumen";
-import { repairStuckSituacionVehicles } from "@/lib/situacionRepair";
+import { repairStuckSituacionVehicles, vehiclesReactiveSignature } from "@/lib/situacionRepair";
 import {
   getProyectoById,
   getPeldanosByProyecto,
@@ -1225,6 +1225,24 @@ export default function Planeacion() {
         .join(","),
     [vehicles]
   );
+  const desglosadorPauseSignature = useMemo(
+    () =>
+      vehicles
+        .filter(v => v.tipoReloj === "desglosador" && v.status === "activo")
+        .map(v => `${v.id}:${v.interrupcionActiva ? 1 : 0}:${v.desglosadorPausa?.subActivoId ?? ""}`)
+        .sort()
+        .join("|"),
+    [vehicles]
+  );
+  const orphanInterruptSignature = useMemo(
+    () =>
+      vehicles
+        .filter(v => v.status === "activo" && v.vehiculoPadreDesglosadorId)
+        .map(v => `${v.id}:${v.vehiculoPadreDesglosadorId}:${v.clientRequestId ?? ""}`)
+        .sort()
+        .join("|"),
+    [vehicles]
+  );
   const conquistaPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerConquistaPulse = useCallback(() => {
@@ -1592,6 +1610,9 @@ export default function Planeacion() {
       if (merged.length > 0) {
         saveLocalVehicles(merged);
       }
+      const sig = vehiclesReactiveSignature(merged);
+      if (sig === mergedVehiclesSigRef.current) return;
+      mergedVehiclesSigRef.current = sig;
       setVehicles(merged);
     }, (e) => console.error(e));
     const unsub2 = subscribeToProgression(user.uid, (prog) => setProgression(prog), (e) => console.error(e));
@@ -1965,6 +1986,8 @@ export default function Planeacion() {
   ]);
 
   const vehiclesRef = useRef(vehicles);
+  const mergedVehiclesSigRef = useRef("");
+  const centinelaArchiveAttemptSigRef = useRef("");
   const desglosadorSyncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const vehicleById = (vehicleId: string) =>
     vehiclesRef.current.find(v => v.id === vehicleId) ?? vehicles.find(v => v.id === vehicleId);
@@ -2009,16 +2032,21 @@ export default function Planeacion() {
     if (!user) return;
     const list = vehiclesRef.current;
     if (!isCentinelaBlockedByVehicles(list)) return;
-    if (listActiveCentinelas(list).length === 0) return;
+    const activeCentinelas = listActiveCentinelas(list);
+    if (activeCentinelas.length === 0) return;
+    const centinelaSig = activeCentinelas.map(v => v.id).sort().join(",");
+    const attemptKey = `${centinelaSig}|${consciousActiveSignature}`;
     if (centinelaArchiveInFlightRef.current) return;
+    if (centinelaArchiveAttemptSigRef.current === attemptKey) return;
 
     centinelaArchiveInFlightRef.current = true;
+    centinelaArchiveAttemptSigRef.current = attemptKey;
     const cierreAt = Date.now();
     applyCentinelaArchiveLocally(cierreAt);
     void archiveActiveCentinelas(user.uid, list).finally(() => {
       centinelaArchiveInFlightRef.current = false;
     });
-  }, [user, vehicles, applyCentinelaArchiveLocally]);
+  }, [user, consciousActiveSignature, applyCentinelaArchiveLocally]);
 
   useEffect(() => {
     if (!user) return;
@@ -2142,6 +2170,7 @@ export default function Planeacion() {
     const repaired = clearStuckDesglosadorPause(before, hasOpenInterrupt);
     if (repaired === before) return;
     vehiclesRef.current = repaired;
+    mergedVehiclesSigRef.current = vehiclesReactiveSignature(repaired);
     setVehicles(repaired);
     saveLocalVehicles(repaired);
     for (const v of repaired) {
@@ -2149,10 +2178,11 @@ export default function Planeacion() {
       if (!prev?.interrupcionActiva || v.interrupcionActiva) continue;
       void updateVehicle(user.uid, v.id, { interrupcionActiva: false, desglosadorPausa: undefined }).catch(() => {});
     }
-  }, [user, vehicles]);
+  }, [user, desglosadorPauseSignature]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !orphanInterruptSignature) return;
+    const vehicles = vehiclesRef.current;
     const byId = new Map(vehicles.map(v => [v.id, v]));
     const orphans = vehicles.filter(
       v =>
@@ -2189,7 +2219,8 @@ export default function Planeacion() {
       return patch ? { ...v, ...patch } : v;
     });
     saveLocalVehicles(vehiclesRef.current);
-  }, [user, vehicles]);
+    mergedVehiclesSigRef.current = vehiclesReactiveSignature(vehiclesRef.current);
+  }, [user, orphanInterruptSignature]);
 
   const persistVehiclesRef = () => {
     saveLocalVehicles(vehiclesRef.current);
@@ -9939,6 +9970,8 @@ function VehicleCard({
     return () => clearInterval(id);
   }, [vehicle.id, vehicle.tipoReloj, vehicle.status, vehicle.aperturaAt]);
 
+  const desglosadorAutoActivateRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || !onDesglosadorUpdate) return;
     const subs = subVehiculosRef.current ?? [];
@@ -9946,6 +9979,11 @@ function VehicleCard({
     const pendingIdx = subs.findIndex(s => s.status === "pendiente");
     const allSubsClosed = subs.length > 0 && subs.every(s => s.status === "cumplido" || s.status === "fallado");
     if (!hasActive && pendingIdx !== -1 && !allSubsClosed) {
+      const pendingId = subs[pendingIdx]?.id;
+      if (!pendingId) return;
+      const autoKey = `${vehicle.id}:${pendingId}`;
+      if (desglosadorAutoActivateRef.current.has(autoKey)) return;
+      desglosadorAutoActivateRef.current.add(autoKey);
       const now = Date.now();
       const repaired = subs.map((s, i) =>
         i === pendingIdx ? { ...s, status: "activo" as const, aperturaAt: now } : s
