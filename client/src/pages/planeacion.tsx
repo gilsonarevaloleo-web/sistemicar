@@ -210,7 +210,11 @@ import {
   rutaSeguimientoPickerCanConfirm,
 } from "@/components/RutaSeguimientoPicker";
 import { speakUbicacionQueue, speakUbicacionSingle, speakVoiceProbe, unlockSpeechSynthesis, warmupSpeechSynthesis, recoverSpeechQueue, subscribeSpeechQueueIdle } from "@/lib/speechQueue";
-import { speakDesglosadorVoiceReliable } from "@/lib/desglosadorVoice";
+import {
+  cancelUbicacionVoiceForVehicle,
+  speakDesglosadorVoiceReliable,
+} from "@/lib/desglosadorVoice";
+import { isMobilePerfMode } from "@/lib/mobilePerf";
 import {
   flushMissedPuertaVoiceOnVisible,
 } from "@/lib/backgroundAttentionAlerts";
@@ -1330,6 +1334,7 @@ export default function Planeacion() {
   const rutinaItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [notifPermission, setNotifPermission] = useState<string>(getNotificationPermission());
   const [segmentTick, setSegmentTick] = useState(0);
+  const [flotaUiReady, setFlotaUiReady] = useState(false);
   const [activandoSegId, setActivandoSegId] = useState<string | null>(null);
   const [cerrandoSegId, setCerrandoSegId] = useState<string | null>(null);
   const [showCierreJornada, setShowCierreJornada] = useState(false);
@@ -1959,6 +1964,19 @@ export default function Planeacion() {
     }
     prevSegmentoIdRef.current = currentSegId;
   }, [segmentoActivo?.id, user]);
+
+  useEffect(() => {
+    setFlotaUiReady(false);
+    const done = () => setFlotaUiReady(true);
+    if (typeof requestIdleCallback !== "undefined") {
+      const id = requestIdleCallback(done, {
+        timeout: isMobilePerfMode() ? 2200 : 900,
+      });
+      return () => cancelIdleCallback(id);
+    }
+    const t = window.setTimeout(done, 50);
+    return () => clearTimeout(t);
+  }, [user?.uid]);
 
   useEffect(() => {
     const onTick = () => setSegmentTick(t => t + 1);
@@ -4675,7 +4693,7 @@ export default function Planeacion() {
       if (cur != null) {
         setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x)));
         vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x));
-        persistVehiclesRef();
+        schedulePersistVehiclesRef();
         try {
           await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: null });
         } catch (err) {
@@ -4688,13 +4706,13 @@ export default function Planeacion() {
     const next = { subTareaId: first.id, startedAt: Date.now() };
     setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x)));
     vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x));
-    persistVehiclesRef();
+    schedulePersistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: next });
     } catch (err) {
       console.error("[handleSyncSituacionCupoAnchor] set", err);
     }
-  }, [user]);
+  }, [user, schedulePersistVehiclesRef]);
 
   const handleAddSubTarea = async (vehicleId: string, texto: string): Promise<string | undefined> => {
     if (!user) return undefined;
@@ -8073,7 +8091,12 @@ export default function Planeacion() {
             {activeVehicles.length > 0 ? (
               <div ref={flotaActivosRef} className="scroll-mt-4">
               <AccordionSection title="VEHÍCULOS ACTIVOS" icon={Zap} color={BLOOD} count={activeVehicles.length} defaultOpen>
-                {[...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
+                {!flotaUiReady ? (
+                  <div className="p-4 rounded-xl border text-center space-y-2" style={{ backgroundColor: PIZARRA, borderColor: "rgba(255,255,255,0.06)" }}>
+                    <div className="w-8 h-8 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Preparando flota activa…</p>
+                  </div>
+                ) : [...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
                   <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreRutaPatron(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onAddSubTareaUrgenteACola={handleAddSubTareaUrgenteACola} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onCerrarSituacionDesglosadorDeGolpe={handleCerrarSituacionDesglosadorDeGolpe} onCerrarRingPorInactividad={handleCerrarRingPorInactividad} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorCierreDeGolpe={handleDesglosadorCierreDeGolpe} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onDesglosadorAddSub={handleDesglosadorAddSub} onDesglosadorActivatePendingSub={handleDesglosadorActivatePendingSub} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onPuntoCeroSessionUpdate={handlePuntoCeroSessionUpdate} onPuntoCeroColorConfirm={handlePuntoCeroColorConfirm} onPuntoCeroAutoClose={handlePuntoCeroAutoClose} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
                 ))}
               </AccordionSection>
@@ -10009,7 +10032,13 @@ function VehicleCard({
 
   useEffect(() => {
     if (!onSyncSituacionCupoAnchor || vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
-    onSyncSituacionCupoAnchor(vehicle.id);
+    const run = () => onSyncSituacionCupoAnchor(vehicle.id);
+    if (typeof requestIdleCallback !== "undefined") {
+      const id = requestIdleCallback(run, { timeout: 1500 });
+      return () => cancelIdleCallback(id);
+    }
+    const t = window.setTimeout(run, 0);
+    return () => clearTimeout(t);
   }, [vehicle.id, vehicle.status, vehicle.tipoFlota, situacionSubWatchKey, onSyncSituacionCupoAnchor]);
 
   useEffect(() => {
@@ -10168,7 +10197,7 @@ function VehicleCard({
     situacion2MinWarnKeyRef.current = null;
     situacionCupoFireKeyRef.current = null;
 
-    speakSituacionFilaEnFoco(sub.texto, {
+    const cleanup = speakSituacionFilaEnFoco(sub.texto, {
       intro: false,
       key: `fila-${voiceKey}`,
       onSpoken: () => {
@@ -10176,6 +10205,7 @@ function VehicleCard({
         situacionFilaVoicePendingRef.current.delete(voiceKey);
       },
     });
+    return cleanup;
   }, [
     vehicle.tipoFlota,
     vehicle.status,
@@ -10183,6 +10213,7 @@ function VehicleCard({
     vehicle.situacionCronometro?.bloqueInicioAt,
     vehicle.situacionCupoAnchor,
     vehicle.subTareas,
+    vehicle.id,
   ]);
 
   useEffect(() => {
@@ -10230,6 +10261,7 @@ function VehicleCard({
 
   useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || subVehicleRestante === null) return;
+    const voiceCleanups: Array<() => void> = [];
     const subsNow = subVehiculosRef.current ?? [];
     const activeSub = subsNow.find(s => s.status === "activo");
     if (!activeSub?.rutaEnfoque?.activa || !onDesglosadorUpdate) {
@@ -10284,13 +10316,15 @@ function VehicleCard({
       } else {
         playChime();
       }
-      speakDesglosadorVoiceReliable(
-        `ruta-${key}`,
-        rutaVozPartsForBanda(alert),
-        false,
-        () => {
-          rutaUmbralAlertKeysRef.current.add(key);
-        }
+      voiceCleanups.push(
+        speakDesglosadorVoiceReliable(
+          `ruta-${key}`,
+          rutaVozPartsForBanda(alert),
+          false,
+          () => {
+            rutaUmbralAlertKeysRef.current.add(key);
+          }
+        )
       );
     }
     const cruzadoChanged =
@@ -10302,6 +10336,9 @@ function VehicleCard({
       );
       onDesglosadorUpdate(vehicle.id, updated);
     }
+    return () => {
+      voiceCleanups.forEach(fn => fn());
+    };
   }, [subVehicleRestante, vehicle.tipoReloj, vehicle.status, vehicle.subVehiculos, vehicle.id, onDesglosadorUpdate, playChime, onRutaBandCross]);
 
   useEffect(() => {
@@ -10672,6 +10709,18 @@ function VehicleCard({
     }
   }, []);
 
+  useEffect(() => {
+    return () => {
+      clearRingInactivityTimer();
+      if (situacionCupoEscalationRef.current) {
+        clearInterval(situacionCupoEscalationRef.current);
+        situacionCupoEscalationRef.current = null;
+      }
+      cancelUbicacionVoiceForVehicle(vehicle.id);
+      resetDesglosadorVoiceRefs();
+    };
+  }, [vehicle.id, clearRingInactivityTimer, resetDesglosadorVoiceRefs]);
+
   const armRingInactivityTimer = useCallback(() => {
     if (!onCerrarRingPorInactividad) return;
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -10744,7 +10793,7 @@ function VehicleCard({
     if (ringSobraVoiceKeyRef.current === key) return;
     if (ringSobraVoicePendingRef.current === key) return;
     ringSobraVoicePendingRef.current = key;
-    speakRingTiempoSobra(sobraMin, key, () => {
+    return speakRingTiempoSobra(sobraMin, key, () => {
       ringSobraVoiceKeyRef.current = key;
       ringSobraVoicePendingRef.current = null;
     });

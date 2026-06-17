@@ -3,4 +3,6 @@ export {
   speakDesglosadorVoiceReliable,
   cancelDesglosadorVoice,
   cancelUbicacionVoice,
+  cancelUbicacionVoiceForVehicle,
+  cancelAllUbicacionVoice,
 } from "./ubicacionVoiceReliable";

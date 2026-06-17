@@ -6,6 +6,7 @@
 import {
   recoverSpeechQueue,
   speakUbicacionQueue,
+  unlockSpeechSynthesis,
   warmupSpeechSynthesis,
   isUbicacionPhraseQueued,
   isUbicacionSpeechActive,
@@ -146,6 +147,23 @@ export function speakSituacionVoiceReliable(
 
 export function cancelUbicacionVoice(key: string): void {
   cleanupByKey.get(key)?.();
+}
+
+/** Cancela voz pendiente de un vehículo (listeners pointerdown/visibility incluidos). */
+export function cancelUbicacionVoiceForVehicle(vehicleId: string): void {
+  for (const key of [...cleanupByKey.keys()]) {
+    if (key.includes(vehicleId)) {
+      cleanupByKey.get(key)?.();
+    }
+  }
+}
+
+export function cancelAllUbicacionVoice(): void {
+  for (const cleanup of cleanupByKey.values()) {
+    cleanup();
+  }
+  cleanupByKey.clear();
+  pending.clear();
 }
 
 /** @deprecated usar cancelUbicacionVoice */
