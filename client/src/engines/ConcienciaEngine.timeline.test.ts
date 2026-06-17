@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import {
   calcularBalanceConquistaJornada,
   clockMinutesToDeg,
@@ -26,6 +26,19 @@ import type { Vehicle } from "../lib/persistence.ts";
 /** Hora civil en Lima (UTC-5) como timestamp UTC. */
 function limaAt(y: number, mo: number, d: number, h: number, min = 0): number {
   return Date.UTC(y, mo, d, h + 5, min);
+}
+
+/** requestIdleCallback síncrono para tests (Node no dispara idle de forma fiable). */
+function withImmediateIdleCallback<T>(fn: () => T | Promise<T>): Promise<T> {
+  const prev = globalThis.requestIdleCallback;
+  globalThis.requestIdleCallback = cb => {
+    cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline);
+    return 0;
+  };
+  return Promise.resolve(fn()).finally(() => {
+    if (prev) globalThis.requestIdleCallback = prev;
+    else delete (globalThis as { requestIdleCallback?: typeof requestIdleCallback }).requestIdleCallback;
+  });
 }
 
 /** Sesión centinela sellada (autoVerdad) para tests de puntero y persistencia. */
@@ -722,16 +735,48 @@ describe("computeAnilloEstado", () => {
     assert.ok(clamped + 0.05 >= peak, "sin coverNow el acumulado visible no debe caer bajo el pico");
   });
 
-  it("reloj por timestamp mantiene entropia estable si vehículos parpadean en Firebase", () => {
+  it("armEntropyGapOnConsciousClose no ejecuta antes de 300 ms", () => {
+    resetLiveEntropyMonotonic();
+    mock.timers.enable({ apis: ["setTimeout"] });
+    let idleScheduled = false;
+    const prevRic = globalThis.requestIdleCallback;
+    globalThis.requestIdleCallback = cb => {
+      idleScheduled = true;
+      cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline);
+      return 0;
+    };
+    try {
+      const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
+      const gapStart = limaAt(2026, 4, 18, 8, 0);
+      armEntropyGapOnConsciousClose({
+        segmentos,
+        vehiculosAfterClose: [],
+        cierreAt: gapStart,
+      });
+      mock.timers.tick(299);
+      assert.equal(idleScheduled, false);
+      mock.timers.tick(1);
+      assert.equal(idleScheduled, true);
+    } finally {
+      if (prevRic) globalThis.requestIdleCallback = prevRic;
+      else delete (globalThis as { requestIdleCallback?: typeof requestIdleCallback }).requestIdleCallback;
+      mock.timers.reset();
+    }
+  });
+
+  it("reloj por timestamp mantiene entropia estable si vehículos parpadean en Firebase", async () => {
     resetLiveEntropyMonotonic();
     const segmentos = [{ horaInicio: "08:00", horaFin: "12:00" }];
     const gapStart = limaAt(2026, 4, 18, 8, 0);
     const t1 = limaAt(2026, 4, 18, 8, 3);
     const t2 = limaAt(2026, 4, 18, 8, 6);
-    armEntropyGapOnConsciousClose({
-      segmentos,
-      vehiculosAfterClose: [],
-      cierreAt: gapStart,
+    await withImmediateIdleCallback(async () => {
+      armEntropyGapOnConsciousClose({
+        segmentos,
+        vehiculosAfterClose: [],
+        cierreAt: gapStart,
+      });
+      await new Promise<void>(resolve => setTimeout(resolve, 350));
     });
     const a = computeLiveEntropy({ segmentos, vehiculos: [], now: t1 }).dayStats.entropiaMin;
     const ghostCover: Vehicle = {

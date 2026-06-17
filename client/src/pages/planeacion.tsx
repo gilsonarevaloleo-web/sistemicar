@@ -99,6 +99,7 @@ import {
   DetalleSubTarea,
   SubVehiculo,
   saveLocalVehicles,
+  flushLocalVehicles,
   getLocalVehicles,
   parkActiveVehiclesForResume,
   getParkedActiveVehicles,
@@ -215,6 +216,11 @@ import {
   speakDesglosadorVoiceReliable,
 } from "@/lib/desglosadorVoice";
 import { isMobilePerfMode } from "@/lib/mobilePerf";
+import {
+  registerSituacionSessionCleanup,
+  resetSituacionSessionTeardownGate,
+  teardownSituacionSession,
+} from "@/lib/situacionSessionTeardown";
 import {
   flushMissedPuertaVoiceOnVisible,
 } from "@/lib/backgroundAttentionAlerts";
@@ -1623,10 +1629,10 @@ export default function Planeacion() {
         localSources,
         optimisticPending: pending,
       });
-      if (merged.length > 0) {
+      const sig = vehiclesReactiveSignature(merged);
+      if (merged.length > 0 && sig !== mergedVehiclesSigRef.current) {
         saveLocalVehicles(merged);
       }
-      const sig = vehiclesReactiveSignature(merged);
       if (sig === mergedVehiclesSigRef.current) return;
       mergedVehiclesSigRef.current = sig;
       setVehicles(merged);
@@ -2266,21 +2272,9 @@ export default function Planeacion() {
     saveLocalVehicles(vehiclesRef.current);
   };
 
-  const persistVehiclesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flushPersistVehiclesRef = useCallback(() => {
-    if (persistVehiclesTimerRef.current) {
-      clearTimeout(persistVehiclesTimerRef.current);
-      persistVehiclesTimerRef.current = null;
-    }
-    saveLocalVehicles(vehiclesRef.current);
-  }, []);
-  const schedulePersistVehiclesRef = useCallback((delayMs = 350) => {
-    if (persistVehiclesTimerRef.current) clearTimeout(persistVehiclesTimerRef.current);
-    persistVehiclesTimerRef.current = window.setTimeout(() => {
-      persistVehiclesTimerRef.current = null;
-      saveLocalVehicles(vehiclesRef.current);
-    }, delayMs);
-  }, []);
+  const flushPersistVehiclesRef = () => {
+    flushLocalVehicles(vehiclesRef.current);
+  };
 
   const checkTraslado50Ref = useRef<(() => Promise<void>) | null>(null);
 
@@ -4401,6 +4395,9 @@ export default function Planeacion() {
     }
     const vehicle = vehiclesRef.current.find(v => v.id === vehicleId) || vehicles.find(v => v.id === vehicleId);
     if (!vehicle) { endClose(vehicleId); return; }
+    if (vehicle.tipoFlota === "situacion") {
+      teardownSituacionSession(vehicleId);
+    }
     const cierreAt = Date.now();
     const aperturaAt = vehicle.aperturaAt || vehicle.createdAt?.getTime() || 0;
     const duracionFinal = aperturaAt > 0 ? Math.round((cierreAt - aperturaAt) / 60000) : 0;
@@ -4523,7 +4520,7 @@ export default function Planeacion() {
     };
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, ...closePatch } : v);
-    schedulePersistVehiclesRef(0);
+    persistVehiclesRef();
     armEntropyGapOnConsciousClose({
       segmentos: planilla?.segmentos || [],
       vehiculosAfterClose: vehiclesRef.current,
@@ -4545,7 +4542,7 @@ export default function Planeacion() {
       vehiclesRef.current = vehiclesRef.current.map(v =>
         v.id === vehicleId ? { ...v, ...depthOnly } : v
       );
-      schedulePersistVehiclesRef();
+      persistVehiclesRef();
     }
     const closePatchFinal = { ...closePatch, desglosadorBloqueDepthPsGranted: depthPsGranted };
 
@@ -4693,7 +4690,7 @@ export default function Planeacion() {
       if (cur != null) {
         setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x)));
         vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: undefined } : x));
-        schedulePersistVehiclesRef();
+        persistVehiclesRef();
         try {
           await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: null });
         } catch (err) {
@@ -4706,13 +4703,13 @@ export default function Planeacion() {
     const next = { subTareaId: first.id, startedAt: Date.now() };
     setVehicles(prev => prev.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x)));
     vehiclesRef.current = vehiclesRef.current.map(x => (x.id === vehicleId ? { ...x, situacionCupoAnchor: next } : x));
-    schedulePersistVehiclesRef();
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, { situacionCupoAnchor: next });
     } catch (err) {
       console.error("[handleSyncSituacionCupoAnchor] set", err);
     }
-  }, [user, schedulePersistVehiclesRef]);
+  }, [user]);
 
   const handleAddSubTarea = async (vehicleId: string, texto: string): Promise<string | undefined> => {
     if (!user) return undefined;
@@ -4925,7 +4922,7 @@ export default function Planeacion() {
     const updatedVehicle: Vehicle = { ...vehicleSnapshot, subTareas, situacionCronometro };
     setVehicles(prev => prev.map(v => (v.id === vehicleId ? updatedVehicle : v)));
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? updatedVehicle : v));
-    schedulePersistVehiclesRef();
+    persistVehiclesRef();
 
     try {
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro });
@@ -4935,6 +4932,7 @@ export default function Planeacion() {
       void handleSyncSituacionCupoAnchor(vehicleId);
       incrementModulePoints(user.uid, "planificacion", 1).catch(() => {});
       registrarEvento(COMPONENTES.PLANIFICACION);
+      teardownSituacionSession(vehicleId);
       const summary = presentSituacionDesgloseCelebration(vehicleId, vehicleSnapshot.titulo, updatedVehicle);
       situacionBloqueCelebratedRef.current.add(bloqueKey);
       if (vehicleSnapshot.proyectoId && vehicleSnapshot.proyectoPeldanoId) {
@@ -5001,7 +4999,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v =>
       v.id === vehicleId ? { ...v, subTareas, situacionCronometro: situacionCronometroFinal, situacionCupoAnchor: null } : v
     );
-    schedulePersistVehiclesRef();
+    persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, {
         subTareas,
@@ -5019,6 +5017,7 @@ export default function Planeacion() {
         situacionCronometro: situacionCronometroFinal,
         situacionCupoAnchor: null,
       };
+      teardownSituacionSession(vehicleId);
       presentSituacionDesgloseCelebration(vehicleId, vehicle.titulo, closedVehicle);
       window.requestAnimationFrame(() => {
         void playSituacionChimes(2);
@@ -5070,6 +5069,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v =>
       v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor: null } : v
     );
+    teardownSituacionSession(vehicleId);
     persistVehiclesRef();
     try {
       await updateVehicle(user.uid, vehicleId, {
@@ -5159,6 +5159,7 @@ export default function Planeacion() {
       return;
     }
 
+    teardownSituacionSession(vehicleId);
     presentSituacionDesgloseCelebration(vehicleId, vehicle.titulo, vehicle);
   }, [vehicles, tryFinalizeSituacionDesgloseBloque, presentSituacionDesgloseCelebration]);
 
@@ -9304,7 +9305,10 @@ export default function Planeacion() {
 
                 <button
                   type="button"
-                  onClick={() => setSituacionDesgloseCelebration(null)}
+                  onClick={() => {
+                    teardownSituacionSession(situacionDesgloseCelebration.vehicleId);
+                    setSituacionDesgloseCelebration(null);
+                  }}
                   className="relative w-full py-3 rounded-xl text-xs font-black uppercase tracking-wider"
                   style={{ backgroundColor: GOLD, color: "#000", boxShadow: `0 0 24px ${GOLD}40` }}
                   data-testid="situacion-desglose-absorber"
@@ -9542,7 +9546,10 @@ export default function Planeacion() {
 
                 <button
                   type="button"
-                  onClick={() => setDesglosadorTiempoCelebration(null)}
+                  onClick={() => {
+                    teardownSituacionSession(desglosadorTiempoCelebration.vehicleId);
+                    setDesglosadorTiempoCelebration(null);
+                  }}
                   className="relative w-full py-3 rounded-xl text-xs font-black uppercase tracking-wider"
                   style={{ backgroundColor: GOLD, color: "#000", boxShadow: `0 0 24px ${GOLD}40` }}
                   data-testid="desglosador-tiempo-absorber"
@@ -10710,7 +10717,9 @@ function VehicleCard({
   }, []);
 
   useEffect(() => {
-    return () => {
+    if (vehicle.tipoFlota !== "situacion") return;
+    resetSituacionSessionTeardownGate(vehicle.id);
+    return registerSituacionSessionCleanup(vehicle.id, () => {
       clearRingInactivityTimer();
       if (situacionCupoEscalationRef.current) {
         clearInterval(situacionCupoEscalationRef.current);
@@ -10718,8 +10727,8 @@ function VehicleCard({
       }
       cancelUbicacionVoiceForVehicle(vehicle.id);
       resetDesglosadorVoiceRefs();
-    };
-  }, [vehicle.id, clearRingInactivityTimer, resetDesglosadorVoiceRefs]);
+    });
+  }, [vehicle.id, vehicle.tipoFlota, clearRingInactivityTimer, resetDesglosadorVoiceRefs]);
 
   const armRingInactivityTimer = useCallback(() => {
     if (!onCerrarRingPorInactividad) return;

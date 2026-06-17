@@ -1516,11 +1516,14 @@ export function armEntropyGapOnConsciousClose(params: {
       nowMs: params.cierreAt,
     });
   };
-  if (typeof requestIdleCallback !== "undefined") {
-    requestIdleCallback(run, { timeout: 800 });
-  } else {
-    window.setTimeout(run, 0);
-  }
+  // Piso 300 ms fuera del frame de cierre; luego idle si está disponible.
+  globalThis.setTimeout(() => {
+    if (typeof requestIdleCallback !== "undefined") {
+      requestIdleCallback(run, { timeout: 800 });
+    } else {
+      run();
+    }
+  }, 300);
 }
 
 /**

@@ -30,6 +30,7 @@ type PendingVoice = {
 const pending = new Map<string, PendingVoice>();
 const cleanupByKey = new Map<string, () => void>();
 const MAX_RELIABLE_ATTEMPTS = 2;
+let voiceRetryHubRegistered = false;
 
 function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
   if (source === "desglosador") return isDesglosadorVoiceEnabled();
@@ -81,8 +82,24 @@ function trySpeak(key: string): void {
   });
 }
 
+/** Hub global visibility/focus — pointerdown vive en VoiceBootstrap (App.tsx). */
+export function ensureUbicacionVoiceRetryHub(): void {
+  if (voiceRetryHubRegistered || typeof window === "undefined") return;
+  voiceRetryHubRegistered = true;
+  const onRetry = () => retryAllPendingUbicacionVoice();
+  document.addEventListener("visibilitychange", onRetry);
+  window.addEventListener("focus", onRetry);
+}
+
+export function retryAllPendingUbicacionVoice(): void {
+  for (const key of [...pending.keys()]) {
+    const entry = pending.get(key);
+    if (entry && !entry.spoken) trySpeak(key);
+  }
+}
+
 /**
- * Encola guion con reintentos (gesto, visibilidad, timeouts).
+ * Encola guion con reintentos (gesto global, visibilidad, timeouts).
  * Solo marca `onSpoken` cuando el navegador realmente empieza a hablar.
  */
 export function speakUbicacionVoiceReliable(
@@ -93,6 +110,7 @@ export function speakUbicacionVoiceReliable(
   onSpoken?: () => void
 ): () => void {
   cleanupByKey.get(key)?.();
+  ensureUbicacionVoiceRetryHub();
 
   if (!isVoiceEnabledFor(source)) {
     return () => {};
@@ -109,16 +127,8 @@ export function speakUbicacionVoiceReliable(
 
   const retryTimers = [1500, 4000].map(ms => window.setTimeout(() => trySpeak(key), ms));
 
-  const onRetry = () => trySpeak(key);
-  window.addEventListener("pointerdown", onRetry, { capture: true });
-  document.addEventListener("visibilitychange", onRetry);
-  window.addEventListener("focus", onRetry);
-
   const cleanup = () => {
     retryTimers.forEach(t => window.clearTimeout(t));
-    window.removeEventListener("pointerdown", onRetry, { capture: true });
-    document.removeEventListener("visibilitychange", onRetry);
-    window.removeEventListener("focus", onRetry);
     pending.delete(key);
     cleanupByKey.delete(key);
   };
@@ -149,7 +159,7 @@ export function cancelUbicacionVoice(key: string): void {
   cleanupByKey.get(key)?.();
 }
 
-/** Cancela voz pendiente de un vehículo (listeners pointerdown/visibility incluidos). */
+/** Cancela voz pendiente de un vehículo (timers de retry incluidos). */
 export function cancelUbicacionVoiceForVehicle(vehicleId: string): void {
   for (const key of [...cleanupByKey.keys()]) {
     if (key.includes(vehicleId)) {

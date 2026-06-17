@@ -21,6 +21,11 @@ import {
 } from "./firebase";
 import { activateSovereignModeGlobal, deactivateSovereignModeGlobal, backupToLocal, restoreFromLocal } from "./sovereign-mode";
 import { emergencyPruneStorage, safeSetItem } from "./storageHygiene";
+import {
+  flushDebouncedWrite,
+  initLocalVehiclesFlushListeners as initVehicleDebounceFlushListeners,
+  scheduleDebouncedWrite,
+} from "./vehicleLocalStorageDebounce";
 import type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
 import type { RutaSeguimientoPatron } from "./rutaSeguimiento";
 export type { RutaBandaId, RutaCruzadaSnapshot, RutaEnfoqueState } from "./rutaEnfoque";
@@ -704,6 +709,10 @@ export interface Vehicle {
 }
 
 const VEHICLES_KEY = "sistemicar_vehicles";
+
+function initLocalVehiclesFlushListeners(): void {
+  initVehicleDebounceFlushListeners(() => flushLocalVehicles());
+}
 const PARKED_ACTIVES_KEY = "sistemicar_parked_actives";
 
 /** Guarda activos en sessionStorage al ir a segundo plano (recuperación tras suspender la pestaña). */
@@ -919,6 +928,20 @@ export function mergeMissingLocalActives(sorted: Vehicle[], nowMs = Date.now()):
 }
 
 export function saveLocalVehicles(vehicles: Vehicle[]): boolean {
+  initLocalVehiclesFlushListeners();
+  scheduleDebouncedWrite(() => flushLocalVehiclesNow(vehicles));
+  return true;
+}
+
+/** Escritura síncrona inmediata (cierres críticos, beforeunload). */
+export function flushLocalVehicles(vehicles?: Vehicle[]): boolean {
+  if (vehicles) {
+    return flushDebouncedWrite(() => flushLocalVehiclesNow(vehicles));
+  }
+  return flushDebouncedWrite();
+}
+
+function flushLocalVehiclesNow(vehicles: Vehicle[]): boolean {
   // Defense-in-depth: never reduce active vehicle count without an explicit close signal.
   // Multiple concurrent subscribers (Doctor IA, historial, radar, etc.) all call this
   // function. If ANY subscriber receives a Firebase snapshot missing an active vehicle

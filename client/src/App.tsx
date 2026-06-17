@@ -65,6 +65,7 @@ import { DoctorIAChat } from "@/components/doctor-ia-chat";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { runStartupStorageHygiene } from "@/lib/storageHygiene";
 import { unlockSpeechSynthesis } from "@/lib/speechQueue";
+import { ensureUbicacionVoiceRetryHub, retryAllPendingUbicacionVoice } from "@/lib/ubicacionVoiceReliable";
 
 interface AuthContextType {
   user: AppUser | null;
@@ -397,7 +398,11 @@ function SovereigntyListener() {
 
 function VoiceBootstrap() {
   useEffect(() => {
-    const unlock = () => unlockSpeechSynthesis(true);
+    ensureUbicacionVoiceRetryHub();
+    const unlock = () => {
+      unlockSpeechSynthesis(true);
+      retryAllPendingUbicacionVoice();
+    };
     window.addEventListener("pointerdown", unlock, { capture: true });
     window.addEventListener("keydown", unlock, { capture: true });
     return () => {

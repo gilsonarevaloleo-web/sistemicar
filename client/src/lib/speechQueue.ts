@@ -159,6 +159,22 @@ export function isSpeechSynthesisUnlocked(): boolean {
   return speechUnlocked;
 }
 
+/** Cancelación fulminante — teardown de sesión situacional / WebView móvil. */
+export function cancelSpeechSynthesisHard(): void {
+  clearStuckTimer();
+  speaking = false;
+  queue = [];
+  pendingOnPhraseStarted = null;
+  lastQueuedPhrase = "";
+  lastQueuedAtMs = 0;
+  try {
+    getSynth()?.cancel();
+  } catch {
+    /* noop */
+  }
+  notifySpeechQueueIdle();
+}
+
 /**
  * Desbloquea speechSynthesis (obligatorio en móvil).
  * Debe llamarse sincrónicamente dentro de pointerdown/click del usuario.

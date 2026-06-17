@@ -8,6 +8,8 @@ import {
   getPlaneacionCrashCount,
   repairStuckSituacionVehicles,
 } from "@/lib/situacionRepair";
+import { flushLocalVehicles } from "@/lib/persistence";
+import { teardownAllSituacionSessions } from "@/lib/situacionSessionTeardown";
 
 type Props = { children: ReactNode };
 type State = { hasError: boolean; message: string; crashCount: number };
@@ -34,9 +36,11 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   private runPlaneacionRecovery(archiveSituacion: boolean) {
     try {
+      teardownAllSituacionSessions();
       repairStuckSituacionVehicles();
       emergencyPruneStorage({ aggressive: true });
       resetAnilloViewModeStorage();
+      flushLocalVehicles();
     } catch {
       // ignore
     }

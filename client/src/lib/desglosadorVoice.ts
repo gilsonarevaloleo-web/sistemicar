@@ -5,4 +5,6 @@ export {
   cancelUbicacionVoice,
   cancelUbicacionVoiceForVehicle,
   cancelAllUbicacionVoice,
+  ensureUbicacionVoiceRetryHub,
+  retryAllPendingUbicacionVoice,
 } from "./ubicacionVoiceReliable";
