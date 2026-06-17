@@ -23,6 +23,7 @@ let voicesPrimed = false;
 /** Safari/iOS/Chrome bloquean TTS hasta un speak() dentro de un gesto del usuario. */
 let speechUnlocked = false;
 let pendingOnPhraseStarted: (() => void) | null = null;
+let pendingOnPhraseStartedArmed = false;
 const idleListeners = new Set<() => void>();
 let lastQueuedPhrase = "";
 let lastQueuedAtMs = 0;
@@ -165,6 +166,7 @@ export function cancelSpeechSynthesisHard(): void {
   speaking = false;
   queue = [];
   pendingOnPhraseStarted = null;
+  pendingOnPhraseStartedArmed = false;
   lastQueuedPhrase = "";
   lastQueuedAtMs = 0;
   try {
@@ -247,13 +249,15 @@ function processQueue(): void {
       const u = new SpeechSynthesisUtterance(text);
       applyCalmSpanishUtterance(u);
       u.onstart = () => {
-        if (pendingOnPhraseStarted) {
-          const cb = pendingOnPhraseStarted;
-          pendingOnPhraseStarted = null;
-          cb();
-        }
+        /* onSpoken se dispara al terminar la primera frase audible, no al inicio. */
       };
       u.onend = () => {
+        if (pendingOnPhraseStartedArmed && pendingOnPhraseStarted) {
+          const cb = pendingOnPhraseStarted;
+          pendingOnPhraseStarted = null;
+          pendingOnPhraseStartedArmed = false;
+          cb();
+        }
         speaking = false;
         clearStuckTimer();
         processQueue();
@@ -358,11 +362,13 @@ export function speakUbicacionQueue(
     speaking = false;
     clearStuckTimer();
     pendingOnPhraseStarted = null;
+    pendingOnPhraseStartedArmed = false;
     lastQueuedPhrase = "";
     lastQueuedAtMs = 0;
   }
 
   pendingOnPhraseStarted = onPhraseStarted ?? null;
+  pendingOnPhraseStartedArmed = !!onPhraseStarted;
 
   const now = Date.now();
   for (const phrase of filtered) {
@@ -380,6 +386,7 @@ export function speakUbicacionQueue(
   processQueue();
   if (!speaking && queue.length === 0) {
     pendingOnPhraseStarted = null;
+    pendingOnPhraseStartedArmed = false;
     notifySpeechQueueIdle();
   }
 }

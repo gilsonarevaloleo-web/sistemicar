@@ -9,6 +9,7 @@ import {
 } from "./ubicacionVoiceReliable";
 import { flushLocalVehicles } from "./persistence";
 import { cancelSpeechSynthesisHard } from "./speechQueue";
+import { extendLocalVehicleMutation } from "./localMutationLock";
 import {
   listSituacionSessionVehicleIds,
   resetSituacionSessionTeardownGate,
@@ -24,8 +25,8 @@ export {
 export function teardownSituacionSession(vehicleId: string): void {
   if (!runSituacionSessionCleanups(vehicleId)) return;
 
+  extendLocalVehicleMutation("teardown");
   cancelUbicacionVoiceForVehicle(vehicleId);
-  cancelSpeechSynthesisHard();
   flushLocalVehicles();
 }
 

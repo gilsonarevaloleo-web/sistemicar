@@ -21,6 +21,29 @@ function st(
   return { id, texto: id, completada: false, creadaAt: 1, ...extra };
 }
 
+describe("archiveOrphanDesglosadorInterrupts", () => {
+  it("archiva interrupciones huérfanas (job diferido, no hot path de snapshot)", () => {
+    const parent: Vehicle = {
+      id: "p1",
+      titulo: "Desglose",
+      status: "activo",
+      tipoFlota: "tiempo",
+      tipoReloj: "desglosador",
+      interrupcionActiva: false,
+    } as Vehicle;
+    const orphan: Vehicle = {
+      id: "i1",
+      titulo: "Interrupción",
+      status: "activo",
+      tipoFlota: "situacion",
+      vehiculoPadreDesglosadorId: "missing-parent",
+      excluirDeHistorial: true,
+    } as Vehicle;
+    const next = archiveOrphanDesglosadorInterrupts([parent, orphan], Date.now());
+    assert.equal(next.find(v => v.id === "i1")?.status, "archivado");
+  });
+});
+
 describe("isOrphanDesglosadorInterrupt", () => {
   const parent = (status: Vehicle["status"], interrupcionActiva = false): Vehicle =>
     ({

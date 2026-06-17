@@ -113,9 +113,9 @@ function mergeIncomingWithLocal(incoming: Vehicle[], localSources: Vehicle[]): V
 }
 
 /**
- * Lista final de vehículos: nunca reabre uno cerrado localmente o recientemente.
+ * Reconciliación pasiva para snapshots (sin archivar huérfanos síncronamente).
  */
-export function reconcileVehicleList(params: ReconcileVehicleListParams): Vehicle[] {
+export function reconcileVehicleListView(params: ReconcileVehicleListParams): Vehicle[] {
   const nowMs = params.nowMs ?? Date.now();
   const localSources = params.localSources ?? getLocalVehicles();
   const localClosedIds = new Set(
@@ -155,7 +155,6 @@ export function reconcileVehicleList(params: ReconcileVehicleListParams): Vehicl
     id => localClosedIds.has(id)
   );
 
-  merged = archiveOrphanDesglosadorInterrupts(merged, nowMs);
   merged = dedupeVehiclesPreferClosed(merged);
   merged = dedupeActiveDesglosadorParents(merged);
   merged = excludeGhostActivesFromReconcile(merged, nowMs);
@@ -165,6 +164,16 @@ export function reconcileVehicleList(params: ReconcileVehicleListParams): Vehicl
     if (sealed.status !== "activo" || !isBlocked(sealed)) return sealed;
     return applyClosedOverride(sealed, localSources);
   });
+}
+
+/**
+ * Lista final de vehículos: incluye archivado diferido de huérfanos (tests / jobs).
+ */
+export function reconcileVehicleList(params: ReconcileVehicleListParams): Vehicle[] {
+  const nowMs = params.nowMs ?? Date.now();
+  let merged = reconcileVehicleListView(params);
+  merged = archiveOrphanDesglosadorInterrupts(merged, nowMs);
+  return merged;
 }
 
 export interface CloseVehicleLocallyParams {

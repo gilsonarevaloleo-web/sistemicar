@@ -189,7 +189,7 @@ import {
   resetCentinelaLaunchGate,
   isInvisibleCentinelaVehicle,
 } from "@/lib/centinelaEngine";
-import { clearStuckDesglosadorPause } from "@/lib/situacionSessionMerge";
+import { clearStuckDesglosadorPause, archiveOrphanDesglosadorInterrupts } from "@/lib/situacionSessionMerge";
 import {
   createRutaEnfoqueState,
   applyRutaThresholdCrossing,
@@ -466,7 +466,13 @@ import { calcularMetricasAnilloConciencia, calcularBalanceConquistaJornada, buil
 import { isCoarseConcienciaDevice } from "@/lib/concienciaClock";
 import { getSharedAnilloLiveModel } from "@/lib/anilloLiveModelCache";
 import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/EntropiaDebugPanel";
-import { reconcileVehicleList } from "@/lib/vehicleSessionAuthority";
+import { reconcileVehicleListView } from "@/lib/vehicleSessionAuthority";
+import {
+  beginLocalVehicleMutation,
+  isLocalVehicleMutationLocked,
+} from "@/lib/localMutationLock";
+import { scheduleDeferredVehicleCleanup } from "@/lib/vehicleDeferredCleanup";
+import { generateStableUuid } from "@/lib/stableUuid";
 import { sealVehicleSessionClose } from "@/lib/vehicleSessionSeal";
 
 const GOLD = "#D4AF37";
@@ -1105,6 +1111,9 @@ export default function Planeacion() {
     } catch { return []; }
   });
   const optimisticVehiclesRef = useRef<Vehicle[]>([]);
+  const closingInProgressRef = useRef<Map<string, number>>(new Map());
+  const CLOSING_STALE_MS = 45_000;
+  const lastFlotaLaunchRef = useRef<{ key: string; at: number } | null>(null);
   const proyectoLaunchRef = useRef<{
     proyectoId: string;
     peldanoId: string;
@@ -1619,15 +1628,28 @@ export default function Planeacion() {
 
   useEffect(() => {
     if (!user) return;
+    const isCloseInFlight = (vehicleId: string): boolean => {
+      const started = closingInProgressRef.current.get(vehicleId);
+      if (started == null) return false;
+      if (Date.now() - started > CLOSING_STALE_MS) {
+        closingInProgressRef.current.delete(vehicleId);
+        return false;
+      }
+      return true;
+    };
     const unsub1 = subscribeToVehicles(user.uid, (data) => {
+      if (isLocalVehicleMutationLocked()) {
+        return;
+      }
       const firebaseIds = new Set(data.map(v => v.id));
       optimisticVehiclesRef.current = optimisticVehiclesRef.current.filter(ov => !firebaseIds.has(ov.id));
       const pending = optimisticVehiclesRef.current;
       const localSources = [...getLocalVehicles(), ...vehiclesRef.current];
-      const merged = reconcileVehicleList({
+      const merged = reconcileVehicleListView({
         incoming: data,
         localSources,
         optimisticPending: pending,
+        isCloseInFlight,
       });
       const sig = vehiclesReactiveSignature(merged);
       if (merged.length > 0 && sig !== mergedVehiclesSigRef.current) {
@@ -1636,7 +1658,17 @@ export default function Planeacion() {
       if (sig === mergedVehiclesSigRef.current) return;
       mergedVehiclesSigRef.current = sig;
       setVehicles(merged);
-    }, (e) => console.error(e));
+      scheduleDeferredVehicleCleanup(() => {
+        if (isLocalVehicleMutationLocked()) return;
+        const archived = archiveOrphanDesglosadorInterrupts(vehiclesRef.current, Date.now());
+        const archivedSig = vehiclesReactiveSignature(archived);
+        if (archivedSig === mergedVehiclesSigRef.current) return;
+        mergedVehiclesSigRef.current = archivedSig;
+        vehiclesRef.current = archived;
+        setVehicles(archived);
+        saveLocalVehicles(archived);
+      });
+    }, (e) => console.error(e), { isCloseInFlight });
     const unsub2 = subscribeToProgression(user.uid, (prog) => setProgression(prog), (e) => console.error(e));
     const unsub3 = subscribeToEnergyLogs(user.uid, (data) => setEnergyLogs(data), (e) => console.error(e));
     const unsub4 = subscribeToSituacionReserva(user.uid, setSituacionReserva, e => console.error(e));
@@ -2037,8 +2069,6 @@ export default function Planeacion() {
   const desglosadorSyncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const vehicleById = (vehicleId: string) =>
     vehiclesRef.current.find(v => v.id === vehicleId) ?? vehicles.find(v => v.id === vehicleId);
-  const closingInProgressRef = useRef<Map<string, number>>(new Map());
-  const CLOSING_STALE_MS = 45_000;
   const isCloseBlocked = (vehicleId: string): boolean => {
     const started = closingInProgressRef.current.get(vehicleId);
     if (started == null) return false;
@@ -2049,6 +2079,7 @@ export default function Planeacion() {
     return true;
   };
   const beginClose = (vehicleId: string) => {
+    beginLocalVehicleMutation("close");
     closingInProgressRef.current.set(vehicleId, Date.now());
   };
   const endClose = (vehicleId: string) => {
@@ -2228,44 +2259,48 @@ export default function Planeacion() {
 
   useEffect(() => {
     if (!user || !orphanInterruptSignature) return;
-    const vehicles = vehiclesRef.current;
-    const byId = new Map(vehicles.map(v => [v.id, v]));
-    const orphans = vehicles.filter(
-      v =>
-        isOrphanDesglosadorInterrupt(v, byId) &&
-        !orphanInterruptSweepRef.current.has(v.id) &&
-        !isCloseBlocked(v.id)
-    );
-    if (orphans.length === 0) return;
-    const now = Date.now();
-    const patches = new Map(
-      orphans.map(o => {
-        const patch = {
-          status: "archivado" as const,
-          cierreAt: now,
-          duracionFinal: Math.max(1, Math.round((now - (o.aperturaAt || now)) / 60000)),
-          cierreManual: false,
-        };
-        return [o.id, patch] as const;
-      })
-    );
-    for (const o of orphans) {
-      orphanInterruptSweepRef.current.add(o.id);
-      notifyVehicleClosed(o.id, o.clientRequestId);
-      const patch = patches.get(o.id)!;
-      void updateVehicle(user.uid, o.id, patch).catch(e => console.warn("[orphan-interrupt]", o.id, e));
-      void updateVehicleStatus(user.uid, o.id, "archivado").catch(e => console.warn("[orphan-interrupt] status", o.id, e));
-    }
-    setVehicles(prev => prev.map(v => {
-      const patch = patches.get(v.id);
-      return patch ? { ...v, ...patch } : v;
-    }));
-    vehiclesRef.current = vehiclesRef.current.map(v => {
-      const patch = patches.get(v.id);
-      return patch ? { ...v, ...patch } : v;
+    scheduleDeferredVehicleCleanup(() => {
+      if (isLocalVehicleMutationLocked()) return;
+      const vehicles = vehiclesRef.current;
+      const byId = new Map(vehicles.map(v => [v.id, v]));
+      const orphans = vehicles.filter(
+        v =>
+          isOrphanDesglosadorInterrupt(v, byId) &&
+          !orphanInterruptSweepRef.current.has(v.id) &&
+          !isCloseBlocked(v.id)
+      );
+      if (orphans.length === 0) return;
+      beginLocalVehicleMutation("orphan-cleanup");
+      const now = Date.now();
+      const patches = new Map(
+        orphans.map(o => {
+          const patch = {
+            status: "archivado" as const,
+            cierreAt: now,
+            duracionFinal: Math.max(1, Math.round((now - (o.aperturaAt || now)) / 60000)),
+            cierreManual: false,
+          };
+          return [o.id, patch] as const;
+        })
+      );
+      for (const o of orphans) {
+        orphanInterruptSweepRef.current.add(o.id);
+        notifyVehicleClosed(o.id, o.clientRequestId);
+        const patch = patches.get(o.id)!;
+        void updateVehicle(user.uid, o.id, patch).catch(e => console.warn("[orphan-interrupt]", o.id, e));
+        void updateVehicleStatus(user.uid, o.id, "archivado").catch(e => console.warn("[orphan-interrupt] status", o.id, e));
+      }
+      setVehicles(prev => prev.map(v => {
+        const patch = patches.get(v.id);
+        return patch ? { ...v, ...patch } : v;
+      }));
+      vehiclesRef.current = vehiclesRef.current.map(v => {
+        const patch = patches.get(v.id);
+        return patch ? { ...v, ...patch } : v;
+      });
+      saveLocalVehicles(vehiclesRef.current);
+      mergedVehiclesSigRef.current = vehiclesReactiveSignature(vehiclesRef.current);
     });
-    saveLocalVehicles(vehiclesRef.current);
-    mergedVehiclesSigRef.current = vehiclesReactiveSignature(vehiclesRef.current);
   }, [user, orphanInterruptSignature]);
 
   const persistVehiclesRef = () => {
@@ -2491,6 +2526,13 @@ export default function Planeacion() {
       });
       return;
     }
+    const launchKey = `${titulo.trim()}|${tipoFlotaSeleccionado}`;
+    const launchNow = Date.now();
+    if (isLocalVehicleMutationLocked()) {
+      const last = lastFlotaLaunchRef.current;
+      if (last?.key === launchKey && launchNow - last.at < 2000) return;
+    }
+    lastFlotaLaunchRef.current = { key: launchKey, at: launchNow };
     setSaving(true);
     resetCentinelaLaunchGate();
     setCierreEnergiaPending(null);
@@ -2588,8 +2630,9 @@ export default function Planeacion() {
 
       console.log(`[handleFlotaSave] Guardando vehículo local primero...`);
       let newVehicleId: string;
+      let newClientRequestId: string;
       try {
-        newVehicleId = await addVehicle(user.uid, {
+        const created = await addVehicle(user.uid, {
         titulo: titulo.trim(),
         criterioFin: criterio,
         criterioDetalle: detalle,
@@ -2628,6 +2671,8 @@ export default function Planeacion() {
             ? initPuntoCeroSession(modoPuntoCero, parsePuntoCeroDuracionMin(detalle), Date.now())
             : undefined,
         });
+        newVehicleId = created.id;
+        newClientRequestId = created.clientRequestId;
       } catch (addErr) {
         console.error("[handleFlotaSave] addVehicle:", addErr);
         toast.error("Error al guardar vehículo", {
@@ -2674,6 +2719,7 @@ export default function Planeacion() {
       try {
       const optimisticVehicle: Vehicle = {
         id: newVehicleId,
+        clientRequestId: newClientRequestId,
         titulo: titulo.trim(),
         criterioFin: criterio,
         criterioDetalle: detalle,
@@ -3197,11 +3243,12 @@ export default function Planeacion() {
     const terminoInfo = TERMINO_OPTIONS.find(t => t.id === tipoTermino);
     const detalleNorm = detalle?.trim() || (tipoTermino === "situacion" ? "Al cerrar este bloque" : "");
     let newVehicleId: string;
+    let newClientRequestId: string;
     try {
       const cierreAt = Date.now();
       applyCentinelaArchiveLocally(cierreAt);
       await closeCentinelasBeforeConsciousLaunch(user.uid, vehiclesRef.current);
-      newVehicleId = await addVehicle(user.uid, {
+      const created = await addVehicle(user.uid, {
         titulo: titulo.trim(),
         criterioFin: tipoTermino === "hora" ? "tiempo" : "circunstancia",
         criterioDetalle: detalleNorm,
@@ -3211,6 +3258,8 @@ export default function Planeacion() {
         tipoFlota: tipoTermino === "situacion" ? "situacion" : tipoTermino === "hora" ? "tiempo" : undefined,
         aperturaAt: Date.now(),
       });
+      newVehicleId = created.id;
+      newClientRequestId = created.clientRequestId;
     } catch (err) {
       console.error("[handleQuickSaveAndNew] addVehicle:", err);
       toast.error("Error al guardar vehículo", {
@@ -3224,6 +3273,7 @@ export default function Planeacion() {
     try {
       const optimisticVehicle: Vehicle = {
         id: newVehicleId,
+        clientRequestId: newClientRequestId,
         titulo: titulo.trim(),
         criterioFin: tipoTermino === "hora" ? "tiempo" : "circunstancia",
         criterioDetalle: detalleNorm,
@@ -4073,8 +4123,8 @@ export default function Planeacion() {
     };
     const pausedPatch = { desglosadorPausa: pausa, interrupcionActiva: true };
 
-    const provisionalInterruptId = `vehicle_${Date.now()}`;
-    const clientRequestId = `crq_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const provisionalInterruptId = generateStableUuid();
+    const clientRequestId = `crq_${generateStableUuid()}`;
     const interruptVehicle: Vehicle = {
       id: provisionalInterruptId,
       titulo: tituloInterrupcion.trim(),
@@ -4113,7 +4163,7 @@ export default function Planeacion() {
       void updateVehicle(user.uid, vehicleId, pausedPatch).catch(e =>
         console.warn("[desglosador] pause patch:", e)
       );
-      const realId = await addVehicle(user.uid, {
+      const { id: realId } = await addVehicle(user.uid, {
         titulo: tituloInterrupcion.trim(),
         criterioFin: "circunstancia",
         criterioDetalle: "Interrupción",
@@ -4124,7 +4174,7 @@ export default function Planeacion() {
         aperturaAt: Date.now(),
         excluirDeHistorial: true,
         vehiculoPadreDesglosadorId: vehicleId,
-      });
+      }, { provisionalId: provisionalInterruptId, clientRequestId });
       if (realId !== provisionalInterruptId) {
         const synced = vehiclesRef.current.map(v =>
           v.id === provisionalInterruptId ? { ...v, id: realId } : v
@@ -9547,7 +9597,6 @@ export default function Planeacion() {
                 <button
                   type="button"
                   onClick={() => {
-                    teardownSituacionSession(desglosadorTiempoCelebration.vehicleId);
                     setDesglosadorTiempoCelebration(null);
                   }}
                   className="relative w-full py-3 rounded-xl text-xs font-black uppercase tracking-wider"
@@ -10325,7 +10374,7 @@ function VehicleCard({
       }
       voiceCleanups.push(
         speakDesglosadorVoiceReliable(
-          `ruta-${key}`,
+          `${vehicle.id}:ruta-${key}`,
           rutaVozPartsForBanda(alert),
           false,
           () => {
@@ -10357,7 +10406,7 @@ function VehicleCard({
 
     const phrases = rutaVozFluidoParts(cleanSubTitulo(activeSub.titulo));
     const cleanup = speakDesglosadorVoiceReliable(
-      `intro-${key}`,
+      `${vehicle.id}:intro-${key}`,
       phrases,
       true,
       () => {

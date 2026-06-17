@@ -357,7 +357,7 @@ export async function materializeRetroactiveCentinelas(
   for (const gap of gaps.slice(0, MAX_RETRO_CENTINELA_GAPS_PER_RUN)) {
     const duracionFinal = Math.max(1, Math.round((gap.cierreAt - gap.aperturaAt) / 60000));
     try {
-      const id = await addVehicle(userId, {
+      const { id } = await addVehicle(userId, {
         titulo: CENTINELA_TITULO,
         criterioFin: "circunstancia",
         criterioDetalle: "Modo Verdad",

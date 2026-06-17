@@ -161,8 +161,9 @@ export function cancelUbicacionVoice(key: string): void {
 
 /** Cancela voz pendiente de un vehículo (timers de retry incluidos). */
 export function cancelUbicacionVoiceForVehicle(vehicleId: string): void {
+  const scopedPrefix = `${vehicleId}:`;
   for (const key of [...cleanupByKey.keys()]) {
-    if (key.includes(vehicleId)) {
+    if (key.startsWith(scopedPrefix) || key.includes(vehicleId)) {
       cleanupByKey.get(key)?.();
     }
   }

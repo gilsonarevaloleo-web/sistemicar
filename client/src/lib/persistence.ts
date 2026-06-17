@@ -47,7 +47,13 @@ import {
   recoverMissingJournalDayActives,
   shouldPreserveLocalActivo,
 } from "./ghostVehicleEngine";
-import { reconcileVehicleList } from "./vehicleSessionAuthority";
+import { reconcileVehicleListView } from "./vehicleSessionAuthority";
+import {
+  beginLocalVehicleMutation,
+  extendLocalVehicleMutation,
+  isLocalVehicleMutationLocked,
+} from "./localMutationLock";
+import { generateStableUuid } from "./stableUuid";
 import { mergeSovereigntyPointsLogs, spLogEffectiveMs } from "./dailyPointsCollect";
 import { sanitizeJournalSpLogs } from "./spLogHygiene";
 import { mergePlantillasRutina } from "./plantillasRutinaMerge";
@@ -871,6 +877,7 @@ async function persistVehicleToFirebase(
       v.id === provisionalId ? { ...v, id: docRef.id } : v
     );
     const remapped = updatedLocal.find(v => v.id === docRef.id);
+    extendLocalVehicleMutation("create-remap");
     saveLocalVehicles(updatedLocal);
     backupToLocal("vehicles", updatedLocal);
     window.dispatchEvent(new CustomEvent("vehicles-updated"));
@@ -1272,7 +1279,8 @@ export async function reconcileGhostActiveVehicles(userId: string): Promise<stri
 export function subscribeToVehicles(
   userId: string,
   onData: (vehicles: Vehicle[]) => void,
-  onError: (error: Error) => void
+  onError: (error: Error) => void,
+  options?: { isCloseInFlight?: (vehicleId: string) => boolean }
 ): () => void {
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "vehicles");
@@ -1287,6 +1295,11 @@ export function subscribeToVehicles(
     }
 
     return onSnapshot(q, (snapshot) => {
+      if (isLocalVehicleMutationLocked()) {
+        console.log("[Vehicles] Snapshot ignorado — mutación local en curso");
+        return;
+      }
+
       const allDocs = snapshot.docs;
       const data = allDocs.map(d => {
         const raw = d.data();
@@ -1396,12 +1409,13 @@ export function subscribeToVehicles(
       });
 
       sortedWithSubs = mergeMissingLocalActives(sortedWithSubs);
-      sortedWithSubs = reconcileVehicleList({
+      sortedWithSubs = reconcileVehicleListView({
         incoming: sortedWithSubs,
         localSources: existingLocal,
         parkedActives: getParkedActiveVehicles().filter(
           p => !wasVehicleRecentlyClosed(p.id, p.clientRequestId)
         ),
+        isCloseInFlight: options?.isCloseInFlight,
       });
 
       // Persist the merged result locally (always save the fullest result)
@@ -1426,12 +1440,24 @@ export function subscribeToVehicles(
   }
 }
 
+export interface AddVehicleResult {
+  id: string;
+  clientRequestId: string;
+}
+
+export interface AddVehicleOptions {
+  provisionalId?: string;
+  clientRequestId?: string;
+}
+
 export async function addVehicle(
   userId: string,
-  vehicle: Omit<Vehicle, "id" | "createdAt" | "userId" | "status">
-): Promise<string> {
-  const clientRequestId = `crq_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const provisionalId = `vehicle_${Date.now()}`;
+  vehicle: Omit<Vehicle, "id" | "createdAt" | "userId" | "status">,
+  options?: AddVehicleOptions
+): Promise<AddVehicleResult> {
+  beginLocalVehicleMutation("create");
+  const clientRequestId = options?.clientRequestId ?? `crq_${generateStableUuid()}`;
+  const provisionalId = options?.provisionalId ?? generateStableUuid();
   const aperturaAt = vehicle.aperturaAt ?? Date.now();
   try {
     const provisionalVehicle: Vehicle = {
@@ -1452,7 +1478,7 @@ export async function addVehicle(
     console.error("[addVehicle] Guardado local falló (se continúa en memoria):", error);
   }
   void persistVehicleToFirebase(userId, provisionalId, vehicle, clientRequestId, aperturaAt);
-  return provisionalId;
+  return { id: provisionalId, clientRequestId };
 }
 
 export async function updateVehicleStatus(
@@ -1512,6 +1538,7 @@ export async function updateVehicleStatus(
 }
 
 export async function deleteVehicle(userId: string, vehicleId: string): Promise<void> {
+  beginLocalVehicleMutation("delete");
   if (isFirebaseConfigured() && db) {
     const path = getPrivatePath(userId, "vehicles");
     await deleteDoc(doc(db, path, vehicleId));
