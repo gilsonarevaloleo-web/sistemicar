@@ -21,10 +21,25 @@ export interface RutaEnfoqueState {
 
 /** Iconos ASCII: evitan "????" en fuentes Windows sin glifos Unicode. */
 export const RUTA_BANDA_META: Record<RutaBandaId, { label: string; icon: string; color: string }> = {
-  fluido: { label: "Fluido", icon: "~", color: "#38BDF8" },
-  concentrado: { label: "Concentrado", icon: "o", color: "#A855F7" },
-  limite: { label: "Al límite", icon: "^", color: "#f87171" },
+  fluido: { label: "Fluido", icon: "~", color: "#3B82F6" },
+  concentrado: { label: "Concentrado", icon: "o", color: "#8B5CF6" },
+  limite: { label: "Al límite", icon: "^", color: "#FF3131" },
 };
+
+/** Ruta de 3 bandas para desglosador Conquista cuando hay cantidad + récord. */
+export function resolveRutaEnfoqueForSub(
+  cantidadObjetivo: number | undefined,
+  tiempoRecordMinPerUnit: number | undefined,
+  existing?: RutaEnfoqueState,
+  opts?: { enabled?: boolean }
+): RutaEnfoqueState | null {
+  if (existing?.activa) return existing;
+  if (opts?.enabled === false) return null;
+  if (!cantidadObjetivo || cantidadObjetivo <= 0 || !tiempoRecordMinPerUnit || tiempoRecordMinPerUnit <= 0) {
+    return null;
+  }
+  return createRutaEnfoqueState(cantidadObjetivo);
+}
 
 /** Umbrales enteros: fluido = ceil(N/2), concentrado = ceil(N/4). */
 export function computeRutaUmbrales(N: number): RutaEnfoqueUmbrales {

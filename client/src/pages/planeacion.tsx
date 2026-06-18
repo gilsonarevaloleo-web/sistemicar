@@ -197,6 +197,7 @@ import {
   formatRutaPreview,
   getRutaBandaActual,
   mergeRutaCruzadaFromSubs,
+  resolveRutaEnfoqueForSub,
   RUTA_BANDA_META,
   type RutaBandaId,
 } from "@/lib/rutaEnfoque";
@@ -673,9 +674,7 @@ function buildDesglosadorSubFromForm(
   const cant = s.cantidadObjetivo ? Number(s.cantidadObjetivo) : undefined;
   const record = s.tiempoRecordMinPerUnit;
   const rutaEnfoque =
-    s.rutaEnfoqueActiva && cant && cant > 0 && record && record > 0
-      ? createRutaEnfoqueState(cant)
-      : undefined;
+    resolveRutaEnfoqueForSub(cant, record, undefined, { enabled: s.rutaEnfoqueActiva !== false }) ?? undefined;
   return {
     id: `sv_${idSuffix}_${idx}`,
     titulo: s.titulo.trim(),
@@ -698,9 +697,7 @@ function buildDesglosadorSubFromRuntime(
   const cant = form.cantidadObjetivo ? Number(form.cantidadObjetivo) : undefined;
   const record = form.tiempoRecordMinPerUnit;
   const rutaEnfoque =
-    form.rutaEnfoqueActiva && cant && cant > 0 && record && record > 0
-      ? createRutaEnfoqueState(cant)
-      : undefined;
+    resolveRutaEnfoqueForSub(cant, record, undefined, { enabled: form.rutaEnfoqueActiva !== false }) ?? undefined;
   const activate = opts?.activate ?? false;
   const now = Date.now();
   return {
@@ -730,19 +727,51 @@ function RutaEnfoqueBar({ restantes, ruta }: { restantes: number; ruta: { N: num
   const wConc = ((umbrales.fluido - umbrales.concentrado) / n) * 100;
   const wLim = (umbrales.concentrado / n) * 100;
   const markerLeft = Math.min(98, Math.max(2, ((n - Math.max(0, restantes)) / n) * 100));
+  const segments: Array<{ id: RutaBandaId; widthPct: number }> = [
+    { id: "fluido", widthPct: wFluido },
+    { id: "concentrado", widthPct: wConc },
+    { id: "limite", widthPct: wLim },
+  ];
   return (
-    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-1.5">
+    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-1.5" data-testid="ruta-enfoque-bar">
       <motion.div
         className="relative h-2.5 rounded-full overflow-hidden flex"
         style={{ backgroundColor: "rgba(255,255,255,0.06)" }}
-        animate={banda === "limite" ? { boxShadow: ["0 0 0 rgba(248,113,113,0)", "0 0 10px rgba(248,113,113,0.35)", "0 0 0 rgba(248,113,113,0)"] } : {}}
+        animate={banda === "limite" ? { boxShadow: ["0 0 0 rgba(255,49,49,0)", "0 0 10px rgba(255,49,49,0.45)", "0 0 0 rgba(255,49,49,0)"] } : {}}
         transition={banda === "limite" ? { duration: 1.2, repeat: Infinity } : {}}
       >
-        <motion.div className="h-full" style={{ width: `${wFluido}%`, backgroundColor: "rgba(56,189,248,0.55)" }} animate={banda === "fluido" ? { opacity: [0.7, 1, 0.7] } : { opacity: 0.55 }} transition={{ duration: 2, repeat: banda === "fluido" ? Infinity : 0 }} />
-        <motion.div className="h-full" style={{ width: `${wConc}%`, backgroundColor: "rgba(168,85,247,0.55)" }} animate={banda === "concentrado" ? { opacity: [0.65, 1, 0.65] } : { opacity: 0.5 }} transition={{ duration: 1.6, repeat: banda === "concentrado" ? Infinity : 0 }} />
-        <motion.div className="h-full flex-1" style={{ backgroundColor: "rgba(248,113,113,0.4)" }} animate={banda === "limite" ? { opacity: [0.6, 1, 0.6] } : { opacity: 0.45 }} transition={{ duration: 1.2, repeat: banda === "limite" ? Infinity : 0 }} />
+        {segments.map((seg, i) => {
+          const color = RUTA_BANDA_META[seg.id].color;
+          const active = banda === seg.id;
+          return (
+            <motion.div
+              key={seg.id}
+              className="h-full"
+              style={{
+                width: `${seg.widthPct}%`,
+                backgroundColor: color,
+                opacity: active ? 1 : 0.42,
+                boxShadow: active ? `inset 0 0 8px ${color}55` : "none",
+                borderRight: i < segments.length - 1 ? "1px solid rgba(0,0,0,0.35)" : undefined,
+              }}
+              animate={active ? { opacity: [0.72, 1, 0.72] } : {}}
+              transition={{ duration: seg.id === "limite" ? 1.2 : seg.id === "concentrado" ? 1.6 : 2, repeat: active ? Infinity : 0 }}
+            />
+          );
+        })}
         <div className="absolute top-0 bottom-0 w-0.5 rounded-full" style={{ left: `${markerLeft}%`, backgroundColor: "#fff", boxShadow: "0 0 6px rgba(255,255,255,0.8)" }} />
       </motion.div>
+      <div className="flex justify-between px-0.5">
+        {segments.map(seg => (
+          <span
+            key={seg.id}
+            className="text-[6px] font-black uppercase tracking-wider"
+            style={{ color: banda === seg.id ? RUTA_BANDA_META[seg.id].color : "rgba(255,255,255,0.35)" }}
+          >
+            {RUTA_BANDA_META[seg.id].icon} {RUTA_BANDA_META[seg.id].label}
+          </span>
+        ))}
+      </div>
       <p className="text-[8px] text-center font-bold uppercase tracking-wider" style={{ color: meta.color }}>
         Banda actual: {meta.label} {meta.icon} · Restan {Math.max(0, Math.floor(restantes))}
       </p>
@@ -1158,6 +1187,17 @@ export default function Planeacion() {
   });
   const compactLayout = planLayout === "compact";
   const [metricasDetalleOpen, setMetricasDetalleOpen] = useState(false);
+  const [cockpitMinimized, setCockpitMinimized] = useState(() => {
+    try {
+      const raw = localStorage.getItem("sistemicar-cockpit-minimized");
+      if (raw === "1") return true;
+      if (raw === "0") return false;
+      return isCoarseConcienciaDevice();
+    } catch {
+      return false;
+    }
+  });
+  const [soundPanelOpen, setSoundPanelOpen] = useState(false);
 
   useEffect(() => {
     try { localStorage.setItem("sistemicar-plan-layout", planLayout); } catch {}
@@ -1173,6 +1213,10 @@ export default function Planeacion() {
   useEffect(() => {
     try { localStorage.setItem("sistemicar-plan-tab", planTab); } catch {}
   }, [planTab]);
+
+  useEffect(() => {
+    try { localStorage.setItem("sistemicar-cockpit-minimized", cockpitMinimized ? "1" : "0"); } catch {}
+  }, [cockpitMinimized]);
 
   const [progression, setProgression] = useState<UserProgression | null>(null);
   const [energyLogs, setEnergyLogs] = useState<EnergyLog[]>([]);
@@ -6345,7 +6389,7 @@ export default function Planeacion() {
     prevActiveVehicleCountRef.current = activeCount;
   }, [vehicles, scrollFlotaActivosIntoView]);
 
-  const renderSoundToggles = (compact?: boolean) => (
+  const renderSoundChannelToggles = (compact?: boolean) => (
     <>
       <button
         type="button"
@@ -6453,12 +6497,15 @@ export default function Planeacion() {
           Tick {tikSoundEnabled ? "ON" : "OFF"}
         </span>
       </button>
+    </>
+  );
+
+  const renderSoundProbeButton = (compact?: boolean) => (
       <button
         type="button"
         onPointerDown={() => unlockSpeechSynthesis(true)}
         onClick={() => {
           enableAllVoiceChannels();
-          setPuntoCeroVoiceEnabled(true);
           setSituacionAlertsEnabledState(true);
           setPuertaVozEnabledState(true);
           setDesglosadorVozEnabledState(true);
@@ -6493,8 +6540,9 @@ export default function Planeacion() {
           Probar voz
         </span>
       </button>
-    </>
   );
+
+  const soundChannelsSummary = `Alertas ${situacionAlertsEnabled ? "ON" : "OFF"} · Puerta ${puertaVozEnabled ? "ON" : "OFF"} · DSG ${desglosadorVozEnabled ? "ON" : "OFF"} · Tick ${tikSoundEnabled ? "ON" : "OFF"}`;
 
   const getSegIcon = (icono: string) => {
     switch (icono) {
@@ -6552,6 +6600,8 @@ export default function Planeacion() {
             title={JORNADA_MODULE.title}
             tagline={JORNADA_MODULE.tagline}
             compact={compactLayout}
+            minimized={cockpitMinimized}
+            onToggleMinimize={() => setCockpitMinimized(v => !v)}
             onToggleCompact={() => {
               if (isCoarseConcienciaDevice()) return;
               setPlanLayout(v => (v === "compact" ? "full" : "compact"));
@@ -7128,18 +7178,40 @@ export default function Planeacion() {
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col gap-2 p-2.5 rounded-xl border sm:flex-row sm:items-center sm:justify-between"
+          className="p-2.5 rounded-xl border"
           style={{ backgroundColor: "rgba(0,0,0,0.35)", borderColor: "rgba(255,255,255,0.08)" }}
           data-testid="sound-controls-bar"
         >
-            <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSoundPanelOpen(v => !v)}
+              className="flex-1 min-w-0 text-left rounded-lg px-2 py-1.5 transition-colors hover:bg-white/[0.03]"
+              data-testid="sound-panel-toggle"
+              title={soundPanelOpen ? "Ocultar controles de sonido" : "Mostrar controles de sonido"}
+            >
               <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Sonido · {JORNADA_MODULE.title}</p>
-              <p className="text-[7px] text-slate-600 leading-snug mt-0.5">
-                Alertas = cupo de enfoque · Puerta = voz min 4 · Tick = pitido del reloj
+              <p className="text-[7px] text-slate-600 leading-snug mt-0.5 truncate">
+                {soundPanelOpen ? "Alertas · Puerta · Desglosador · Tick" : soundChannelsSummary}
               </p>
+            </button>
+            {renderSoundProbeButton(true)}
+            <button
+              type="button"
+              onClick={() => setSoundPanelOpen(v => !v)}
+              className="shrink-0 p-1.5 rounded-lg border"
+              style={{ borderColor: "rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.45)" }}
+              aria-label={soundPanelOpen ? "Contraer panel de sonido" : "Expandir panel de sonido"}
+            >
+              {soundPanelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          </div>
+          {soundPanelOpen && (
+            <div className="flex items-center gap-1.5 flex-wrap justify-end mt-2 pt-2 border-t border-white/[0.06]">
+              {renderSoundChannelToggles(true)}
             </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles(true)}</div>
-          </motion.div>
+          )}
+        </motion.div>
 
         {/* RADIOGRAFÍA DEL OPERADOR — mini barra de progreso de tokens */}
         {(planLayout === "full" || planTab === "meta") && (() => {
@@ -8135,12 +8207,9 @@ export default function Planeacion() {
         {(planLayout === "full" || planTab === "operar") && (!isCreating ? (
           <>
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-              <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="text-[10px] text-slate-600 uppercase tracking-widest flex-shrink-0">La Flota</p>
-                  <p className="text-[9px] text-slate-500 mt-0.5 leading-snug">{FLOTA_SELECTOR_DISCRIMINATOR}</p>
-                </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">{renderSoundToggles()}</div>
+              <div className="mb-2">
+                <p className="text-[10px] text-slate-600 uppercase tracking-widest">La Flota</p>
+                <p className="text-[9px] text-slate-500 mt-0.5 leading-snug">{FLOTA_SELECTOR_DISCRIMINATOR}</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {(Object.entries(FLOTA_CONFIG) as [TipoFlota, typeof FLOTA_CONFIG["tiempo"]][]).map(([tipo, cfg]) => {
@@ -8765,11 +8834,11 @@ export default function Planeacion() {
                                     )}
                                   </div>
                                   {sv.tiempoRecordMinPerUnit && sv.tiempoRecordMinPerUnit > 0 && sv.cantidadObjetivo && parseFloat(sv.cantidadObjetivo) > 0 && (
-                                    <motion.div className="w-full pl-8 pr-1 pb-1">
+                                    <motion.div className="w-full pl-8 pr-1 pb-1 space-y-2">
                                       <label className="flex items-start gap-2 cursor-pointer">
                                         <input
                                           type="checkbox"
-                                          checked={!!sv.rutaEnfoqueActiva}
+                                          checked={sv.rutaEnfoqueActiva !== false}
                                           onChange={e => setDesglosadorSubs(prev => prev.map(s =>
                                             s.tempId === sv.tempId ? { ...s, rutaEnfoqueActiva: e.target.checked } : s
                                           ))}
@@ -8781,6 +8850,12 @@ export default function Planeacion() {
                                           <span className="block font-mono text-[8px] mt-0.5 font-bold" style={{ color: "rgba(255,255,255,0.68)" }}>{formatRutaPreview(parseFloat(sv.cantidadObjetivo))}</span>
                                         </span>
                                       </label>
+                                      {sv.rutaEnfoqueActiva !== false && (
+                                        <RutaEnfoqueBar
+                                          restantes={parseFloat(sv.cantidadObjetivo)}
+                                          ruta={createRutaEnfoqueState(parseFloat(sv.cantidadObjetivo))}
+                                        />
+                                      )}
                                     </motion.div>
                                   )}
                                   </div>
@@ -10040,7 +10115,7 @@ function VehicleCard({
   const [execSubTitulo, setExecSubTitulo] = useState("");
   const [execSubCantidad, setExecSubCantidad] = useState("");
   const [execSubRecord, setExecSubRecord] = useState<number | undefined>();
-  const [execSubRuta, setExecSubRuta] = useState(false);
+  const [execSubRuta, setExecSubRuta] = useState(true);
   const [execSubSugOpen, setExecSubSugOpen] = useState(false);
   const [desglosadorUiTick, setDesglosadorUiTick] = useState(0);
 
@@ -10418,6 +10493,23 @@ function VehicleCard({
     activeSubIdForRutaRef.current = null;
     prevSubRestanteRutaRef.current = null;
   }, []);
+
+  useEffect(() => {
+    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || !onDesglosadorUpdate) return;
+    const subsNow = subVehiculosRef.current ?? [];
+    const activeSub = subsNow.find(s => s.status === "activo");
+    if (!activeSub || activeSub.rutaEnfoque?.activa) return;
+    const ruta = resolveRutaEnfoqueForSub(
+      activeSub.cantidadObjetivo,
+      activeSub.tiempoRecordMinPerUnit,
+      activeSub.rutaEnfoque
+    );
+    if (!ruta) return;
+    onDesglosadorUpdate(
+      vehicle.id,
+      subsNow.map(s => (s.id === activeSub.id ? { ...s, rutaEnfoque: ruta } : s))
+    );
+  }, [vehicle.tipoReloj, vehicle.status, vehicle.subVehiculos, vehicle.id, onDesglosadorUpdate]);
 
   useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || subVehicleRestante === null) return;
@@ -10992,7 +11084,7 @@ function VehicleCard({
     setExecSubTitulo("");
     setExecSubCantidad("");
     setExecSubRecord(undefined);
-    setExecSubRuta(false);
+    setExecSubRuta(true);
     setExecSubSugOpen(false);
   };
 
@@ -11108,18 +11200,23 @@ function VehicleCard({
               )}
             </div>
             {execSubRecord && execSubRecord > 0 && cantNum > 0 && (
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={execSubRuta}
-                  onChange={e => setExecSubRuta(e.target.checked)}
-                  className="mt-0.5 accent-violet-500"
-                />
-                <span className="text-[8px] leading-snug" style={{ color: "rgba(255,255,255,0.82)" }}>
-                  <span className="font-bold text-violet-300">Ruta de enfoque (3 bandas)</span>
-                  <span className="block font-mono text-[8px] mt-0.5 font-bold" style={{ color: "rgba(255,255,255,0.68)" }}>{formatRutaPreview(cantNum)}</span>
-                </span>
-              </label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={execSubRuta}
+                    onChange={e => setExecSubRuta(e.target.checked)}
+                    className="mt-0.5 accent-violet-500"
+                  />
+                  <span className="text-[8px] leading-snug" style={{ color: "rgba(255,255,255,0.82)" }}>
+                    <span className="font-bold text-violet-300">Ruta de enfoque (3 bandas)</span>
+                    <span className="block font-mono text-[8px] mt-0.5 font-bold" style={{ color: "rgba(255,255,255,0.68)" }}>{formatRutaPreview(cantNum)}</span>
+                  </span>
+                </label>
+                {execSubRuta && (
+                  <RutaEnfoqueBar restantes={cantNum} ruta={createRutaEnfoqueState(cantNum)} />
+                )}
+              </div>
             )}
             <button
               type="button"
@@ -11619,11 +11716,19 @@ function VehicleCard({
                                         {subVehicleRestante === 0 && (
                                           <p className="text-[8px] font-black uppercase tracking-widest mt-0.5" style={{ color: "#22C55E", fontFamily: "monospace" }}>OBJETIVO ALCANZADO</p>
                                         )}
-                                        {activeSub.rutaEnfoque?.activa && (
-                                          <div className="mt-2 px-1">
-                                            <RutaEnfoqueBar restantes={subVehicleRestante} ruta={activeSub.rutaEnfoque} />
-                                          </div>
-                                        )}
+                                        {(() => {
+                                          const rutaBar = resolveRutaEnfoqueForSub(
+                                            activeSub.cantidadObjetivo,
+                                            activeSub.tiempoRecordMinPerUnit,
+                                            activeSub.rutaEnfoque
+                                          );
+                                          if (!rutaBar || subVehicleRestante === null) return null;
+                                          return (
+                                            <div className="mt-2 px-1">
+                                              <RutaEnfoqueBar restantes={subVehicleRestante} ruta={rutaBar} />
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
                                     ) : (
                                       <div className="text-center py-1">

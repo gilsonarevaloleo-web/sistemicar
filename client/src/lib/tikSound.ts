@@ -128,9 +128,10 @@ export function setSituacionAlertsEnabled(on: boolean): void {
   }
 }
 
-/** Enciende alertas + voz puerta + voz desglosador (p. ej. al probar voz). */
+/** Enciende alertas + voz puerta + voz desglosador + guía Punto Cero (p. ej. al probar voz). */
 export function enableAllVoiceChannels(): void {
   setSituacionAlertsEnabled(true);
   setPuertaVozEnabled(true);
   setDesglosadorVoiceEnabled(true);
+  setPuntoCeroVoiceEnabled(true);
 }

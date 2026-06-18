@@ -4,7 +4,28 @@ import {
   applyRutaThresholdCrossing,
   createRutaEnfoqueState,
   repairRutaCruzadoAheadOfRestantes,
+  resolveRutaEnfoqueForSub,
+  RUTA_BANDA_META,
 } from "./rutaEnfoque.ts";
+
+describe("resolveRutaEnfoqueForSub", () => {
+  it("crea ruta por defecto con cantidad y récord", () => {
+    const ruta = resolveRutaEnfoqueForSub(10, 2.5);
+    assert.ok(ruta);
+    assert.equal(ruta!.N, 10);
+    assert.equal(ruta!.activa, true);
+  });
+
+  it("respeta opt-out enabled false", () => {
+    assert.equal(resolveRutaEnfoqueForSub(10, 2.5, undefined, { enabled: false }), null);
+  });
+
+  it("usa colores azul morado rojo en bandas", () => {
+    assert.equal(RUTA_BANDA_META.fluido.color, "#3B82F6");
+    assert.equal(RUTA_BANDA_META.concentrado.color, "#8B5CF6");
+    assert.equal(RUTA_BANDA_META.limite.color, "#FF3131");
+  });
+});
 
 describe("applyRutaThresholdCrossing", () => {
   it("no alerta sin lectura previa (baseline)", () => {

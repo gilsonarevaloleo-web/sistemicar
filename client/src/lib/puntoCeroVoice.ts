@@ -81,13 +81,13 @@ function applyCalmVoice(u: SpeechSynthesisUtterance, profile: PuntoCeroVoiceProf
   if (voice) u.voice = voice;
 }
 
-function processPuntoCeroQueue(): void {
+function processPuntoCeroQueue(opts?: { force?: boolean }): void {
   if (pcSpeaking || pcQueue.length === 0) return;
   if (typeof window === "undefined" || !window.speechSynthesis) {
     pcQueue = [];
     return;
   }
-  if (!isSpeechSynthesisUnlocked()) return;
+  if (!opts?.force && !isSpeechSynthesisUnlocked()) return;
 
   primeSpanishVoices();
   const voiceCount = window.speechSynthesis.getVoices().length;
@@ -167,7 +167,13 @@ export function speakPuntoCeroSequence(
   }
 
   pcQueue.push(...filtered);
-  processPuntoCeroQueue();
+  queueMicrotask(() => processPuntoCeroQueue({ force: true }));
+}
+
+/** Desbloqueo TTS en el mismo gesto del usuario (pointerdown en etapa/color). */
+export function unlockPuntoCeroSpeechFromGesture(): void {
+  unlockSpeechSynthesis(true);
+  warmupSpeechSynthesis(true);
 }
 
 export function susurroNocheTexto(sessionStartAt: number, now: number): string {

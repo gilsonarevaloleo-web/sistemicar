@@ -28,13 +28,8 @@ import {
   speakPuntoCeroSequence,
   stopPleasantVoice,
 } from "@/lib/puntoCeroVoice";
-import { unlockSpeechSynthesis, warmupSpeechSynthesis } from "@/lib/speechQueue";
+import { unlockPuntoCeroSpeechFromGesture } from "@/lib/puntoCeroVoice";
 import { toast } from "sonner";
-
-function unlockPuntoCeroSpeechFromGesture(): void {
-  unlockSpeechSynthesis(true);
-  warmupSpeechSynthesis(true);
-}
 
 const PIZARRA = "#0a0a0a";
 
@@ -615,6 +610,10 @@ export function PuntoCeroPanel({
                 <div key={key}>
                   <button
                     type="button"
+                    onPointerDown={() => {
+                      if (checked || isLocked || isColorEtapa) return;
+                      unlockPuntoCeroSpeechFromGesture();
+                    }}
                     onClick={() => {
                       if (checked || isLocked || isColorEtapa) return;
                       void puntoCeroAudio.unlockAudio();
@@ -654,6 +653,10 @@ export function PuntoCeroPanel({
                           <button
                             key={zona}
                             type="button"
+                            onPointerDown={e => {
+                              e.stopPropagation();
+                              if (!confirmado && session) unlockPuntoCeroSpeechFromGesture();
+                            }}
                             onClick={e => {
                               e.stopPropagation();
                               if (!confirmado && session) {
