@@ -10,6 +10,7 @@ import {
   warmupSpeechSynthesis,
   isUbicacionPhraseQueued,
   isUbicacionSpeechActive,
+  isSpeechSynthesisUnlocked,
   type UbicacionVoiceSource,
 } from "./speechQueue";
 import {
@@ -30,6 +31,7 @@ type PendingVoice = {
 const pending = new Map<string, PendingVoice>();
 const cleanupByKey = new Map<string, () => void>();
 const MAX_RELIABLE_ATTEMPTS = 2;
+const SPOKEN_SAFETY_MS = 8_000;
 let voiceRetryHubRegistered = false;
 
 function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
@@ -52,6 +54,10 @@ function markVoiceDelivered(key: string): void {
 function trySpeak(key: string): void {
   const entry = pending.get(key);
   if (!entry || entry.spoken || !isVoiceEnabledFor(entry.source)) return;
+
+  if (!isSpeechSynthesisUnlocked()) {
+    return;
+  }
 
   if (entry.attempts >= MAX_RELIABLE_ATTEMPTS) {
     markVoiceDelivered(key);
@@ -126,9 +132,16 @@ export function speakUbicacionVoiceReliable(
   trySpeak(key);
 
   const retryTimers = [1500, 4000].map(ms => window.setTimeout(() => trySpeak(key), ms));
+  const spokenSafetyTimer = window.setTimeout(() => {
+    const entry = pending.get(key);
+    if (entry && !entry.spoken) {
+      markVoiceDelivered(key);
+    }
+  }, SPOKEN_SAFETY_MS);
 
   const cleanup = () => {
     retryTimers.forEach(t => window.clearTimeout(t));
+    window.clearTimeout(spokenSafetyTimer);
     pending.delete(key);
     cleanupByKey.delete(key);
   };

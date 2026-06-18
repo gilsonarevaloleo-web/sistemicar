@@ -241,6 +241,7 @@ import {
   enableAllVoiceChannels,
   isDesglosadorVoiceEnabled,
   setDesglosadorVoiceEnabled,
+  setPuntoCeroVoiceEnabled,
 } from "@/lib/tikSound";
 import { playSituacionCumplidoChimes } from "@/lib/situacionAlertSounds";
 import {
@@ -6439,12 +6440,30 @@ export default function Planeacion() {
       </button>
       <button
         type="button"
+        onPointerDown={() => unlockSpeechSynthesis(true)}
         onClick={() => {
           enableAllVoiceChannels();
+          setPuntoCeroVoiceEnabled(true);
           setSituacionAlertsEnabledState(true);
           setPuertaVozEnabledState(true);
           setDesglosadorVozEnabledState(true);
-          speakVoiceProbe("puerta");
+          const result = speakVoiceProbe("puerta");
+          if (result.ok && !result.reason) {
+            toast.success("Voz activa", {
+              style: { backgroundColor: PIZARRA, border: `1px solid ${GOLD}`, color: GOLD },
+              duration: 3000,
+            });
+          } else if (result.ok && result.reason) {
+            toast.warning(result.reason, {
+              style: { backgroundColor: PIZARRA, border: "1px solid #f59e0b", color: "#fbbf24" },
+              duration: 5000,
+            });
+          } else {
+            toast.warning(result.reason ?? "No se pudo activar la voz", {
+              style: { backgroundColor: PIZARRA, border: "1px solid #f59e0b", color: "#fbbf24" },
+              duration: 5000,
+            });
+          }
         }}
         className={`flex items-center gap-1 rounded-md border transition-all ${compact ? "px-2 py-1" : "px-2 py-1"}`}
         style={{

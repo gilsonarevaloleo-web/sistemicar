@@ -28,7 +28,13 @@ import {
   speakPuntoCeroSequence,
   stopPleasantVoice,
 } from "@/lib/puntoCeroVoice";
+import { unlockSpeechSynthesis, warmupSpeechSynthesis } from "@/lib/speechQueue";
 import { toast } from "sonner";
+
+function unlockPuntoCeroSpeechFromGesture(): void {
+  unlockSpeechSynthesis(true);
+  warmupSpeechSynthesis(true);
+}
 
 const PIZARRA = "#0a0a0a";
 
@@ -612,6 +618,7 @@ export function PuntoCeroPanel({
                     onClick={() => {
                       if (checked || isLocked || isColorEtapa) return;
                       void puntoCeroAudio.unlockAudio();
+                      unlockPuntoCeroSpeechFromGesture();
                       const intro = primeraGuiaVozRef.current;
                       if (intro) primeraGuiaVozRef.current = false;
                       speakEtapaPuntoCero(key, {
@@ -651,6 +658,7 @@ export function PuntoCeroPanel({
                               e.stopPropagation();
                               if (!confirmado && session) {
                                 void puntoCeroAudio.unlockAudio();
+                                unlockPuntoCeroSpeechFromGesture();
                                 speakColorInmersion(zona, idx);
                                 setColorInmersion({ color, zona, idx });
                               }

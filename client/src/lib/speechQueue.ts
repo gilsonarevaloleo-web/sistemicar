@@ -20,6 +20,8 @@ let speaking = false;
 let lastWarmupMs = 0;
 let stuckTimer: ReturnType<typeof setTimeout> | null = null;
 let voicesPrimed = false;
+/** Tras esperar voces 450 ms, hablar igual con lang es-ES si la lista sigue vacía (móvil/incógnito). */
+let voicesLoadBypass = false;
 /** Safari/iOS/Chrome bloquean TTS hasta un speak() dentro de un gesto del usuario. */
 let speechUnlocked = false;
 let pendingOnPhraseStarted: (() => void) | null = null;
@@ -49,6 +51,27 @@ export function subscribeSpeechQueueIdle(listener: () => void): () => void {
 
 const STUCK_SPEAK_MS = 45_000;
 const WARMUP_REFRESH_MS = 20 * 60_000;
+const VOICES_LOAD_WAIT_MS = 450;
+const PHRASE_STARTED_FALLBACK_MS = 8_000;
+
+export type SpeechDiagnostics = {
+  synthAvailable: boolean;
+  speechUnlocked: boolean;
+  voiceCount: number;
+  spanishVoiceCount: number;
+  speaking: boolean;
+  queueLength: number;
+  channels: {
+    situacion: boolean;
+    desglosador: boolean;
+    puerta: boolean;
+  };
+};
+
+export type SpeakVoiceProbeResult = {
+  ok: boolean;
+  reason?: string;
+};
 
 function getSynth(): SpeechSynthesis | null {
   if (typeof window === "undefined") return null;
@@ -160,6 +183,33 @@ export function isSpeechSynthesisUnlocked(): boolean {
   return speechUnlocked;
 }
 
+export function getSpeechDiagnostics(): SpeechDiagnostics {
+  const synth = getSynth();
+  const voices = synth?.getVoices() ?? [];
+  const spanishVoiceCount = voices.filter(v => /^es/i.test(v.lang)).length;
+  return {
+    synthAvailable: !!synth,
+    speechUnlocked,
+    voiceCount: voices.length,
+    spanishVoiceCount,
+    speaking,
+    queueLength: queue.length,
+    channels: {
+      situacion: isSituacionAlertsEnabled(),
+      desglosador: isDesglosadorVoiceEnabled(),
+      puerta: isPuertaVozEnabled(),
+    },
+  };
+}
+
+/** Solo tests — reinicia estado interno de la cola. */
+export function resetSpeechQueueForTests(): void {
+  cancelSpeechSynthesisHard();
+  speechUnlocked = false;
+  voicesPrimed = false;
+  voicesLoadBypass = false;
+}
+
 /** Cancelación fulminante — teardown de sesión situacional / WebView móvil. */
 export function cancelSpeechSynthesisHard(): void {
   clearStuckTimer();
@@ -232,10 +282,22 @@ function processQueue(): void {
   resumeSynthIfPaused();
 
   if (!primeSpanishVoicesReady()) {
-    const retry = () => processQueue();
-    synth.addEventListener("voiceschanged", retry, { once: true });
-    window.setTimeout(retry, 450);
-    return;
+    if (!voicesLoadBypass) {
+      voicesLoadBypass = true;
+      const retry = () => processQueue();
+      synth.addEventListener(
+        "voiceschanged",
+        () => {
+          voicesLoadBypass = false;
+          retry();
+        },
+        { once: true }
+      );
+      window.setTimeout(retry, VOICES_LOAD_WAIT_MS);
+      return;
+    }
+  } else {
+    voicesLoadBypass = false;
   }
 
   const text = queue.shift()!;
@@ -248,16 +310,30 @@ function processQueue(): void {
     try {
       const u = new SpeechSynthesisUtterance(text);
       applyCalmSpanishUtterance(u);
+      let phraseStartedHandled = false;
+      let phraseStartedFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const firePhraseStarted = () => {
+        if (phraseStartedHandled || !pendingOnPhraseStartedArmed || !pendingOnPhraseStarted) return;
+        phraseStartedHandled = true;
+        if (phraseStartedFallbackTimer) {
+          clearTimeout(phraseStartedFallbackTimer);
+          phraseStartedFallbackTimer = null;
+        }
+        const cb = pendingOnPhraseStarted;
+        pendingOnPhraseStarted = null;
+        pendingOnPhraseStartedArmed = false;
+        cb();
+      };
+
       u.onstart = () => {
-        /* onSpoken se dispara al terminar la primera frase audible, no al inicio. */
+        if (!pendingOnPhraseStartedArmed || !pendingOnPhraseStarted) return;
+        phraseStartedFallbackTimer = setTimeout(() => {
+          firePhraseStarted();
+        }, PHRASE_STARTED_FALLBACK_MS);
       };
       u.onend = () => {
-        if (pendingOnPhraseStartedArmed && pendingOnPhraseStarted) {
-          const cb = pendingOnPhraseStarted;
-          pendingOnPhraseStarted = null;
-          pendingOnPhraseStartedArmed = false;
-          cb();
-        }
+        firePhraseStarted();
         speaking = false;
         clearStuckTimer();
         processQueue();
@@ -318,9 +394,27 @@ export function warmupSpeechSynthesis(force = false, fromUserGesture = false): v
 }
 
 /** Prueba audible — usar solo dentro de un click del usuario. */
-export function speakVoiceProbe(source: UbicacionVoiceSource = "puerta"): void {
+export function speakVoiceProbe(source: UbicacionVoiceSource = "puerta"): SpeakVoiceProbeResult {
+  const synth = getSynth();
+  if (!synth) {
+    return { ok: false, reason: "Sin speechSynthesis en este navegador" };
+  }
+  if (!isVoiceEnabledFor(source)) {
+    return { ok: false, reason: "Canal de voz desactivado" };
+  }
+
   unlockSpeechSynthesis(true);
-  speakUbicacionQueue(["SISTEMICAR. Voz activa, operador."], true, source);
+  recoverSpeechQueue();
+  speakUbicacionQueue(["SISTEMICAR. Voz activa, operador."], false, source);
+
+  const diag = getSpeechDiagnostics();
+  if (!diag.speechUnlocked) {
+    return { ok: false, reason: "TTS bloqueado — tocá de nuevo en pantalla" };
+  }
+  if (diag.voiceCount === 0) {
+    return { ok: true, reason: "Sin voces TTS — recarga o usa Chrome" };
+  }
+  return { ok: true };
 }
 
 /**

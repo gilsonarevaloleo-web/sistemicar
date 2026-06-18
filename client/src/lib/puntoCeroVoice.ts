@@ -1,8 +1,9 @@
-import { unlockSpeechSynthesis, warmupSpeechSynthesis } from "./speechQueue";
+import { unlockSpeechSynthesis, warmupSpeechSynthesis, isSpeechSynthesisUnlocked } from "./speechQueue";
 import { isPuntoCeroVoiceEnabled } from "./tikSound";
 import {
   pickCalmDeepSpanishVoice,
   pickPleasantSpanishVoice,
+  primeSpanishVoices,
 } from "./spanishTtsVoice";
 
 export { pickCalmDeepSpanishVoice, pickCalmDeepSpanishVoice as pickPleasantSpanishVoice } from "./spanishTtsVoice";
@@ -59,6 +60,9 @@ let pcQueue: string[] = [];
 let pcSpeaking = false;
 let pcPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let pcProfile: PuntoCeroVoiceProfile = "calm";
+let pcVoicesLoadBypass = false;
+
+const PC_VOICES_LOAD_WAIT_MS = 450;
 
 function clearPuntoCeroPauseTimer(): void {
   if (pcPauseTimer) {
@@ -82,6 +86,34 @@ function processPuntoCeroQueue(): void {
   if (typeof window === "undefined" || !window.speechSynthesis) {
     pcQueue = [];
     return;
+  }
+  if (!isSpeechSynthesisUnlocked()) return;
+
+  primeSpanishVoices();
+  const voiceCount = window.speechSynthesis.getVoices().length;
+  if (voiceCount === 0) {
+    if (!pcVoicesLoadBypass) {
+      pcVoicesLoadBypass = true;
+      const retry = () => processPuntoCeroQueue();
+      window.speechSynthesis.addEventListener(
+        "voiceschanged",
+        () => {
+          pcVoicesLoadBypass = false;
+          retry();
+        },
+        { once: true }
+      );
+      window.setTimeout(retry, PC_VOICES_LOAD_WAIT_MS);
+      return;
+    }
+  } else {
+    pcVoicesLoadBypass = false;
+  }
+
+  if (voiceCount === 0 && pcVoicesLoadBypass) {
+    if (typeof console !== "undefined" && console.debug) {
+      console.debug("[puntoCeroVoice] sin voces TTS — fallback lang es-ES");
+    }
   }
 
   const text = pcQueue.shift()!;
@@ -176,7 +208,7 @@ export function speakPuntoCeroGuide(
   const profile = opts?.profile ?? "calm";
   if (opts?.rate != null || opts?.pitch != null || opts?.volume != null) {
     unlockSpeechSynthesis(true);
-  warmupSpeechSynthesis(true);
+    warmupSpeechSynthesis(true);
     speakPleasant(text, opts);
     return;
   }
