@@ -27,6 +27,7 @@ let speechUnlocked = false;
 let pendingOnPhraseStarted: (() => void) | null = null;
 let pendingOnPhraseStartedArmed = false;
 const idleListeners = new Set<() => void>();
+const externalCancelListeners = new Set<() => void>();
 let lastQueuedPhrase = "";
 let lastQueuedAtMs = 0;
 
@@ -47,6 +48,22 @@ function notifySpeechQueueIdle(): void {
 export function subscribeSpeechQueueIdle(listener: () => void): () => void {
   idleListeners.add(listener);
   return () => idleListeners.delete(listener);
+}
+
+/** Punto Cero u otros canales — reset local al cancelar synth globalmente. */
+export function subscribeSpeechExternalCancel(listener: () => void): () => void {
+  externalCancelListeners.add(listener);
+  return () => externalCancelListeners.delete(listener);
+}
+
+function notifyExternalSpeechCancelListeners(): void {
+  externalCancelListeners.forEach(fn => {
+    try {
+      fn();
+    } catch {
+      /* noop */
+    }
+  });
 }
 
 const STUCK_SPEAK_MS = 45_000;
@@ -106,6 +123,90 @@ function clearStuckTimer(): void {
   }
 }
 
+/** Cola interna atascada: cancel() externo (Punto Cero, toggles) sin onend. */
+function unblockStuckSpeechSynth(): void {
+  const synth = getSynth();
+  if (!synth) return;
+  if (speaking && !synth.speaking && !synth.pending) {
+    speaking = false;
+    clearStuckTimer();
+  }
+}
+
+type UtteranceHandlers = {
+  onstart?: () => void;
+  onend?: () => void;
+  onerror?: () => void;
+};
+
+/**
+ * Emisión TTS de bajo nivel — handlers limpios; cancel solo en error o synth atascado.
+ * No cancelar entre frases de la misma cola (rompe onend en WebView móvil).
+ */
+export function speakUtterance(
+  text: string,
+  handlers: UtteranceHandlers = {},
+  configure?: (u: SpeechSynthesisUtterance) => void
+): boolean {
+  const synth = getSynth();
+  if (!synth || !text.trim()) return false;
+
+  resumeSynthIfPaused();
+
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    if (configure) {
+      configure(u);
+    } else {
+      applyCalmSpanishUtterance(u);
+    }
+    u.onstart = () => handlers.onstart?.();
+    u.onend = () => handlers.onend?.();
+    u.onerror = () => {
+      if (typeof console !== "undefined") {
+        console.error("[speechQueue] utterance error");
+      }
+      try {
+        synth.cancel();
+      } catch {
+        /* noop */
+      }
+      handlers.onerror?.();
+    };
+    synth.speak(u);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Otro módulo llamó speechSynthesis.cancel() — libera flags para que la cola vuelva a hablar.
+ */
+export function releaseSpeechQueueAfterExternalCancel(): void {
+  speaking = false;
+  clearStuckTimer();
+  pendingOnPhraseStarted = null;
+  pendingOnPhraseStartedArmed = false;
+  notifySpeechQueueIdle();
+}
+
+/** Cancela synth y resetea cola ubicación + listeners externos (Punto Cero, etc.). */
+export function interruptAllSpeechSynth(clearUbicacionQueue = true): void {
+  if (clearUbicacionQueue) {
+    queue = [];
+    lastQueuedPhrase = "";
+    lastQueuedAtMs = 0;
+  }
+  releaseSpeechQueueAfterExternalCancel();
+  try {
+    getSynth()?.cancel();
+  } catch {
+    /* noop */
+  }
+  notifyExternalSpeechCancelListeners();
+}
+
 function armStuckReset(): void {
   clearStuckTimer();
   stuckTimer = setTimeout(() => {
@@ -152,6 +253,7 @@ export function recoverSpeechQueue(): void {
 
   resumeSynthIfPaused();
   primeVoicesOnce();
+  unblockStuckSpeechSynth();
 
   const synthSpeaking = synth.speaking;
   const flagStuck = speaking && !synthSpeaking;
@@ -213,18 +315,10 @@ export function resetSpeechQueueForTests(): void {
 /** Cancelación fulminante — teardown de sesión situacional / WebView móvil. */
 export function cancelSpeechSynthesisHard(): void {
   clearStuckTimer();
-  speaking = false;
-  queue = [];
-  pendingOnPhraseStarted = null;
-  pendingOnPhraseStartedArmed = false;
-  lastQueuedPhrase = "";
-  lastQueuedAtMs = 0;
-  try {
-    getSynth()?.cancel();
-  } catch {
-    /* noop */
-  }
-  notifySpeechQueueIdle();
+  speechUnlocked = false;
+  voicesPrimed = false;
+  voicesLoadBypass = false;
+  interruptAllSpeechSynth(true);
 }
 
 /**
@@ -269,6 +363,7 @@ export function unlockSpeechSynthesis(fromUserGesture = false): void {
 }
 
 function processQueue(): void {
+  unblockStuckSpeechSynth();
   if (speaking || queue.length === 0) return;
   const synth = getSynth();
   if (!synth) {
@@ -307,39 +402,37 @@ function processQueue(): void {
   const maxPhraseRetries = 2;
 
   const speakPhrase = () => {
-    try {
-      const u = new SpeechSynthesisUtterance(text);
-      applyCalmSpanishUtterance(u);
-      let phraseStartedHandled = false;
-      let phraseStartedFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let phraseStartedHandled = false;
+    let phraseStartedFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
-      const firePhraseStarted = () => {
-        if (phraseStartedHandled || !pendingOnPhraseStartedArmed || !pendingOnPhraseStarted) return;
-        phraseStartedHandled = true;
-        if (phraseStartedFallbackTimer) {
-          clearTimeout(phraseStartedFallbackTimer);
-          phraseStartedFallbackTimer = null;
-        }
-        const cb = pendingOnPhraseStarted;
-        pendingOnPhraseStarted = null;
-        pendingOnPhraseStartedArmed = false;
-        cb();
-      };
+    const firePhraseStarted = () => {
+      if (phraseStartedHandled || !pendingOnPhraseStartedArmed || !pendingOnPhraseStarted) return;
+      phraseStartedHandled = true;
+      if (phraseStartedFallbackTimer) {
+        clearTimeout(phraseStartedFallbackTimer);
+        phraseStartedFallbackTimer = null;
+      }
+      const cb = pendingOnPhraseStarted;
+      pendingOnPhraseStarted = null;
+      pendingOnPhraseStartedArmed = false;
+      cb();
+    };
 
-      u.onstart = () => {
+    const ok = speakUtterance(text, {
+      onstart: () => {
         if (!pendingOnPhraseStartedArmed || !pendingOnPhraseStarted) return;
         phraseStartedFallbackTimer = setTimeout(() => {
           firePhraseStarted();
         }, PHRASE_STARTED_FALLBACK_MS);
-      };
-      u.onend = () => {
+      },
+      onend: () => {
         firePhraseStarted();
         speaking = false;
         clearStuckTimer();
         processQueue();
         notifySpeechQueueIdle();
-      };
-      u.onerror = () => {
+      },
+      onerror: () => {
         if (phraseRetries < maxPhraseRetries) {
           phraseRetries += 1;
           speaking = false;
@@ -353,9 +446,10 @@ function processQueue(): void {
         clearStuckTimer();
         processQueue();
         notifySpeechQueueIdle();
-      };
-      synth.speak(u);
-    } catch {
+      },
+    });
+
+    if (!ok) {
       speaking = false;
       clearStuckTimer();
       processQueue();
@@ -447,18 +541,7 @@ export function speakUbicacionQueue(
   }
 
   if (cancelPrevious) {
-    try {
-      getSynth()?.cancel();
-    } catch {
-      /* noop */
-    }
-    queue = [];
-    speaking = false;
-    clearStuckTimer();
-    pendingOnPhraseStarted = null;
-    pendingOnPhraseStartedArmed = false;
-    lastQueuedPhrase = "";
-    lastQueuedAtMs = 0;
+    interruptAllSpeechSynth(true);
   }
 
   pendingOnPhraseStarted = onPhraseStarted ?? null;

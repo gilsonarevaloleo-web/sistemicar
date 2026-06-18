@@ -49,12 +49,8 @@ export function isDesglosadorVoiceEnabled(): boolean {
 export function setDesglosadorVoiceEnabled(on: boolean): void {
   try {
     localStorage.setItem(DESGLOSADOR_VOZ_KEY, on ? "on" : "off");
-    if (!on && typeof window !== "undefined" && window.speechSynthesis) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        /* noop */
-      }
+    if (!on && typeof window !== "undefined") {
+      void import("./speechQueue").then(m => m.interruptAllSpeechSynth(false));
     }
     window.dispatchEvent(new CustomEvent("sistemicar-desglosador-voz-changed", { detail: { on } }));
   } catch {
@@ -74,12 +70,8 @@ export function isPuntoCeroVoiceEnabled(): boolean {
 export function setPuntoCeroVoiceEnabled(on: boolean): void {
   try {
     localStorage.setItem(PUNTO_CERO_VOZ_KEY, on ? "on" : "off");
-    if (!on && typeof window !== "undefined" && window.speechSynthesis) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        /* noop */
-      }
+    if (!on && typeof window !== "undefined") {
+      void import("./speechQueue").then(m => m.interruptAllSpeechSynth(false));
     }
     window.dispatchEvent(new CustomEvent("sistemicar-punto-cero-voz-changed", { detail: { on } }));
   } catch {
@@ -99,12 +91,8 @@ export function setPuertaVozEnabled(on: boolean): void {
 export function setTikSoundEnabled(on: boolean): void {
   try {
     localStorage.setItem(TIK_SOUND_KEY, on ? "on" : "off");
-    if (!on && typeof window !== "undefined" && window.speechSynthesis) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        /* noop */
-      }
+    if (!on && typeof window !== "undefined") {
+      void import("./speechQueue").then(m => m.interruptAllSpeechSynth(false));
     }
     window.dispatchEvent(new CustomEvent("sistemicar-tik-sound-changed", { detail: { on } }));
   } catch {
@@ -115,12 +103,8 @@ export function setTikSoundEnabled(on: boolean): void {
 export function setSituacionAlertsEnabled(on: boolean): void {
   try {
     localStorage.setItem(SITUACION_ALERTS_KEY, on ? "on" : "off");
-    if (!on && typeof window !== "undefined" && window.speechSynthesis) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        /* noop */
-      }
+    if (!on && typeof window !== "undefined") {
+      void import("./speechQueue").then(m => m.interruptAllSpeechSynth(false));
     }
     window.dispatchEvent(new CustomEvent("sistemicar-situacion-alerts-changed", { detail: { on } }));
   } catch {

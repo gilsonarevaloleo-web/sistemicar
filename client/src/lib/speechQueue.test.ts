@@ -137,4 +137,93 @@ describe("speechQueue", () => {
 
     assert.ok(synthMock.utterances.some(u => u.text.includes("Frase de prueba")));
   });
+
+  it("interruptAllSpeechSynth libera cola tras cancel externo sin onend", async () => {
+    const storage = new Map<string, string>();
+    let speakCount = 0;
+    const utterances: MockUtterance[] = [];
+    let stallNextSpeak = false;
+
+    class MockSpeechSynthesisUtterance {
+      text: string;
+      lang = "es-ES";
+      rate = 1;
+      pitch = 1;
+      volume = 1;
+      voice: SpeechSynthesisVoice | null = null;
+      onend?: () => void;
+      onerror?: () => void;
+      onstart?: () => void;
+
+      constructor(text: string) {
+        this.text = text;
+      }
+    }
+
+    (globalThis as typeof globalThis & { SpeechSynthesisUtterance: typeof SpeechSynthesisUtterance }).SpeechSynthesisUtterance =
+      MockSpeechSynthesisUtterance as unknown as typeof SpeechSynthesisUtterance;
+
+    const synth = {
+      speaking: false,
+      pending: false,
+      paused: false,
+      getVoices: () => [{ lang: "es-ES", name: "Test ES" } as SpeechSynthesisVoice],
+      speak: (u: MockUtterance) => {
+        speakCount += 1;
+        utterances.push(u);
+        if (stallNextSpeak) {
+          stallNextSpeak = false;
+          synth.speaking = true;
+          return;
+        }
+        queueMicrotask(() => {
+          synth.speaking = false;
+          u.onstart?.();
+          u.onend?.();
+        });
+      },
+      cancel: () => {
+        synth.speaking = false;
+      },
+      resume: () => {},
+      addEventListener: (_event: string, _handler: () => void, _options?: { once?: boolean }) => {},
+    };
+
+    const doc = { hidden: false };
+    const win = {
+      document: doc,
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        },
+      },
+      setTimeout: (...args: Parameters<typeof setTimeout>) => setTimeout(...args),
+      clearTimeout: (...args: Parameters<typeof clearTimeout>) => clearTimeout(...args),
+      speechSynthesis: synth,
+      dispatchEvent: () => true,
+    };
+
+    (globalThis as typeof globalThis & { window: Window; document: Document }).window =
+      win as unknown as Window;
+    (globalThis as typeof globalThis & { document: Document }).document = doc as unknown as Document;
+
+    const mod = await import("./speechQueue.ts");
+    mod.resetSpeechQueueForTests();
+    mod.unlockSpeechSynthesis(true);
+    await flushMicrotasks();
+
+    stallNextSpeak = true;
+    mod.speakUbicacionQueue(["Primera frase"], false, "puerta");
+    assert.equal(mod.getSpeechDiagnostics().speaking, true);
+
+    mod.interruptAllSpeechSynth(false);
+    assert.equal(mod.getSpeechDiagnostics().speaking, false);
+
+    mod.speakUbicacionQueue(["Segunda frase"], false, "puerta");
+    await flushMicrotasks();
+
+    assert.ok(utterances.some(u => u.text.includes("Segunda frase")));
+    assert.ok(speakCount >= 2);
+  });
 });

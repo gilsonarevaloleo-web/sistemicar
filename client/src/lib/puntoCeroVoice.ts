@@ -1,4 +1,11 @@
-import { unlockSpeechSynthesis, warmupSpeechSynthesis, isSpeechSynthesisUnlocked } from "./speechQueue";
+import {
+  interruptAllSpeechSynth,
+  speakUtterance,
+  subscribeSpeechExternalCancel,
+  unlockSpeechSynthesis,
+  warmupSpeechSynthesis,
+  isSpeechSynthesisUnlocked,
+} from "./speechQueue";
 import { isPuntoCeroVoiceEnabled } from "./tikSound";
 import {
   pickCalmDeepSpanishVoice,
@@ -64,6 +71,14 @@ let pcVoicesLoadBypass = false;
 
 const PC_VOICES_LOAD_WAIT_MS = 450;
 
+if (typeof window !== "undefined") {
+  subscribeSpeechExternalCancel(() => {
+    clearPuntoCeroPauseTimer();
+    pcQueue = [];
+    pcSpeaking = false;
+  });
+}
+
 function clearPuntoCeroPauseTimer(): void {
   if (pcPauseTimer) {
     clearTimeout(pcPauseTimer);
@@ -81,6 +96,12 @@ function applyCalmVoice(u: SpeechSynthesisUtterance, profile: PuntoCeroVoiceProf
   if (voice) u.voice = voice;
 }
 
+function resetPuntoCeroQueueLocal(): void {
+  clearPuntoCeroPauseTimer();
+  pcQueue = [];
+  pcSpeaking = false;
+}
+
 function processPuntoCeroQueue(opts?: { force?: boolean }): void {
   if (pcSpeaking || pcQueue.length === 0) return;
   if (typeof window === "undefined" || !window.speechSynthesis) {
@@ -94,7 +115,7 @@ function processPuntoCeroQueue(opts?: { force?: boolean }): void {
   if (voiceCount === 0) {
     if (!pcVoicesLoadBypass) {
       pcVoicesLoadBypass = true;
-      const retry = () => processPuntoCeroQueue();
+      const retry = () => processPuntoCeroQueue(opts);
       window.speechSynthesis.addEventListener(
         "voiceschanged",
         () => {
@@ -121,23 +142,22 @@ function processPuntoCeroQueue(opts?: { force?: boolean }): void {
   const profile = pcProfile;
   const pauseMs = VOICE_PROFILES[profile].pauseMs;
 
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    applyCalmVoice(u, profile);
-    u.onend = () => {
+  const ok = speakUtterance(text, {
+    onend: () => {
       pcSpeaking = false;
       if (pcQueue.length > 0) {
-        pcPauseTimer = setTimeout(processPuntoCeroQueue, pauseMs);
+        pcPauseTimer = setTimeout(() => processPuntoCeroQueue(opts), pauseMs);
       }
-    };
-    u.onerror = () => {
+    },
+    onerror: () => {
       pcSpeaking = false;
-      processPuntoCeroQueue();
-    };
-    window.speechSynthesis.speak(u);
-  } catch {
+      processPuntoCeroQueue(opts);
+    },
+  }, u => applyCalmVoice(u, profile));
+
+  if (!ok) {
     pcSpeaking = false;
-    processPuntoCeroQueue();
+    processPuntoCeroQueue(opts);
   }
 }
 
@@ -156,18 +176,12 @@ export function speakPuntoCeroSequence(
   pcProfile = profile;
 
   if (cancelPrevious) {
-    clearPuntoCeroPauseTimer();
-    try {
-      window.speechSynthesis.cancel();
-    } catch {
-      /* noop */
-    }
-    pcQueue = [];
-    pcSpeaking = false;
+    interruptAllSpeechSynth(true);
+    resetPuntoCeroQueueLocal();
   }
 
   pcQueue.push(...filtered);
-  queueMicrotask(() => processPuntoCeroQueue({ force: true }));
+  processPuntoCeroQueue({ force: true });
 }
 
 /** Desbloqueo TTS en el mismo gesto del usuario (pointerdown en etapa/color). */
@@ -186,23 +200,22 @@ export function speakPleasant(
   opts?: { rate?: number; pitch?: number; volume?: number }
 ): void {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "es-ES";
-  u.rate = opts?.rate ?? VOICE_PROFILES.calm.rate;
-  u.pitch = opts?.pitch ?? VOICE_PROFILES.calm.pitch;
-  u.volume = opts?.volume ?? VOICE_PROFILES.calm.volume;
-  const voice = pickPleasantSpanishVoice();
-  if (voice) u.voice = voice;
-  window.speechSynthesis.speak(u);
+  interruptAllSpeechSynth(false);
+  resetPuntoCeroQueueLocal();
+  speakUtterance(text, {}, u => {
+    u.lang = "es-ES";
+    u.rate = opts?.rate ?? VOICE_PROFILES.calm.rate;
+    u.pitch = opts?.pitch ?? VOICE_PROFILES.calm.pitch;
+    u.volume = opts?.volume ?? VOICE_PROFILES.calm.volume;
+    const voice = pickPleasantSpanishVoice();
+    if (voice) u.voice = voice;
+  });
 }
 
 export function stopPleasantVoice(): void {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
-  clearPuntoCeroPauseTimer();
-  pcQueue = [];
-  pcSpeaking = false;
-  window.speechSynthesis.cancel();
+  interruptAllSpeechSynth(false);
+  resetPuntoCeroQueueLocal();
 }
 
 /** TTS de Punto Cero con warmup (requerido en móvil tras gesto del usuario). */
