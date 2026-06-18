@@ -215,7 +215,7 @@ import {
   cancelUbicacionVoiceForVehicle,
   speakDesglosadorVoiceReliable,
 } from "@/lib/desglosadorVoice";
-import { isMobilePerfMode } from "@/lib/mobilePerf";
+import { isMobilePerfMode, MOBILE_PERF } from "@/lib/mobilePerf";
 import {
   registerSituacionSessionCleanup,
   resetSituacionSessionTeardownGate,
@@ -472,6 +472,7 @@ import { EntropiaDebugPanel, isEntropyDebugEnabled } from "@/components/Entropia
 import { reconcileVehicleListView } from "@/lib/vehicleSessionAuthority";
 import {
   beginLocalVehicleMutation,
+  extendLocalVehicleMutation,
   isLocalVehicleMutationLocked,
 } from "@/lib/localMutationLock";
 import { scheduleDeferredVehicleCleanup } from "@/lib/vehicleDeferredCleanup";
@@ -1352,6 +1353,11 @@ export default function Planeacion() {
   const rutinaItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [notifPermission, setNotifPermission] = useState<string>(getNotificationPermission());
   const [segmentTick, setSegmentTick] = useState(0);
+  const heavyMetricsBucket = useMemo(() => {
+    if (!isMobilePerfMode()) return segmentTick;
+    const stepSec = Math.max(1, Math.round(MOBILE_PERF.ATTENTION_TICK_MS / 1000));
+    return Math.floor(segmentTick / stepSec);
+  }, [segmentTick]);
   const [flotaUiReady, setFlotaUiReady] = useState(false);
   const [activandoSegId, setActivandoSegId] = useState<string | null>(null);
   const [cerrandoSegId, setCerrandoSegId] = useState<string | null>(null);
@@ -1625,7 +1631,7 @@ export default function Planeacion() {
       dayStats: model.dayStats,
       metricas: model.metricas,
     };
-  }, [planilla?.segmentos, vehicles, segmentTick]);
+  }, [planilla?.segmentos, vehicles, heavyMetricsBucket]);
 
   const showEntropyDebug = useMemo(() => isEntropyDebugEnabled(), []);
 
@@ -1796,7 +1802,7 @@ export default function Planeacion() {
       entropiaMin: balance.entropiaMin,
       vacioMin: balance.vacioMin,
     });
-  }, [planilla, vehicles, focusEventsToday, segmentTick, user]);
+  }, [planilla, vehicles, focusEventsToday, heavyMetricsBucket, user]);
 
   const termoCompare = useMemo(
     () => computeTermodinamicaCompareV2(yesterdayTermoSnapshot, todayTermoLive),
@@ -1808,7 +1814,7 @@ export default function Planeacion() {
     const jornadaVehicles = vehicles.filter(v => vehicleEnTermoJornada(v, dayStartMs));
     const ledger = user ? getDecisionLedger(user.uid, dayStartMs) : [];
     return computeCombustibleDia(jornadaVehicles, dayStartMs, ledger);
-  }, [vehicles, segmentTick, user]);
+  }, [vehicles, user]);
 
   const disciplinaLive = useMemo(() => {
     const dayStartMs = getLimaDayStartMs();
@@ -1822,7 +1828,7 @@ export default function Planeacion() {
       vehicles: jornadaVehicles,
       dayStartMs,
     });
-  }, [planilla, vehicles, segmentTick]);
+  }, [planilla, vehicles]);
 
   const atencionLive = useMemo(() => {
     const dayStartMs = getLimaDayStartMs();
@@ -1831,7 +1837,7 @@ export default function Planeacion() {
       nowMs: Date.now(),
       dayStartMs,
     });
-  }, [planilla, segmentTick]);
+  }, [planilla, heavyMetricsBucket]);
 
   const atencionCompare = useMemo(
     () => computeAtencionCompare(null, atencionLive),
@@ -1880,7 +1886,7 @@ export default function Planeacion() {
     combustibleLive,
     disciplinaSnapshots,
     user,
-    segmentTick,
+    heavyMetricsBucket,
   ]);
 
   useEffect(() => {
@@ -5301,6 +5307,7 @@ export default function Planeacion() {
       }
     }
 
+    beginLocalVehicleMutation("ring");
     setVehicles(prev =>
       prev.map(v =>
         v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v
@@ -5312,8 +5319,11 @@ export default function Planeacion() {
     persistVehiclesRef();
     setExpandedId(vehicleId);
     try {
+      extendLocalVehicleMutation("ring");
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor: situacionCupoAnchor ?? null });
-      void handleSyncSituacionCupoAnchor(vehicleId);
+      if (!anchorStillValid && !situacionCupoAnchor) {
+        void handleSyncSituacionCupoAnchor(vehicleId);
+      }
       const metaLabel = contratoMs != null
         ? new Date(contratoMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
         : "—";
@@ -5413,6 +5423,7 @@ export default function Planeacion() {
         };
       }
     }
+    beginLocalVehicleMutation("ring");
     setVehicles(prev =>
       prev.map(v =>
         v.id === vehicleId ? { ...v, subTareas, situacionCronometro, situacionCupoAnchor } : v
@@ -5424,12 +5435,14 @@ export default function Planeacion() {
     persistVehiclesRef();
     setExpandedId(vehicleId);
     try {
+      extendLocalVehicleMutation("ring");
       await updateVehicle(user.uid, vehicleId, { subTareas, situacionCronometro, situacionCupoAnchor: situacionCupoAnchor ?? null });
       if (firstActivation) {
         void requestNotificationPermission();
-        speakRingBienvenida(retoNumero, `ring-bienvenida-${vehicleId}-${bloqueInicioAt}`);
+        queueMicrotask(() =>
+          speakRingBienvenida(retoNumero, `ring-bienvenida-${vehicleId}-${bloqueInicioAt}`)
+        );
       }
-      void handleSyncSituacionCupoAnchor(vehicleId);
       toast.success(retoNumero > 1 ? RING_COPY.siguienteRonda : RING_COPY.ring, {
         description: `${lifted.length} subtarea(s) · meta ${objetivoHora} (${sum} min repartidos)`,
         style: { backgroundColor: PIZARRA, border: `1px solid ${PLATA}`, color: PLATA },
@@ -10116,6 +10129,13 @@ function VehicleCard({
     );
   }, [vehicle.tipoFlota, vehicle.subTareas, vehicle.situacionCronometro]);
 
+  const situacionAnchorKey = useMemo(() => {
+    const a = vehicle.situacionCupoAnchor;
+    if (!a?.subTareaId) return "";
+    const sub = (vehicle.subTareas || []).find(s => s.id === a.subTareaId);
+    return `${a.subTareaId}:${a.startedAt}:${sub?.minutosCupo ?? 0}:${sub?.resultadoSituacion ?? ""}:${sub?.enDesgloseCronometro ? 1 : 0}:${sub?.completada ? 1 : 0}`;
+  }, [vehicle.situacionCupoAnchor, situacionSubWatchKey]);
+
   useEffect(() => {
     if (vehicle.tipoFlota === "situacion" && vehicle.situacionCronometro?.activo === true) {
       setSubTasksCollapsed(false);
@@ -10131,7 +10151,10 @@ function VehicleCard({
 
   useEffect(() => {
     if (!onSyncSituacionCupoAnchor || vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
-    const run = () => onSyncSituacionCupoAnchor(vehicle.id);
+    const run = () => {
+      if (isLocalVehicleMutationLocked()) return;
+      onSyncSituacionCupoAnchor(vehicle.id);
+    };
     if (typeof requestIdleCallback !== "undefined") {
       const id = requestIdleCallback(run, { timeout: 1500 });
       return () => cancelIdleCallback(id);
@@ -10142,9 +10165,10 @@ function VehicleCard({
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    if (!expanded && vehicle.situacionCronometro?.activo !== true) return;
     const id = window.setInterval(() => setSituacionCupoUiTick(t => t + 1), 1000);
     return () => clearInterval(id);
-  }, [vehicle.tipoFlota, vehicle.status]);
+  }, [vehicle.tipoFlota, vehicle.status, expanded, vehicle.situacionCronometro?.activo]);
 
   useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || !onDesglosadorDepthTick) return;
@@ -10255,7 +10279,7 @@ function VehicleCard({
       clearInterval(intervalId);
       clearEscalation();
     };
-  }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.titulo, vehicle.id]);
+  }, [vehicle.tipoFlota, vehicle.status, situacionAnchorKey, vehicle.titulo, vehicle.id]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -10278,7 +10302,7 @@ function VehicleCard({
       subTexto: sub.texto,
       tagKey: warnKey,
     });
-  }, [vehicle.tipoFlota, vehicle.status, vehicle.situacionCupoAnchor, vehicle.subTareas, vehicle.titulo, vehicle.id, situacionCupoUiTick]);
+  }, [vehicle.tipoFlota, vehicle.status, situacionAnchorKey, vehicle.titulo, vehicle.id, situacionCupoUiTick]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -10296,22 +10320,59 @@ function VehicleCard({
     situacion2MinWarnKeyRef.current = null;
     situacionCupoFireKeyRef.current = null;
 
-    const cleanup = speakSituacionFilaEnFoco(sub.texto, {
-      intro: false,
-      key: `fila-${voiceKey}`,
-      onSpoken: () => {
-        situacionFilaVoiceKeysRef.current.add(voiceKey);
-        situacionFilaVoicePendingRef.current.delete(voiceKey);
-      },
-    });
-    return cleanup;
+    let cancelled = false;
+    let cleanupVoice: (() => void) | undefined;
+    const subTexto = sub.texto;
+    const speak = () => {
+      if (cancelled) return;
+      cleanupVoice = speakSituacionFilaEnFoco(subTexto, {
+        intro: false,
+        key: `fila-${voiceKey}`,
+        onSpoken: () => {
+          situacionFilaVoiceKeysRef.current.add(voiceKey);
+          situacionFilaVoicePendingRef.current.delete(voiceKey);
+        },
+      });
+    };
+    const scheduleSpeak = () => {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(speak, 0);
+      });
+    };
+
+    const bloqueInicioAt = vehicle.situacionCronometro?.bloqueInicioAt;
+    const isFreshRing = bloqueInicioAt != null && Date.now() - bloqueInicioAt < 12_000;
+    let unsubIdle: (() => void) | undefined;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+    if (isFreshRing) {
+      let spoke = false;
+      const trySpeak = () => {
+        if (cancelled || spoke) return;
+        spoke = true;
+        unsubIdle?.();
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        scheduleSpeak();
+      };
+      unsubIdle = subscribeSpeechQueueIdle(trySpeak);
+      fallbackTimer = setTimeout(trySpeak, 900);
+    } else {
+      scheduleSpeak();
+    }
+
+    return () => {
+      cancelled = true;
+      unsubIdle?.();
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      cleanupVoice?.();
+      situacionFilaVoicePendingRef.current.delete(voiceKey);
+    };
   }, [
     vehicle.tipoFlota,
     vehicle.status,
     vehicle.situacionCronometro?.activo,
     vehicle.situacionCronometro?.bloqueInicioAt,
-    vehicle.situacionCupoAnchor,
-    vehicle.subTareas,
+    situacionAnchorKey,
     vehicle.id,
   ]);
 
@@ -10875,9 +10936,7 @@ function VehicleCard({
   }, [
     situacionCronActivo,
     situacionBloqueListo,
-    vehicle.situacionCupoAnchor,
-    vehicle.subTareas,
-    situacionCupoUiTick,
+    situacionAnchorKey,
     armRingInactivityTimer,
   ]);
 

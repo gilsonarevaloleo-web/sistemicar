@@ -34,4 +34,11 @@ describe("localMutationLock", () => {
     mock.timers.tick(1);
     assert.equal(isLocalVehicleMutationLocked(), false);
   });
+
+  it("beginLocalVehicleMutation ring bloquea snapshots durante sellado", () => {
+    beginLocalVehicleMutation("ring");
+    assert.equal(isLocalVehicleMutationLocked(), true);
+    extendLocalVehicleMutation("ring");
+    assert.equal(isLocalVehicleMutationLocked(), true);
+  });
 });
