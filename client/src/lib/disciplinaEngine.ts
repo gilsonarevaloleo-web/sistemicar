@@ -37,9 +37,36 @@ export type EstudioTipoVehiculo = {
   count: number;
 };
 
+export type DisciplinaFaseJornada = "pre_jornada" | "en_curso" | "cierre";
+
+export type DisciplinaCobertura = {
+  /** Segmentos con primer vehículo consciente (numerador). */
+  conEntrada: number;
+  /** Denominador del ratio (evaluados, o iniciados si aún no hay evaluables). */
+  base: number;
+  segmentosTotales: number;
+  segmentosEvaluados: number;
+  segmentosEnCurso: number;
+  segmentosRestantes: number;
+  /** null antes del primer segmento iniciado. */
+  pct: number | null;
+};
+
+export type DisciplinaPuntualidad = {
+  /** Promedio de scoreSegmento en la base activa (sin entrada = 0). */
+  pct: number | null;
+  deltaMedioMin: number | null;
+};
+
 export type DisciplinaDia = {
   segmentos: SegmentoDisciplina[];
+  /** 50 % cobertura + 50 % puntualidad cuando hay base; 0 en pre-jornada. */
   indiceDisciplina: number;
+  faseJornada: DisciplinaFaseJornada;
+  cobertura: DisciplinaCobertura;
+  puntualidad: DisciplinaPuntualidad;
+  /** Hora del primer segmento planificado (pre-jornada). */
+  primeraPuertaHora: string | null;
   entradasTotales: number;
   sinEntrada: number;
   deltaMedioDesdeInicioMin: number | null;
@@ -234,20 +261,38 @@ export function computeDisciplinaDia(params: {
   });
 
   const evaluables = segmentosOut.filter(s => s.evaluable);
+  const enCursoList = segmentosOut.filter(s => s.enCurso);
+  const iniciados = segmentosOut.filter(s => s.evaluable || s.enCurso);
   const conEntrada = segmentosOut.filter(s => s.primerEntradaAt != null);
   const sinEntradaCount = segmentosOut.filter(s => s.sinEntrada).length;
   const montajes = segmentosOut.filter(s => s.montaje).length;
+  const segmentosTotales = segmentosOut.length;
+  const segmentosRestantes = segmentosOut.filter(s => !s.evaluable && !s.enCurso).length;
 
-  const indiceDisciplina =
+  const faseJornada: DisciplinaFaseJornada =
+    segmentosTotales === 0 || iniciados.length === 0
+      ? "pre_jornada"
+      : evaluables.length >= segmentosTotales
+        ? "cierre"
+        : "en_curso";
+
+  const coberturaBase = evaluables.length > 0 ? evaluables : iniciados;
+  const coberturaConEntrada =
     evaluables.length > 0
+      ? evaluables.filter(s => !s.sinEntrada).length
+      : iniciados.filter(s => s.primerEntradaAt != null).length;
+  const coberturaPct =
+    coberturaBase.length > 0
+      ? Math.round((coberturaConEntrada / coberturaBase.length) * 100)
+      : null;
+
+  const puntualidadBase = evaluables.length > 0 ? evaluables : conEntrada;
+  const puntualidadPct =
+    puntualidadBase.length > 0
       ? Math.round(
-          evaluables.reduce((acc, s) => acc + s.scoreSegmento, 0) / evaluables.length
+          puntualidadBase.reduce((acc, s) => acc + s.scoreSegmento, 0) / puntualidadBase.length
         )
-      : conEntrada.length > 0
-        ? Math.round(
-            conEntrada.reduce((acc, s) => acc + s.scoreSegmento, 0) / conEntrada.length
-          )
-        : 0;
+      : null;
 
   const deltasInicio = conEntrada
     .map(s => s.deltaDesdeInicioMin)
@@ -266,9 +311,30 @@ export function computeDisciplinaDia(params: {
       ? Math.round(deltasPuerta.reduce((a, b) => a + b, 0) / deltasPuerta.length)
       : null;
 
+  const cobertura: DisciplinaCobertura = {
+    conEntrada: coberturaConEntrada,
+    base: coberturaBase.length,
+    segmentosTotales,
+    segmentosEvaluados: evaluables.length,
+    segmentosEnCurso: enCursoList.length,
+    segmentosRestantes,
+    pct: coberturaPct,
+  };
+
+  const puntualidad: DisciplinaPuntualidad = {
+    pct: puntualidadPct,
+    deltaMedioMin: deltaMedioDesdeInicioMin,
+  };
+
+  const indiceDisciplina = computeIndiceDisciplinaCompuesto(coberturaPct, puntualidadPct);
+
   return {
     segmentos: segmentosOut,
     indiceDisciplina,
+    faseJornada,
+    cobertura,
+    puntualidad,
+    primeraPuertaHora: ordered[0]?.horaInicio ?? null,
     entradasTotales: conEntrada.length,
     sinEntrada: sinEntradaCount,
     deltaMedioDesdeInicioMin,
@@ -276,6 +342,45 @@ export function computeDisciplinaDia(params: {
     estudioTipos: buildEstudioTipos(vehicles, ordered, dayStartMs),
     montajes,
   };
+}
+
+function computeIndiceDisciplinaCompuesto(
+  coberturaPct: number | null,
+  puntualidadPct: number | null
+): number {
+  if (coberturaPct == null && puntualidadPct == null) return 0;
+  if (coberturaPct == null) return Math.round(puntualidadPct!);
+  if (puntualidadPct == null) return Math.round(coberturaPct);
+  return Math.round(0.5 * coberturaPct + 0.5 * puntualidadPct);
+}
+
+/** Valor principal para UI — evita mostrar 0 como fallo en pre-jornada. */
+export function formatDisciplinaValorPrincipal(d: DisciplinaDia): string {
+  if (d.faseJornada === "pre_jornada") {
+    const n = d.cobertura.segmentosTotales;
+    if (n > 0 && d.primeraPuertaHora) {
+      return `${n} seg · ${d.primeraPuertaHora}`;
+    }
+    return n > 0 ? `${n} segmentos` : "—";
+  }
+  if (d.cobertura.base > 0) {
+    return `${d.cobertura.conEntrada}/${d.cobertura.base}`;
+  }
+  return String(d.indiceDisciplina);
+}
+
+export function formatDisciplinaSubheadline(d: DisciplinaDia): string {
+  if (d.faseJornada === "pre_jornada") {
+    return "Jornada abierta — la entrada se mide puerta a puerta";
+  }
+  const parts: string[] = [];
+  if (d.cobertura.pct != null) parts.push(`${d.cobertura.pct}% cobertura`);
+  if (d.puntualidad.pct != null) parts.push(`puntualidad ${d.puntualidad.pct}`);
+  if (d.cobertura.segmentosRestantes > 0) {
+    parts.push(`${d.cobertura.segmentosRestantes} restante${d.cobertura.segmentosRestantes !== 1 ? "s" : ""}`);
+  }
+  if (d.indiceDisciplina > 0) parts.push(`índice ${d.indiceDisciplina}`);
+  return parts.length > 0 ? parts.join(" · ") : "Acumulando entradas al trabajo";
 }
 
 export function describeSegmentoDisciplina(sd: SegmentoDisciplina): string {
@@ -317,13 +422,23 @@ export function computeDisciplinaCompare(
     ? today.indiceDisciplina - yesterday!.indiceDisciplina
     : null;
 
-  const headline = `Índice ${today.indiceDisciplina} · ${today.entradasTotales} entradas al trabajo`;
+  let headline: string;
+  if (today.faseJornada === "pre_jornada") {
+    headline = formatDisciplinaValorPrincipal(today);
+  } else if (today.cobertura.base > 0) {
+    headline = `${today.cobertura.conEntrada}/${today.cobertura.base} segmentos con entrada`;
+    if (today.indiceDisciplina > 0) headline += ` · índice ${today.indiceDisciplina}`;
+  } else {
+    headline = `Índice ${today.indiceDisciplina} · ${today.entradasTotales} entradas al trabajo`;
+  }
 
   let motivacion: string;
-  if (today.deltaMedioDesdeInicioMin != null) {
-    motivacion = `Δ medio ${today.deltaMedioDesdeInicioMin} min hasta el primer vehículo consciente`;
+  if (today.faseJornada === "pre_jornada") {
+    motivacion = formatDisciplinaSubheadline(today);
+  } else if (today.deltaMedioDesdeInicioMin != null) {
+    motivacion = `Δ medio +${today.deltaMedioDesdeInicioMin} min al primer vehículo · ${formatDisciplinaSubheadline(today)}`;
   } else {
-    motivacion = "Disciplina operativa: cuándo entras al trabajo con vehículos (independiente de la puerta).";
+    motivacion = formatDisciplinaSubheadline(today);
   }
 
   if (deltaIndice != null && deltaIndice > 0) {

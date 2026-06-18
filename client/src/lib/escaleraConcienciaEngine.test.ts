@@ -12,6 +12,18 @@ import type { DisciplinaDia } from "./disciplinaEngine.ts";
 
 const emptyDisciplina: DisciplinaDia = {
   indiceDisciplina: 0,
+  faseJornada: "pre_jornada",
+  cobertura: {
+    conEntrada: 0,
+    base: 0,
+    segmentosTotales: 0,
+    segmentosEvaluados: 0,
+    segmentosEnCurso: 0,
+    segmentosRestantes: 0,
+    pct: null,
+  },
+  puntualidad: { pct: null, deltaMedioMin: null },
+  primeraPuertaHora: null,
   entradasTotales: 0,
   sinEntrada: 0,
   montajes: 0,
@@ -57,8 +69,19 @@ describe("escaleraConcienciaEngine", () => {
       conquistaArcPct: 62,
       disciplina: {
         ...emptyDisciplina,
+        faseJornada: "en_curso",
         indiceDisciplina: 72,
         entradasTotales: 2,
+        cobertura: {
+          conEntrada: 2,
+          base: 2,
+          segmentosTotales: 2,
+          segmentosEvaluados: 1,
+          segmentosEnCurso: 1,
+          segmentosRestantes: 0,
+          pct: 100,
+        },
+        puntualidad: { pct: 72, deltaMedioMin: 8 },
         segmentos: [{ segmentoId: "s1" } as DisciplinaDia["segmentos"][0]],
       },
       combustible: { ...emptyCombustible, decisiones: 1, subsTiempo: 1 },

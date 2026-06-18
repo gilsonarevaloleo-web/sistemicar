@@ -136,29 +136,51 @@ export function scoreEntrada(disciplina: DisciplinaDia): {
   const delta = disciplina.deltaMedioDesdeInicioMin;
 
   let headline: string;
-  if (disciplina.segmentos.length === 0) {
-    headline = "Sin segmentos planificados — la entrada se mide cuando hay puertas de trabajo.";
+  if (disciplina.faseJornada === "pre_jornada") {
+    headline =
+      disciplina.cobertura.segmentosTotales > 0
+        ? `Jornada abierta — ${disciplina.cobertura.segmentosTotales} segmento${disciplina.cobertura.segmentosTotales !== 1 ? "s" : ""} por delante.`
+        : "Sin segmentos planificados — la entrada se mide cuando hay puertas de trabajo.";
   } else if (disciplina.sinEntrada > 0 && score < 40) {
-    headline = "Segmentos sin vehículo consciente — la entrada al trabajo es el puente hacia producir.";
+    headline = `${disciplina.cobertura.conEntrada}/${disciplina.cobertura.base} con entrada — cada puerta suma.`;
   } else if (score >= 70) {
     headline = "Entrada sólida: apareces al trabajo cuando el segmento lo pide.";
   } else {
     headline = "Entrada en desarrollo — montar vehículo a tiempo abre la capa de producción.";
   }
 
-  const detalleParts: string[] = [
-    `${disciplina.entradasTotales} entradas`,
-    `${disciplina.sinEntrada} sin entrada`,
-  ];
+  const detalleParts: string[] = [];
+  if (disciplina.cobertura.base > 0) {
+    detalleParts.push(
+      `${disciplina.cobertura.conEntrada}/${disciplina.cobertura.base} segmentos con entrada`
+    );
+  }
+  if (disciplina.cobertura.pct != null) detalleParts.push(`${disciplina.cobertura.pct}% cobertura`);
+  if (disciplina.puntualidad.pct != null) detalleParts.push(`puntualidad ${disciplina.puntualidad.pct}`);
+  if (disciplina.sinEntrada > 0) detalleParts.push(`${disciplina.sinEntrada} sin entrada`);
   if (disciplina.montajes > 0) detalleParts.push(`${disciplina.montajes} montajes`);
   if (delta != null) detalleParts.push(`Δ medio ${delta} min al primer vehículo`);
 
+  const valorPrincipal =
+    disciplina.faseJornada === "pre_jornada"
+      ? disciplina.primeraPuertaHora
+        ? `${disciplina.cobertura.segmentosTotales} seg · ${disciplina.primeraPuertaHora}`
+        : `${disciplina.cobertura.segmentosTotales} segmentos`
+      : disciplina.cobertura.base > 0
+        ? `${disciplina.cobertura.conEntrada}/${disciplina.cobertura.base}`
+        : `índice ${disciplina.indiceDisciplina}`;
+
   return {
-    score,
+    score: disciplina.faseJornada === "pre_jornada" ? clampScore(35) : score,
     headline,
-    detalle: detalleParts.join(" · "),
-    valorPrincipal: `índice ${disciplina.indiceDisciplina}`,
-    valorSecundario: delta != null ? `+${delta} min Δ` : undefined,
+    detalle: detalleParts.length > 0 ? detalleParts.join(" · ") : "Acumulando entradas al trabajo.",
+    valorPrincipal,
+    valorSecundario:
+      disciplina.faseJornada !== "pre_jornada" && disciplina.indiceDisciplina > 0
+        ? `índice ${disciplina.indiceDisciplina}`
+        : delta != null
+          ? `+${delta} min Δ`
+          : undefined,
   };
 }
 

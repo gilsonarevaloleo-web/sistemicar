@@ -425,6 +425,8 @@ import {
 import {
   computeDisciplinaDia,
   computeDisciplinaCompare,
+  formatDisciplinaSubheadline,
+  formatDisciplinaValorPrincipal,
   describeSegmentoDisciplina,
   disciplinaBadgeLabel,
   formatEstudioTipoChip,
@@ -6946,16 +6948,26 @@ export default function Planeacion() {
                 </p>
               </div>
               <div
-                className="shrink-0 px-2.5 py-1.5 rounded-lg border text-center"
+                className="shrink-0 px-2.5 py-1.5 rounded-lg border text-center min-w-[4.5rem]"
                 style={{
                   backgroundColor: `${GOLD}12`,
                   borderColor: `${GOLD}40`,
                 }}
               >
-                <p className="text-[7px] text-slate-500 uppercase tracking-wider">Hoy</p>
-                <p className="text-sm font-black leading-tight" style={{ color: GOLD }}>
-                  {disciplinaLive.indiceDisciplina}
+                <p className="text-[7px] text-slate-500 uppercase tracking-wider">
+                  {disciplinaLive.faseJornada === "pre_jornada" ? "Abierta" : "Hoy"}
                 </p>
+                <p
+                  className={`font-black leading-tight tabular-nums ${
+                    disciplinaLive.faseJornada === "pre_jornada" ? "text-[10px]" : "text-sm"
+                  }`}
+                  style={{ color: GOLD }}
+                >
+                  {formatDisciplinaValorPrincipal(disciplinaLive)}
+                </p>
+                {disciplinaLive.faseJornada !== "pre_jornada" && disciplinaLive.indiceDisciplina > 0 && (
+                  <p className="text-[7px] text-slate-500 tabular-nums">idx {disciplinaLive.indiceDisciplina}</p>
+                )}
               </div>
             </div>
 
@@ -7011,6 +7023,18 @@ export default function Planeacion() {
                 <p className="text-[8px] text-slate-400 mt-1 leading-relaxed">{disciplinaCompare.motivacion}</p>
               )}
               <div className="flex gap-3 mt-2 text-[8px] flex-wrap">
+                {disciplinaLive.faseJornada !== "pre_jornada" && disciplinaLive.cobertura.base > 0 && (
+                  <span className="text-slate-500">
+                    Cobertura:{" "}
+                    <span className="font-bold text-slate-300">
+                      {disciplinaLive.cobertura.conEntrada}/{disciplinaLive.cobertura.base}
+                      {disciplinaLive.cobertura.pct != null ? ` (${disciplinaLive.cobertura.pct}%)` : ""}
+                    </span>
+                  </span>
+                )}
+                {disciplinaLive.faseJornada === "pre_jornada" && (
+                  <span className="text-slate-500">{formatDisciplinaSubheadline(disciplinaLive)}</span>
+                )}
                 <span className="text-slate-500">
                   Sin entrada: <span className="font-bold text-slate-300">{disciplinaLive.sinEntrada}</span>
                 </span>

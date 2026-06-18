@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { SegmentoV5, Vehicle } from "./persistence.ts";
 import {
   computeDisciplinaDia,
+  formatDisciplinaValorPrincipal,
   isTrabajoConsciente,
 } from "./disciplinaEngine.ts";
 import { getLimaDayStartMs, segmentWindowMs } from "./segmentTime.ts";
@@ -68,6 +69,11 @@ describe("computeDisciplinaDia", () => {
     assert.equal(r.segmentos[0]?.deltaDesdeInicioMin, 60);
     assert.equal(r.segmentos[0]?.scoreSegmento, 50);
     assert.equal(r.segmentos[0]?.sinEntrada, false);
+    assert.equal(r.cobertura.conEntrada, 1);
+    assert.equal(r.cobertura.base, 1);
+    assert.equal(r.puntualidad.pct, 50);
+    assert.equal(r.indiceDisciplina, 75);
+    assert.equal(r.faseJornada, "cierre");
   });
 
   it("cuenta entrada temporal aunque segmentoOrigen sea otro", () => {
@@ -182,5 +188,49 @@ describe("computeDisciplinaDia", () => {
     });
     const desg = r.estudioTipos.find(e => e.tipoReloj === "desglosador");
     assert.equal(desg?.count, 2);
+  });
+
+  it("pre_jornada antes del primer segmento", () => {
+    const { start } = segmentWindowMs("08:00", "10:00", limaDayStart);
+    const segmentos = [
+      seg({ id: "s1", nombre: "Costura", horaInicio: "08:00", horaFin: "10:00" }),
+      seg({ id: "s2", nombre: "Tarde", horaInicio: "14:00", horaFin: "16:00" }),
+    ];
+    const r = computeDisciplinaDia({
+      segmentos,
+      vehicles: [],
+      dayStartMs: limaDayStart,
+      nowMs: start - 60_000,
+    });
+    assert.equal(r.faseJornada, "pre_jornada");
+    assert.equal(r.indiceDisciplina, 0);
+    assert.equal(r.cobertura.pct, null);
+    assert.equal(formatDisciplinaValorPrincipal(r), "2 seg · 08:00");
+  });
+
+  it("cobertura acumulada 2/3 segmentos evaluados", () => {
+    const s1 = segmentWindowMs("08:00", "10:00", limaDayStart);
+    const s2 = segmentWindowMs("10:00", "12:00", limaDayStart);
+    const s3 = segmentWindowMs("14:00", "16:00", limaDayStart);
+    const segmentos = [
+      seg({ id: "s1", nombre: "A", horaInicio: "08:00", horaFin: "10:00" }),
+      seg({ id: "s2", nombre: "B", horaInicio: "10:00", horaFin: "12:00" }),
+      seg({ id: "s3", nombre: "C", horaInicio: "14:00", horaFin: "16:00" }),
+    ];
+    const vehicles = [
+      veh({ id: "v1", tipoFlota: "tiempo", aperturaAt: s1.start + 60000 }),
+      veh({ id: "v2", tipoFlota: "tiempo", aperturaAt: s2.start + 60000 }),
+    ];
+    const r = computeDisciplinaDia({
+      segmentos,
+      vehicles,
+      dayStartMs: limaDayStart,
+      nowMs: s3.end + 60000,
+    });
+    assert.equal(r.cobertura.conEntrada, 2);
+    assert.equal(r.cobertura.base, 3);
+    assert.equal(r.cobertura.pct, 67);
+    assert.equal(r.sinEntrada, 1);
+    assert.equal(r.faseJornada, "cierre");
   });
 });
