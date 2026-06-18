@@ -4818,6 +4818,7 @@ export default function Planeacion() {
     if (!user) return undefined;
     const vehicle = vehicleById(vehicleId);
     if (!vehicle) return undefined;
+    beginLocalVehicleMutation("sub-situacion");
     const proyectoId = resolveProyectoIdEnfoqueSituacion(vehicle, segmentoActivo?.proyectoVinculadoId);
     const newSubTarea = {
       id: `st_${Date.now()}`,
@@ -4831,8 +4832,9 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
     persistVehiclesRef();
     try {
+      extendLocalVehicleMutation("sub-situacion");
       await updateVehicle(user.uid, vehicleId, { subTareas });
-      void handleSyncSituacionCupoAnchor(vehicleId);
+      queueMicrotask(() => { void handleSyncSituacionCupoAnchor(vehicleId); });
     } catch (e) {
       console.error("[handleAddSubTarea]", e);
     }
@@ -4848,6 +4850,7 @@ export default function Planeacion() {
 
   const handleToggleSubTarea = async (vehicleId: string, subTareaId: string) => {
     if (!user) return;
+    beginLocalVehicleMutation("sub-situacion");
     const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const targetSub = (vehicle.subTareas || []).find(st => st.id === subTareaId);
@@ -4879,8 +4882,9 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
     persistVehiclesRef();
     try {
+      extendLocalVehicleMutation("sub-situacion");
       await updateVehicle(user.uid, vehicleId, { subTareas });
-      void handleSyncSituacionCupoAnchor(vehicleId);
+      queueMicrotask(() => { void handleSyncSituacionCupoAnchor(vehicleId); });
       if (chimesOnComplete > 0) void playSituacionChimes(chimesOnComplete);
       if (isChecking && vehicle.tipoFlota === "situacion" && targetSub) {
         recordDecision(user.uid, {
@@ -4910,6 +4914,7 @@ export default function Planeacion() {
 
   const handleSetSubTareaMinutosCupo = async (vehicleId: string, subTareaId: string, minutos: number | undefined) => {
     if (!user) return;
+    beginLocalVehicleMutation("sub-situacion");
     const vehicle = vehicleById(vehicleId);
     if (!vehicle?.subTareas) return;
     const sc = vehicle.situacionCronometro;
@@ -4941,6 +4946,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
     persistVehiclesRef();
     try {
+      extendLocalVehicleMutation("sub-situacion");
       await updateVehicle(user.uid, vehicleId, { subTareas });
       const vAfter = vehiclesRef.current.find(x => x.id === vehicleId);
       const first = (vAfter?.subTareas || []).find(st => {
@@ -4948,7 +4954,12 @@ export default function Planeacion() {
         if (cronActivo) return situacionFilaCronometroPendiente(st);
         return !st.enDesgloseCronometro && !st.completada;
       });
-      void handleSyncSituacionCupoAnchor(vehicleId, first?.id === subTareaId ? { forceResetSameRow: true } : undefined);
+      queueMicrotask(() => {
+        void handleSyncSituacionCupoAnchor(
+          vehicleId,
+          first?.id === subTareaId ? { forceResetSameRow: true } : undefined
+        );
+      });
     } catch (err) {
       console.error("[handleSetSubTareaMinutosCupo]", err);
     }
@@ -6184,6 +6195,7 @@ export default function Planeacion() {
 
   const handleAddCasaItem = async (vehicleId: string, subTareaId: string, texto: string) => {
     if (!user) return;
+    beginLocalVehicleMutation("sub-situacion");
     const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const t = texto.trim();
@@ -6202,6 +6214,7 @@ export default function Planeacion() {
     vehiclesRef.current = vehiclesRef.current.map(v => (v.id === vehicleId ? { ...v, subTareas } : v));
     persistVehiclesRef();
     try {
+      extendLocalVehicleMutation("sub-situacion");
       await updateVehicle(user.uid, vehicleId, { subTareas });
     } catch (e) {
       console.error("[handleAddCasaItem]", e);
@@ -6237,6 +6250,7 @@ export default function Planeacion() {
 
   const handleAddDetalle = async (vehicleId: string, subTareaId: string, texto: string) => {
     if (!user) return;
+    beginLocalVehicleMutation("sub-situacion");
     const vehicle = vehicleById(vehicleId);
     if (!vehicle) return;
     const nuevoDetalle: DetalleSubTarea = { id: `dt_${Date.now()}`, texto, entregado: false, creadaAt: Date.now() };
@@ -6246,7 +6260,10 @@ export default function Planeacion() {
     setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, subTareas } : v));
     vehiclesRef.current = vehiclesRef.current.map(v => v.id === vehicleId ? { ...v, subTareas } : v);
     persistVehiclesRef();
-    try { await updateVehicle(user.uid, vehicleId, { subTareas }); } catch (e) { console.error("[handleAddDetalle]", e); }
+    try {
+      extendLocalVehicleMutation("sub-situacion");
+      await updateVehicle(user.uid, vehicleId, { subTareas });
+    } catch (e) { console.error("[handleAddDetalle]", e); }
   };
 
   const handleEntregarDetalle = async (vehicleId: string, subTareaId: string, detalleId: string) => {
@@ -10226,22 +10243,32 @@ function VehicleCard({
 
   useEffect(() => {
     if (!onSyncSituacionCupoAnchor || vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const run = () => {
-      if (isLocalVehicleMutationLocked()) return;
+      if (isLocalVehicleMutationLocked()) {
+        retryTimer = window.setTimeout(run, 250);
+        return;
+      }
       onSyncSituacionCupoAnchor(vehicle.id);
     };
     if (typeof requestIdleCallback !== "undefined") {
       const id = requestIdleCallback(run, { timeout: 1500 });
-      return () => cancelIdleCallback(id);
+      return () => {
+        cancelIdleCallback(id);
+        if (retryTimer) clearTimeout(retryTimer);
+      };
     }
-    const t = window.setTimeout(run, 0);
-    return () => clearTimeout(t);
+    retryTimer = window.setTimeout(run, 0);
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [vehicle.id, vehicle.status, vehicle.tipoFlota, situacionSubWatchKey, onSyncSituacionCupoAnchor]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
     if (!expanded && vehicle.situacionCronometro?.activo !== true) return;
-    const id = window.setInterval(() => setSituacionCupoUiTick(t => t + 1), 1000);
+    const tickMs = isMobilePerfMode() ? 3000 : 1000;
+    const id = window.setInterval(() => setSituacionCupoUiTick(t => t + 1), tickMs);
     return () => clearInterval(id);
   }, [vehicle.tipoFlota, vehicle.status, expanded, vehicle.situacionCronometro?.activo]);
 
@@ -12903,7 +12930,21 @@ function VehicleCard({
                         {RING_COPY.sellarDirectoRing}
                       </button>
                     ) : null}
-                    <button onClick={() => { if (onAddSubTarea && newSubTarea.trim()) { onAddSubTarea(vehicle.id, newSubTarea.trim()); setNewSubTarea(""); } }} disabled={!newSubTarea.trim()} className="px-2 py-1 rounded-lg transition-all disabled:opacity-30" style={{ backgroundColor: "rgba(148,163,184,0.2)", color: PLATA }} data-testid={`button-add-subtarea-${vehicle.id}`}><Plus size={14} /></button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!onAddSubTarea || !newSubTarea.trim()) return;
+                        void onAddSubTarea(vehicle.id, newSubTarea.trim());
+                        setNewSubTarea("");
+                      }}
+                      disabled={!newSubTarea.trim()}
+                      className="px-2 py-1 rounded-lg transition-all disabled:opacity-30"
+                      style={{ backgroundColor: "rgba(148,163,184,0.2)", color: PLATA }}
+                      data-testid={`button-add-subtarea-${vehicle.id}`}
+                    >
+                      <Plus size={14} />
+                    </button>
                   </div>
                   {situacionPuedeLanzarReto && (
                     <button
