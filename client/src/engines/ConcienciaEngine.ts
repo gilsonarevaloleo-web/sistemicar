@@ -777,10 +777,11 @@ export function buildConcienciaTimeline(params: {
   const centinelaMin = Math.round(centinelaMinRaw * 10) / 10;
   const vacioMin = Math.round(vacioMinRaw * 10) / 10;
 
-  const totalMin = conquistaMin + entropiaMin;
-  const fillPct = Math.min(100, (totalMin / jornadaMin) * 100);
-  const conquistaArcPct = totalMin > 0 ? fillPct * (conquistaMin / totalMin) : 0;
-  const entropiaArcPct = totalMin > 0 ? fillPct * (entropiaMin / totalMin) : 0;
+  // Anillo interior: morado = conquista / plan del día; rojo = entropía vivida / plan.
+  // Opción B: antes del primer segmento (core null) queda en 0; al entrar en segmentos crece la lucha.
+  const conquistaArcPct = jornadaMin > 0 ? Math.min(100, (conquistaMin / jornadaMin) * 100) : 0;
+  const entropiaArcPct = jornadaMin > 0 ? Math.min(100, (entropiaMin / jornadaMin) * 100) : 0;
+  const fillPct = Math.min(100, conquistaArcPct + entropiaArcPct);
 
   const arcs: TimelineClockArc[] = [
     { startDeg: 0, endDeg: 360, kind: "fondo", lap: 0 },
@@ -1486,11 +1487,16 @@ function readNoVehicleSinceMs(): number | null {
 
 function patchTimelineEntropy(timeline: ConcienciaTimeline, entropiaMin: number): ConcienciaTimeline {
   const jornadaMin = timeline.metricas.jornadaMin;
-  const entropiaArcPct = jornadaMin > 0 ? Math.round((entropiaMin / jornadaMin) * 100) : 0;
+  const conquistaMin = timeline.metricas.conquistaMin;
+  const conquistaArcPct =
+    jornadaMin > 0 ? Math.min(100, Math.round((conquistaMin / jornadaMin) * 1000) / 10) : 0;
+  const entropiaArcPct =
+    jornadaMin > 0 ? Math.min(100, Math.round((entropiaMin / jornadaMin) * 1000) / 10) : 0;
+  const fillPct = Math.min(100, conquistaArcPct + entropiaArcPct);
   return {
     ...timeline,
     dayStats: { ...timeline.dayStats, entropiaMin },
-    metricas: { ...timeline.metricas, entropiaMin, entropiaArcPct },
+    metricas: { ...timeline.metricas, entropiaMin, entropiaArcPct, conquistaArcPct, fillPct },
   };
 }
 

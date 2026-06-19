@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import type { HorizonArc, HorizonProjection } from "@/engines/ConcienciaHorizonEngine";
 import { HORIZON_VISIBLE_DEG } from "@/engines/ConcienciaHorizonEngine";
+import { svgDropShadowFilter } from "@/lib/mobilePerf";
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 
@@ -174,7 +175,7 @@ export default function AnilloConcienciaHorizon({
             stroke={CYAN}
             strokeWidth={1.4}
             strokeLinecap="round"
-            style={{ filter: `drop-shadow(0 0 4px ${CYAN}80)` }}
+            style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 4px ${CYAN}80)`) }}
           />
           <circle cx={cx} cy={cy - railR} r={railSW * 0.45} fill="none" stroke={CYAN} strokeWidth={0.9} opacity={0.5} />
           <circle cx={cx} cy={cy} r={2.5} fill={CYAN} opacity={0.85} />

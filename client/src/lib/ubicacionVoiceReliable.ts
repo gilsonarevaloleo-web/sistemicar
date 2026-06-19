@@ -30,8 +30,9 @@ type PendingVoice = {
 
 const pending = new Map<string, PendingVoice>();
 const cleanupByKey = new Map<string, () => void>();
-const MAX_RELIABLE_ATTEMPTS = 2;
-const SPOKEN_SAFETY_MS = 8_000;
+const MAX_RELIABLE_ATTEMPTS = 6;
+const RETRY_DELAYS_MS = [1500, 4000, 10_000, 20_000, 30_000];
+const SPOKEN_SAFETY_MS = 12_000;
 let voiceRetryHubRegistered = false;
 
 function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
@@ -41,11 +42,19 @@ function isVoiceEnabledFor(source: UbicacionVoiceSource): boolean {
   return true;
 }
 
+/** Marca entrega exitosa — dispara onSpoken solo cuando realmente habló. */
 function markVoiceDelivered(key: string): void {
   const entry = pending.get(key);
   if (!entry || entry.spoken) return;
   entry.spoken = true;
   entry.onSpoken?.();
+  cleanupByKey.get(key)?.();
+  cleanupByKey.delete(key);
+  pending.delete(key);
+}
+
+/** Abandona reintentos sin marcar como hablado (evita silenciar intro del desglosador). */
+function abandonVoicePending(key: string): void {
   cleanupByKey.get(key)?.();
   cleanupByKey.delete(key);
   pending.delete(key);
@@ -60,18 +69,18 @@ function trySpeak(key: string): void {
   }
 
   if (entry.attempts >= MAX_RELIABLE_ATTEMPTS) {
-    markVoiceDelivered(key);
+    abandonVoicePending(key);
     return;
   }
 
   const phrase = entry.phrases[0];
-  if (phrase && isUbicacionPhraseQueued(phrase)) {
-    markVoiceDelivered(key);
+  if (!phrase) return;
+
+  if (isUbicacionPhraseQueued(phrase)) {
     return;
   }
 
   if (entry.attempts > 0 && isUbicacionSpeechActive()) {
-    markVoiceDelivered(key);
     return;
   }
 
@@ -92,9 +101,16 @@ function trySpeak(key: string): void {
 export function ensureUbicacionVoiceRetryHub(): void {
   if (voiceRetryHubRegistered || typeof window === "undefined") return;
   voiceRetryHubRegistered = true;
-  const onRetry = () => retryAllPendingUbicacionVoice();
-  document.addEventListener("visibilitychange", onRetry);
+  const onRetry = () => {
+    warmupSpeechSynthesis(true);
+    recoverSpeechQueue();
+    retryAllPendingUbicacionVoice();
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") onRetry();
+  });
   window.addEventListener("focus", onRetry);
+  window.addEventListener("pageshow", onRetry);
 }
 
 export function retryAllPendingUbicacionVoice(): void {
@@ -131,11 +147,11 @@ export function speakUbicacionVoiceReliable(
 
   trySpeak(key);
 
-  const retryTimers = [1500, 4000].map(ms => window.setTimeout(() => trySpeak(key), ms));
+  const retryTimers = RETRY_DELAYS_MS.map(ms => window.setTimeout(() => trySpeak(key), ms));
   const spokenSafetyTimer = window.setTimeout(() => {
     const entry = pending.get(key);
     if (entry && !entry.spoken) {
-      markVoiceDelivered(key);
+      trySpeak(key);
     }
   }, SPOKEN_SAFETY_MS);
 

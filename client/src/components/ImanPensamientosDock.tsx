@@ -62,6 +62,7 @@ function ImanPensamientosDock({
   const [rutaDraft, setRutaDraft] = useState<ReservaTacticaRuta>(() => getDefaultReservaRuta());
   const [proyectoDraft, setProyectoDraft] = useState(defaultProyectoId);
   const [adding, setAdding] = useState(false);
+  const submitInFlightRef = useRef(false);
   const [enviandoId, setEnviandoId] = useState<string | null>(null);
   const [enviandoLote, setEnviandoLote] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -120,7 +121,8 @@ function ImanPensamientosDock({
 
   const submitQuickAdd = async () => {
     const texto = draft.trim();
-    if (!texto || adding) return;
+    if (!texto || adding || submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setAdding(true);
     setDefaultReservaRuta(rutaDraft);
     try {
@@ -129,6 +131,7 @@ function ImanPensamientosDock({
     } catch {
       // El padre muestra toast; mantener draft para reintentar
     } finally {
+      submitInFlightRef.current = false;
       setAdding(false);
     }
   };
@@ -269,7 +272,10 @@ function ImanPensamientosDock({
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === "Enter") void submitQuickAdd();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void submitQuickAdd();
+                    }
                   }}
                   placeholder="Capturar pensamiento en el Crisol…"
                   className="flex-1 min-w-0 px-2.5 py-2 rounded-lg bg-black/40 border border-white/10 text-[10px] text-white placeholder:text-slate-600 focus:outline-none focus:border-white/25"

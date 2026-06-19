@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -446,6 +446,11 @@ import BalanceConquistaPanel from "@/components/BalanceConquistaPanel";
 import PlanificacionCockpit from "@/components/PlanificacionCockpit";
 import PlaneacionCrisolDock from "@/components/planeacion/PlaneacionCrisolDock";
 import PlaneacionMetricsEscalera from "@/components/planeacion/PlaneacionMetricsEscalera";
+import { VehicleCardLiveClock } from "@/components/planeacion/vehicleCardLiveClock";
+import {
+  areVehicleCardPropsEqual,
+  vehicleCardNeedsLiveTick,
+} from "@/components/planeacion/vehicleCardMemo";
 import {
   aplicarProyectoHeredadoASub,
   devolverRingPendientesAlIman,
@@ -5816,6 +5821,35 @@ export default function Planeacion() {
     return undefined;
   }, [vehicles, expandedId]);
 
+  const handleVehicleToggle = useCallback((vehicleId: string) => {
+    setExpandedId(prev => (prev === vehicleId ? null : vehicleId));
+  }, []);
+
+  const handleVehicleComplete = useCallback((vehicleId: string) => {
+    setCierreEnergiaSeleccion(null);
+    setCierreEnergiaPending({ kind: "flota", vehicleId, status: "cumplido" });
+  }, []);
+
+  const handleVehicleArchive = useCallback((vehicleId: string) => {
+    setCierreEnergiaSeleccion(null);
+    setCierreEnergiaPending({ kind: "flota", vehicleId, status: "archivado" });
+  }, []);
+
+  const handleOpenCierreEnergiaStable = useCallback((p: CierreEnergiaModalPayload) => {
+    setCierreEnergiaSeleccion(null);
+    setCierreRutaSeleccion(new Set());
+    setCierreRutaSinUso(false);
+    setCierreRutaPatron(null);
+    setCierreEnergiaPending(p);
+  }, []);
+
+  const handleVerSituacionBloquePsStable = useCallback(
+    (vehicleId: string, titulo: string, summary: SituacionDesgloseSummary) => {
+      openSituacionDesgloseCelebration(vehicleId, titulo, summary);
+    },
+    [openSituacionDesgloseCelebration]
+  );
+
   const handleReservaTacticaQuickAdd = async (
     texto: string,
     ruta: ReservaTacticaRuta,
@@ -5829,7 +5863,7 @@ export default function Planeacion() {
     if (!trimmed) return;
     const proy = proyectoId ? proyectosHub.find(p => p.id === proyectoId) : undefined;
     try {
-      const { localSaved } = await addSituacionReserva(user.uid, {
+      const { localSaved, duplicate } = await addSituacionReserva(user.uid, {
         texto: trimmed,
         ruta,
         ...(proy
@@ -5839,6 +5873,7 @@ export default function Planeacion() {
           ? { segmentoId: segmentoActivo.id, segmentoNombre: segmentoActivo.nombre }
           : {}),
       });
+      if (duplicate) return;
       if (!localSaved) {
         toast.error("No se pudo guardar en el dispositivo", {
           description: "Libera espacio en el navegador o cierra pestañas y vuelve a intentar.",
@@ -6646,7 +6681,7 @@ export default function Planeacion() {
                 {formatCombustibleResumen(combustibleLive)}
               </p>
             )}
-            anillo={(
+            anillo={planTab !== "metricas" ? (
               <AnilloConcienciaLive
                 segmentos={planilla?.segmentos || []}
                 vehicles={vehicles}
@@ -6654,7 +6689,7 @@ export default function Planeacion() {
                 ringOnly
                 size={72}
               />
-            )}
+            ) : null}
             segmentoChip={(
               segmentoActivo ? (
                 <div className="rounded-xl border px-3 py-2" style={{ backgroundColor: "rgba(255,255,255,0.03)", borderColor: "rgba(255,255,255,0.08)" }} data-testid="cockpit-segmento-activo">
@@ -8290,7 +8325,7 @@ export default function Planeacion() {
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Preparando flota activa…</p>
                   </div>
                 ) : [...sortedOperativaActivos, ...panoramicaActivos.filter(v => !sortedOperativaActivos.includes(v)), ...activeVehicles.filter(v => !v.tipoTerminoRapido)].filter((v, i, arr) => arr.findIndex(x => x.id === v.id) === i).map((v) => (
-                  <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} onOpenCierreEnergia={(p) => { setCierreEnergiaSeleccion(null); setCierreRutaSeleccion(new Set()); setCierreRutaSinUso(false); setCierreRutaPatron(null); setCierreEnergiaPending(p); }} onComplete={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "cumplido" }); }} onArchive={() => { setCierreEnergiaSeleccion(null); setCierreEnergiaPending({ kind: "flota", vehicleId: v.id, status: "archivado" }); }} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onAddSubTareaUrgenteACola={handleAddSubTareaUrgenteACola} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onCerrarSituacionDesglosadorDeGolpe={handleCerrarSituacionDesglosadorDeGolpe} onCerrarRingPorInactividad={handleCerrarRingPorInactividad} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} onVerSituacionBloquePs={() => { const s = situacionBloqueSummaries[v.id]; if (s) openSituacionDesgloseCelebration(v.id, v.titulo, s); }} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorCierreDeGolpe={handleDesglosadorCierreDeGolpe} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onDesglosadorAddSub={handleDesglosadorAddSub} onDesglosadorActivatePendingSub={handleDesglosadorActivatePendingSub} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onPuntoCeroSessionUpdate={handlePuntoCeroSessionUpdate} onPuntoCeroColorConfirm={handlePuntoCeroColorConfirm} onPuntoCeroAutoClose={handlePuntoCeroAutoClose} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
+                  <MemoVehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggleVehicle={handleVehicleToggle} onOpenCierreEnergia={handleOpenCierreEnergiaStable} onCompleteVehicle={handleVehicleComplete} onArchiveVehicle={handleVehicleArchive} segmentoNumero={segmentoNumero} planilla={planilla} onAddSubTarea={handleAddSubTarea} onAddSubTareaUrgenteACola={handleAddSubTareaUrgenteACola} onToggleSubTarea={handleToggleSubTarea} onSetSubTareaMinutosCupo={handleSetSubTareaMinutosCupo} onExtendSituacionCupo={handleExtendSituacionCupo} onSyncSituacionCupoAnchor={handleSyncSituacionCupoAnchor} onMoveSubTareasToCronometro={handleMoveSubTareasToCronometro} onSituacionCronometroSetHoraFin={handleSituacionCronometroSetHoraFin} onSituacionCronometroCumplido={handleSituacionCronometroCumplido} onSituacionCronometroFallado={handleSituacionCronometroFallado} onSituacionCronometroReservar={handleSituacionCronometroReservar} onQuitarSituacionCupo={handleQuitarSituacionCupo} onCerrarSituacionDesgloseBloque={handleCerrarSituacionDesgloseBloque} onCerrarSituacionDesglosadorDeGolpe={handleCerrarSituacionDesglosadorDeGolpe} onCerrarRingPorInactividad={handleCerrarRingPorInactividad} situacionBloquePsTotal={situacionBloqueSummaries[v.id]?.psTotal} situacionDesgloseSummary={situacionBloqueSummaries[v.id]} onVerSituacionBloquePs={handleVerSituacionBloquePsStable} onAddDetalle={handleAddDetalle} onEntregarDetalle={handleEntregarDetalle} onAddCasaItem={handleAddCasaItem} onToggleCasaItem={handleToggleCasaItem} arquitectoUnlocked={soberaniaDiaUnlocked} onInvestigadorClose={handleInvestigadorClose} onDesglosadorUpdate={handleDesglosadorUpdate} onDesglosadorGlobalClose={handleDesglosadorGlobalClose} onDesglosadorCierreDeGolpe={handleDesglosadorCierreDeGolpe} onDesglosadorDepthTick={handleDesglosadorDepthTick} onDesglosadorPausaInterrupcion={handleDesglosadorPausaInterrupcion} onResumeDesglosador={resumeDesglosadorTrasInterrupcion} onDesglosadorReorderSubs={handleDesglosadorReorderSubs} onDesglosadorAddSub={handleDesglosadorAddSub} onDesglosadorActivatePendingSub={handleDesglosadorActivatePendingSub} onReorderSubTareasCronometro={handleReorderSubTareasCronometro} onDescansoClose={handleDescansoClose} onMicroPasoToggle={handleMicroPasoToggle} onEtapaPuntoCeroToggle={handleEtapaPuntoCeroToggle} onPuntoCeroSessionUpdate={handlePuntoCeroSessionUpdate} onPuntoCeroColorConfirm={handlePuntoCeroColorConfirm} onPuntoCeroAutoClose={handlePuntoCeroAutoClose} onRutaBandCross={recordRutaBandCross} onBloqueCierre={recordBloqueCierre} />
                 ))}
               </AccordionSection>
               </div>
@@ -8328,7 +8363,7 @@ export default function Planeacion() {
               return (
                 <AccordionSection title="HISTORIAL" subtitle="Hoy" icon={Flag} color={SLATE} count={vehiculosHoy.length} defaultOpen={false}>
                   {vehiculosHoy.map((v) => (
-                    <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} minimal planilla={planilla} />
+                    <MemoVehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggleVehicle={handleVehicleToggle} minimal planilla={planilla} />
                   ))}
                   {vehiculosAnteriores.length > 0 && (
                     <button
@@ -8348,7 +8383,7 @@ export default function Planeacion() {
                         <div className="flex-1 h-px" style={{ backgroundColor: "rgba(255,255,255,0.06)" }} />
                       </div>
                       {lista.map(v => (
-                        <VehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggle={() => setExpandedId(expandedId === v.id ? null : v.id)} minimal planilla={planilla} />
+                        <MemoVehicleCard key={v.id} vehicle={v} expanded={expandedId === v.id} onToggleVehicle={handleVehicleToggle} minimal planilla={planilla} />
                       ))}
                     </div>
                   ))}
@@ -9974,11 +10009,11 @@ function calculateVehicleScore(vehicle: Vehicle): {
 }
 
 function VehicleCard({
-  vehicle, expanded, onToggle, onComplete, onArchive, minimal = false,
+  vehicle, expanded, onToggleVehicle, onCompleteVehicle, onArchiveVehicle, minimal = false,
   segmentoNumero,
   planilla,
   onAddSubTarea, onAddSubTareaUrgenteACola, onToggleSubTarea, onSetSubTareaMinutosCupo, onExtendSituacionCupo, onSyncSituacionCupoAnchor, onAddDetalle, onEntregarDetalle, onAddCasaItem, onToggleCasaItem, arquitectoUnlocked,
-  onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onSituacionCronometroReservar, onQuitarSituacionCupo, onCerrarSituacionDesgloseBloque, onCerrarSituacionDesglosadorDeGolpe, onCerrarRingPorInactividad, situacionBloquePsTotal, onVerSituacionBloquePs,
+  onMoveSubTareasToCronometro, onSituacionCronometroSetHoraFin, onSituacionCronometroCumplido, onSituacionCronometroFallado, onSituacionCronometroReservar, onQuitarSituacionCupo, onCerrarSituacionDesgloseBloque, onCerrarSituacionDesglosadorDeGolpe, onCerrarRingPorInactividad, situacionBloquePsTotal, situacionDesgloseSummary, onVerSituacionBloquePs,
   onInvestigadorClose, onDesglosadorUpdate, onDesglosadorGlobalClose, onDesglosadorCierreDeGolpe, onDesglosadorDepthTick, onDesglosadorPausaInterrupcion, onResumeDesglosador, onDesglosadorReorderSubs, onDesglosadorAddSub, onDesglosadorActivatePendingSub,
   onReorderSubTareasCronometro,
   onDescansoClose, onMicroPasoToggle, onEtapaPuntoCeroToggle,
@@ -9986,7 +10021,10 @@ function VehicleCard({
   onOpenCierreEnergia,
   onRutaBandCross, onBloqueCierre
 }: {
-  vehicle: Vehicle; expanded: boolean; onToggle: () => void; onComplete?: () => void; onArchive?: () => void;
+  vehicle: Vehicle; expanded: boolean;
+  onToggleVehicle: (vehicleId: string) => void;
+  onCompleteVehicle?: (vehicleId: string) => void;
+  onArchiveVehicle?: (vehicleId: string) => void;
   minimal?: boolean; segmentoNumero?: number | null;
   planilla?: Planilla | null;
   onAddSubTarea?: (vehicleId: string, texto: string) => void | Promise<string | undefined>;
@@ -10006,7 +10044,8 @@ function VehicleCard({
   onCerrarRingPorInactividad?: (vehicleId: string) => void;
   onDesglosadorCierreDeGolpe?: (vehicleId: string) => void;
   situacionBloquePsTotal?: number;
-  onVerSituacionBloquePs?: () => void;
+  situacionDesgloseSummary?: SituacionDesgloseSummary;
+  onVerSituacionBloquePs?: (vehicleId: string, titulo: string, summary: SituacionDesgloseSummary) => void;
   onAddDetalle?: (vehicleId: string, subTareaId: string, texto: string) => void;
   onEntregarDetalle?: (vehicleId: string, subTareaId: string, detalleId: string) => void;
   onAddCasaItem?: (vehicleId: string, subTareaId: string, texto: string) => void;
@@ -10105,7 +10144,13 @@ function VehicleCard({
   subTareasRef.current = vehicle.subTareas;
   const situacionAnchorRef = useRef(vehicle.situacionCupoAnchor);
   situacionAnchorRef.current = vehicle.situacionCupoAnchor;
-  const [situacionCupoUiTick, setSituacionCupoUiTick] = useState(0);
+  const computeTimerRef = useRef<() => void>(() => {});
+  const desglosadorUpdateRef = useRef<() => void>(() => {});
+  const [liveUiTick, setLiveUiTick] = useState(0);
+  const needsLiveTick = useMemo(
+    () => vehicleCardNeedsLiveTick(vehicle, expanded),
+    [vehicle, expanded]
+  );
   const subStartVoiceRef = useRef<Set<string>>(new Set());
   const [subRutaModal, setSubRutaModal] = useState<null | {
     subId: string;
@@ -10134,7 +10179,12 @@ function VehicleCard({
   const [execSubRecord, setExecSubRecord] = useState<number | undefined>();
   const [execSubRuta, setExecSubRuta] = useState(true);
   const [execSubSugOpen, setExecSubSugOpen] = useState(false);
-  const [desglosadorUiTick, setDesglosadorUiTick] = useState(0);
+
+  const runLiveTimerTick = useCallback(() => {
+    computeTimerRef.current();
+    desglosadorUpdateRef.current();
+    setLiveUiTick(t => t + 1);
+  }, []);
 
   const playChime = useCallback(() => {
     if (!isTikSoundEnabled()) return;
@@ -10265,25 +10315,11 @@ function VehicleCard({
   }, [vehicle.id, vehicle.status, vehicle.tipoFlota, situacionSubWatchKey, onSyncSituacionCupoAnchor]);
 
   useEffect(() => {
-    if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
-    if (!expanded && vehicle.situacionCronometro?.activo !== true) return;
-    const tickMs = isMobilePerfMode() ? 3000 : 1000;
-    const id = window.setInterval(() => setSituacionCupoUiTick(t => t + 1), tickMs);
-    return () => clearInterval(id);
-  }, [vehicle.tipoFlota, vehicle.status, expanded, vehicle.situacionCronometro?.activo]);
-
-  useEffect(() => {
     if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || !onDesglosadorDepthTick) return;
     onDesglosadorDepthTick(vehicle.id);
     const id = window.setInterval(() => onDesglosadorDepthTick(vehicle.id), 60_000);
     return () => clearInterval(id);
   }, [vehicle.id, vehicle.tipoReloj, vehicle.status, vehicle.aperturaAt, onDesglosadorDepthTick]);
-
-  useEffect(() => {
-    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo") return;
-    const id = window.setInterval(() => setDesglosadorUiTick(t => t + 1), 1000);
-    return () => clearInterval(id);
-  }, [vehicle.id, vehicle.tipoReloj, vehicle.status, vehicle.aperturaAt]);
 
   const desglosadorAutoActivateRef = useRef<Set<string>>(new Set());
 
@@ -10404,7 +10440,7 @@ function VehicleCard({
       subTexto: sub.texto,
       tagKey: warnKey,
     });
-  }, [vehicle.tipoFlota, vehicle.status, situacionAnchorKey, vehicle.titulo, vehicle.id, situacionCupoUiTick]);
+  }, [vehicle.tipoFlota, vehicle.status, situacionAnchorKey, vehicle.titulo, vehicle.id, liveUiTick]);
 
   useEffect(() => {
     if (vehicle.tipoFlota !== "situacion" || vehicle.status !== "activo") return;
@@ -10832,23 +10868,22 @@ function VehicleCard({
 
     computeTimer();
 
+    computeTimerRef.current = computeTimer;
+
     const onFocus = () => computeTimer();
     document.addEventListener("visibilitychange", onFocus);
 
-    if (!expanded && !(tipoFlota === "situacion" && situacionRelojDebeMostrarse(vehicle))) {
-      return () => document.removeEventListener("visibilitychange", onFocus);
-    }
-
-    const interval = setInterval(computeTimer, 1000);
     return () => {
-      clearInterval(interval);
       document.removeEventListener("visibilitychange", onFocus);
     };
   }, [expanded, vehicle.status, vehicle.tipoTerminoRapido, vehicle.criterioDetalle, vehicle.tiempoInicio, tipoFlota, vehicle.aperturaAt, vehicle.parentesisRecarga, vehicle.tipoReloj, vehicle.cantidadObjetivo, vehicle.titulo, vehicle.situacionCronometro, vehicle.situacionCupoAnchor, vehicle.subTareas]);
 
   // Timer for active sub-vehicle in desglosador mode — fuente única: computeDesglosadorClocks
   useEffect(() => {
-    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo") return;
+    if (vehicle.tipoReloj !== "desglosador" || vehicle.status !== "activo" || !expanded) {
+      desglosadorUpdateRef.current = () => {};
+      return;
+    }
     const activeSub = (vehicle.subVehiculos || []).find(s => s.status === "activo");
     if (!activeSub?.aperturaAt) return;
 
@@ -10902,14 +10937,15 @@ function VehicleCard({
     };
 
     update();
-    const iv = setInterval(update, 1000);
+    desglosadorUpdateRef.current = update;
     return () => {
-      clearInterval(iv);
+      desglosadorUpdateRef.current = () => {};
       setHoraFinProyectada(null);
       setFuturoSubLabel("—");
       setFuturoCicloLabel("—");
     };
   }, [
+    expanded,
     vehicle.tipoReloj,
     vehicle.status,
     vehicle.subVehiculos,
@@ -11082,7 +11118,7 @@ function VehicleCard({
     vehicle.situacionCronometro,
     vehicle.id,
     situacionBloqueListo,
-    situacionCupoUiTick,
+    liveUiTick,
   ]);
 
   useEffect(() => {
@@ -11263,8 +11299,9 @@ function VehicleCard({
 
   return (
     <motion.div layout className="rounded-xl border overflow-hidden" style={{ backgroundColor: "#0a0a0a", borderColor: `${statusColors[vehicle.status]}30` }}>
+      {needsLiveTick && <VehicleCardLiveClock onTick={runLiveTimerTick} />}
 
-      <button onClick={onToggle} className="w-full p-3 text-left" data-testid={`card-vehicle-${vehicle.id}`}>
+      <button onClick={() => onToggleVehicle(vehicle.id)} className="w-full p-3 text-left" data-testid={`card-vehicle-${vehicle.id}`}>
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors[vehicle.status] }} />
@@ -11538,7 +11575,7 @@ function VehicleCard({
                 }
 
                 const sessionElapsedSec = getDesglosadorSessionElapsedSec(vehicle);
-                void desglosadorUiTick;
+                void liveUiTick;
 
                 return (
                   <div className="pt-3 space-y-3">
@@ -12168,11 +12205,11 @@ function VehicleCard({
                     {RING_COPY.ringHint}
                   </p>
                   )}
-                  {!situacionCronActivo && onComplete && onArchive && (
+                  {!situacionCronActivo && onCompleteVehicle && onArchiveVehicle && (
                     <div className="grid grid-cols-2 gap-2 mb-2" data-testid={`situacion-cerrar-vehiculo-${vehicle.id}`}>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); onComplete(); }}
+                        onClick={(e) => { e.stopPropagation(); onCompleteVehicle(vehicle.id); }}
                         className="py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1"
                         style={{ backgroundColor: `${EMERALD}18`, color: EMERALD, border: `1px solid ${EMERALD}40` }}
                       >
@@ -12180,7 +12217,7 @@ function VehicleCard({
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); onArchive(); }}
+                        onClick={(e) => { e.stopPropagation(); onArchiveVehicle(vehicle.id); }}
                         className="py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1"
                         style={{ backgroundColor: "rgba(245,158,11,0.12)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.35)" }}
                       >
@@ -12229,7 +12266,7 @@ function VehicleCard({
                     </div>
                   )}
                   {vehicle.situacionCronometro?.activo === true && (() => {
-                    void situacionCupoUiTick;
+                    void liveUiTick;
                     const sc = vehicle.situacionCronometro!;
                     const bloqueInicio = sc.bloqueInicioAt ?? vehicle.aperturaAt ?? Date.now();
                     const contratoMs = situacionContratoFinMs(sc);
@@ -12289,7 +12326,7 @@ function VehicleCard({
                     );
                   })()}
                   {(() => {
-                    void situacionCupoUiTick;
+                    void liveUiTick;
                     const anchor = vehicle.situacionCupoAnchor;
                     const subs = vehicle.subTareas || [];
                     if (!anchor?.subTareaId || subs.length === 0) {
@@ -12330,7 +12367,12 @@ function VehicleCard({
                   {vehicle.situacionCronometro?.activo !== true && (situacionBloquePsTotal ?? 0) > 0 && onVerSituacionBloquePs && (
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); onVerSituacionBloquePs(); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (situacionDesgloseSummary) {
+                          onVerSituacionBloquePs?.(vehicle.id, vehicle.titulo, situacionDesgloseSummary);
+                        }
+                      }}
                       className="w-full py-2 mb-2 rounded-xl text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5"
                       style={{ backgroundColor: "rgba(212,175,55,0.1)", color: GOLD, border: "1px solid rgba(212,175,55,0.35)" }}
                       data-testid={`situacion-ver-ps-bloque-${vehicle.id}`}
@@ -12370,7 +12412,7 @@ function VehicleCard({
                             const all = vehicle.subTareas || [];
                             const subsLibre = sortSubTareasTrabajoPrimero(all.filter(s => !s.enDesgloseCronometro));
                             const subsCron = sortSubTareasTrabajoPrimero(all.filter(s => s.enDesgloseCronometro));
-                            void situacionCupoUiTick;
+                            void liveUiTick;
                             const horariosCron =
                               situacionCronActivo && subsCron.length > 0
                                 ? computeSituacionCronometroHorarios(subsCron, {
@@ -13312,8 +13354,8 @@ function VehicleCard({
                           Al cerrar la situación el desglosador padre retoma el tiempo congelado.
                         </p>
                       )}
-                      <button onClick={onComplete} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: `${EMERALD}15`, color: EMERALD, border: `1px solid ${EMERALD}30` }} data-testid={`button-complete-${vehicle.id}`}><Check size={14} /> Cumplido situación</button>
-                      <button onClick={onArchive} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(245, 158, 11, 0.1)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.3)" }} data-testid={`button-archive-${vehicle.id}`}><X size={14} /> Incumplido</button>
+                      <button onClick={() => onCompleteVehicle?.(vehicle.id)} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: `${EMERALD}15`, color: EMERALD, border: `1px solid ${EMERALD}30` }} data-testid={`button-complete-${vehicle.id}`}><Check size={14} /> Cumplido situación</button>
+                      <button onClick={() => onArchiveVehicle?.(vehicle.id)} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(245, 158, 11, 0.1)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.3)" }} data-testid={`button-archive-${vehicle.id}`}><X size={14} /> Incumplido</button>
                     </>
                   ) : vehicle.tipoReloj === "desglosador" ? (
                     <p className="text-[9px] text-center px-2 py-2 rounded-lg" style={{ backgroundColor: "rgba(212,175,55,0.08)", color: GOLD, border: "1px solid rgba(212,175,55,0.25)" }}>
@@ -13321,19 +13363,19 @@ function VehicleCard({
                     </p>
                   ) : timerExpired && (tipoFlota === "tiempo" || vehicle.tipoTerminoRapido === "hora") ? (
                     <>
-                      <button onClick={onArchive} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(153,27,27,0.15)", color: "#ef4444", border: "1px solid rgba(153,27,27,0.5)" }} data-testid={`button-archive-${vehicle.id}`}><X size={14} /> CERRAR · TIEMPO EXCEDIDO</button>
+                      <button onClick={() => onArchiveVehicle?.(vehicle.id)} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(153,27,27,0.15)", color: "#ef4444", border: "1px solid rgba(153,27,27,0.5)" }} data-testid={`button-archive-${vehicle.id}`}><X size={14} /> CERRAR · TIEMPO EXCEDIDO</button>
                       <p className="text-[9px] text-center text-slate-500">Justifica arriba para recuperar puntos</p>
                     </>
                   ) : (
                     <>
-                      <button onClick={onComplete} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: `${EMERALD}15`, color: EMERALD, border: `1px solid ${EMERALD}30` }} data-testid={`button-complete-${vehicle.id}`}><Check size={14} /> CUMPLIDO (+{potentialCPCumplido} PS)</button>
+                      <button onClick={() => onCompleteVehicle?.(vehicle.id)} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: `${EMERALD}15`, color: EMERALD, border: `1px solid ${EMERALD}30` }} data-testid={`button-complete-${vehicle.id}`}><Check size={14} /> CUMPLIDO (+{potentialCPCumplido} PS)</button>
                       {vehicle.tipoTerminoRapido && (
-                        <button onClick={onArchive} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(245, 158, 11, 0.1)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.3)" }} data-testid={`button-archive-${vehicle.id}`}><X size={14} /> INCUMPLIDO</button>
+                        <button onClick={() => onArchiveVehicle?.(vehicle.id)} className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(245, 158, 11, 0.1)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.3)" }} data-testid={`button-archive-${vehicle.id}`}><X size={14} /> INCUMPLIDO</button>
                       )}
                     </>
                   )}
                   {!vehicle.tipoTerminoRapido && !tipoFlota && (
-                    <button onClick={onArchive} className="w-full py-2 rounded-lg flex items-center justify-center gap-1 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(255,255,255,0.05)", color: "#6b7280" }}><Archive size={12} /> Archivar</button>
+                    <button onClick={() => onArchiveVehicle?.(vehicle.id)} className="w-full py-2 rounded-lg flex items-center justify-center gap-1 text-xs font-bold transition-all" style={{ backgroundColor: "rgba(255,255,255,0.05)", color: "#6b7280" }}><Archive size={12} /> Archivar</button>
                   )}
                 </div>
               )}
@@ -13383,6 +13425,8 @@ function VehicleCard({
     </motion.div>
   );
 }
+
+const MemoVehicleCard = memo(VehicleCard, areVehicleCardPropsEqual);
 
 function DepositoEnergeticoSection({ vehicles, planilla }: { vehicles: Vehicle[]; planilla?: Planilla | null }) {
   const flotaTypes: TipoFlota[] = ["tiempo", "situacion", "descanso", "verdad"];

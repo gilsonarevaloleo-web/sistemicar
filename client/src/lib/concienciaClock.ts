@@ -68,3 +68,18 @@ export function useConcienciaMetricTick(): number {
   }, []);
   return tick;
 }
+
+/**
+ * Tick compartido para timers de VehicleCard — usa el reloj global (sin N× setInterval).
+ * Móvil: cada evento de reloj (~5 s); escritorio: cada 1 s.
+ */
+export function useVehicleTimerTick(): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const onClock = () => setTick(t => t + 1);
+    window.addEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
+    dispatchConcienciaClockTick();
+    return () => window.removeEventListener(CONCIENCIA_CLOCK_TICK_EVENT, onClock);
+  }, []);
+  return tick;
+}

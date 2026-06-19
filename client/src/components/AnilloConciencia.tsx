@@ -8,6 +8,7 @@ import type {
   TimelineClockArc,
 } from "@/engines/ConcienciaEngine";
 import { clockMinutesToDeg } from "@/engines/ConcienciaEngine";
+import { svgDropShadowFilter } from "@/lib/mobilePerf";
 
 interface SegmentoLite {
   horaInicio: string;
@@ -284,13 +285,15 @@ export default function AnilloConciencia({
                 animate={{ pathLength: 1, opacity: arc.strokeOpacity }}
                 transition={{ duration: 0.8, delay: arc.ordinal * 0.04, ease: "easeOut" }}
                 style={{
-                  filter: arc.isLiveActive
-                    ? `drop-shadow(0 0 8px ${arc.glow}) drop-shadow(0 0 14px ${CYAN}55)`
-                    : arc.isActive
-                      ? `drop-shadow(0 0 5px ${arc.glow})`
-                      : arc.color !== "rgba(255,255,255,0.18)"
-                        ? `drop-shadow(0 0 3px ${arc.glow})`
-                        : "none",
+                  filter: svgDropShadowFilter(
+                    arc.isLiveActive
+                      ? `drop-shadow(0 0 8px ${arc.glow}) drop-shadow(0 0 14px ${CYAN}55)`
+                      : arc.isActive
+                        ? `drop-shadow(0 0 5px ${arc.glow})`
+                        : arc.color !== "rgba(255,255,255,0.18)"
+                          ? `drop-shadow(0 0 3px ${arc.glow})`
+                          : undefined
+                  ),
                 }}
               />
               {arc.isLiveActive && (
@@ -322,7 +325,7 @@ export default function AnilloConciencia({
               initial={{ pathLength: 0, opacity: 0 }}
               animate={{ pathLength: 1, opacity: arc.lap === 0 ? 0.95 : 0.82 }}
               transition={{ duration: 0.45, delay: i * 0.02 }}
-              style={{ filter: `drop-shadow(0 0 2px ${BLOOD}70)` }}
+              style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 2px ${BLOOD}70)`) }}
             />
           ))}
           {battleConquista.map((arc, i) => (
@@ -336,7 +339,7 @@ export default function AnilloConciencia({
               initial={{ pathLength: 0, opacity: 0 }}
               animate={{ pathLength: 1, opacity: arc.lap === 0 ? 0.95 : 0.82 }}
               transition={{ duration: 0.45, delay: i * 0.02 }}
-              style={{ filter: `drop-shadow(0 0 2px ${PURPLE}70)` }}
+              style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 2px ${PURPLE}70)`) }}
             />
           ))}
 
@@ -441,7 +444,7 @@ export default function AnilloConciencia({
               initial={{ pathLength: 0, opacity: 0 }}
               animate={{ pathLength: 1, opacity: 1 }}
               transition={{ duration: 0.5, delay: i * 0.03, ease: "easeOut" }}
-              style={{ filter: `drop-shadow(0 0 3px ${BLOOD}70)` }}
+              style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 3px ${BLOOD}70)`) }}
             />
           ))}
           {entropiaLap1.map((arc, i) => (
@@ -455,7 +458,7 @@ export default function AnilloConciencia({
               initial={{ pathLength: 0, opacity: 0 }}
               animate={{ pathLength: 1, opacity: 0.85 }}
               transition={{ duration: 0.5, delay: i * 0.03, ease: "easeOut" }}
-              style={{ filter: `drop-shadow(0 0 2px ${BLOOD}55)` }}
+              style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 2px ${BLOOD}55)`) }}
             />
           ))}
 
@@ -473,7 +476,7 @@ export default function AnilloConciencia({
                 pathLength: { duration: 0.5, delay: i * 0.03, ease: "easeOut" },
                 opacity: conquistaPulse ? { duration: 0.8, repeat: Infinity } : { duration: 0 },
               }}
-              style={{ filter: `drop-shadow(0 0 4px ${PURPLE}80)` }}
+              style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 4px ${PURPLE}80)`) }}
             />
           ))}
           {conquistaLap1.map((arc, i) => (
@@ -490,7 +493,7 @@ export default function AnilloConciencia({
                 pathLength: { duration: 0.5, delay: i * 0.03, ease: "easeOut" },
                 opacity: conquistaPulse ? { duration: 0.8, repeat: Infinity } : { duration: 0 },
               }}
-              style={{ filter: `drop-shadow(0 0 3px ${PURPLE}66)` }}
+              style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 3px ${PURPLE}66)`) }}
             />
           ))}
 
@@ -508,7 +511,7 @@ export default function AnilloConciencia({
             initial={{ strokeDasharray: `0 ${outerCirc}` }}
             animate={{ strokeDasharray: `${outerDash} ${outerCirc}` }}
             transition={{ duration: 1.2, ease: "easeOut" }}
-            style={{ filter: `drop-shadow(0 0 4px ${planColor}60)` }}
+            style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 4px ${planColor}60)`) }}
           />
 
           <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeW} />
@@ -525,7 +528,7 @@ export default function AnilloConciencia({
               transform={`rotate(90 ${cx} ${cy})`}
               animate={{ strokeDasharray: `${entropiaDash} ${innerCirc}` }}
               transition={{ duration: 0.8, ease: "easeOut" }}
-              style={{ filter: `drop-shadow(0 0 5px ${BLOOD}70)` }}
+              style={{ filter: svgDropShadowFilter(`drop-shadow(0 0 5px ${BLOOD}70)`) }}
             />
           )}
           {showConquista && (
@@ -548,9 +551,11 @@ export default function AnilloConciencia({
                 opacity: conquistaPulse ? { duration: 0.8, repeat: Infinity } : { duration: 0 },
               }}
               style={{
-                filter: conquistaPulse
-                  ? `drop-shadow(0 0 10px ${PURPLE})`
-                  : `drop-shadow(0 0 4px ${PURPLE}60)`,
+                filter: svgDropShadowFilter(
+                  conquistaPulse
+                    ? `drop-shadow(0 0 10px ${PURPLE})`
+                    : `drop-shadow(0 0 4px ${PURPLE}60)`
+                ),
               }}
             />
           )}
@@ -564,12 +569,13 @@ export default function AnilloConciencia({
             strokeWidth={1.1}
             strokeLinecap="round"
             style={{
-              filter:
+              filter: svgDropShadowFilter(
                 pointerMode === "conquista"
                   ? `drop-shadow(0 0 4px ${PURPLE})`
                   : pointerMode === "entropia"
                     ? `drop-shadow(0 0 4px ${BLOOD})`
-                    : "none",
+                    : undefined
+              ),
             }}
           />
 

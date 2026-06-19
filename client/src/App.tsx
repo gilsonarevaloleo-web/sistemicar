@@ -1,7 +1,7 @@
 import { Switch, Route, Redirect, useLocation } from "wouter";
 import { Toaster } from "@/components/ui/sonner";
 import { Layout } from "./components/layout";
-import { createContext, useContext, useState, useEffect, ReactNode, lazy, Suspense } from "react";
+import { createContext, useContext, useState, useEffect, useMemo, ReactNode, lazy, Suspense } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { subscribeToProgression, UserProgression, verificarAccesoProspecto, registrarActividadProspecto, hasPlanificacionBaseAccess, hasSoberaniaDiaAccess } from "@/lib/persistence";
 import type { ModuleId } from "@shared/moduleAccess";
@@ -84,8 +84,12 @@ const AuthContext = createContext<AuthContextType>({
 export const useAuthContext = () => useContext(AuthContext);
 
 function AuthProvider({ children }: { children: ReactNode }) {
-  const auth = useAuth();
-  return <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>;
+  const { user, loading, login, logout } = useAuth();
+  const value = useMemo(
+    () => ({ user, loading, login, logout }),
+    [user, loading, login, logout]
+  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {

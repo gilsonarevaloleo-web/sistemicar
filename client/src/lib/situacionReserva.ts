@@ -115,6 +115,8 @@ const STORAGE_KEY = "sistemicar_situacion_reserva";
 export const SITUACION_RESERVA_EVENT = "sistemicar-situacion-reserva-changed";
 /** Ventana para emparejar un apunte local provisional con su doc en Firebase. */
 const RESERVA_PENDING_MATCH_MS = 20_000;
+/** Evita doble captura rápida en el Crisol (Enter + tap, doble Enter). */
+export const RESERVA_SUBMIT_DEDUP_MS = 2_500;
 
 function reservaPendingMatch(
   local: SituacionReservaItem,
@@ -134,12 +136,35 @@ export function dedupeReservasItems(items: SituacionReservaItem[]): SituacionRes
       byId.set(item.id, item);
     }
   }
-  const list = Array.from(byId.values());
+  let list = Array.from(byId.values());
   const firebaseRows = list.filter(i => !i.id.startsWith("reserva_"));
-  return list.filter(item => {
+  list = list.filter(item => {
     if (!item.id.startsWith("reserva_")) return true;
     return !firebaseRows.some(remote => reservaPendingMatch(item, remote));
   });
+
+  const kept: SituacionReservaItem[] = [];
+  for (const item of sortReservasTacticas(list)) {
+    const dupIdx = kept.findIndex(
+      prev =>
+        prev.userId === item.userId &&
+        prev.texto.trim().toLowerCase() === item.texto.trim().toLowerCase() &&
+        Math.abs((prev.reservadaAt ?? 0) - (item.reservadaAt ?? 0)) < RESERVA_SUBMIT_DEDUP_MS
+    );
+    if (dupIdx === -1) {
+      kept.push(item);
+      continue;
+    }
+    const prev = kept[dupIdx];
+    const preferItem =
+      !item.id.startsWith("reserva_") && prev.id.startsWith("reserva_")
+        ? item
+        : (item.reservadaAt ?? 0) >= (prev.reservadaAt ?? 0)
+          ? item
+          : prev;
+    kept[dupIdx] = preferItem;
+  }
+  return kept;
 }
 
 function normalizeItem(raw: SituacionReservaItem): SituacionReservaItem {
@@ -374,16 +399,31 @@ function syncAddReservaToFirebase(
 export async function addSituacionReserva(
   userId: string,
   item: NuevaSituacionReserva
-): Promise<{ id: string; localSaved: boolean }> {
+): Promise<{ id: string; localSaved: boolean; duplicate?: boolean }> {
+  const trimmed = item.texto.trim();
+  if (!trimmed) return { id: "", localSaved: false };
+
+  const now = Date.now();
+  const recentDup = getAllLocalReserva().find(
+    i =>
+      i.userId === userId &&
+      i.estado === "activa" &&
+      i.texto.trim().toLowerCase() === trimmed.toLowerCase() &&
+      now - (i.reservadaAt ?? 0) < RESERVA_SUBMIT_DEDUP_MS
+  );
+  if (recentDup) {
+    return { id: recentDup.id, localSaved: true, duplicate: true };
+  }
+
   const ruta = item.ruta ?? inferRutaFromRow(item);
-  const reservadaAt = Date.now();
+  const reservadaAt = now;
   const estado = (item.estado ?? "activa") as SituacionReservaEstado;
   const tempId = `reserva_${reservadaAt}_${Math.random().toString(36).slice(2, 6)}`;
 
   const created: SituacionReservaItem = {
     id: tempId,
     userId,
-    texto: item.texto.trim(),
+    texto: trimmed,
     reservadaAt,
     ruta,
     estado,

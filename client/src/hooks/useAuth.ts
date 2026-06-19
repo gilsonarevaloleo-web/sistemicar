@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { onAuthChange, signInWithGoogle, logOut, User, isFirebaseConfigured, signInAnonymousUser, checkRedirectResult } from "@/lib/firebase";
 import { getMigrationPending, clearMigrationPending } from "@/lib/persistence";
 
@@ -102,7 +102,7 @@ export function useAuth() {
     };
   }, []);
 
-  const login = async () => {
+  const login = useCallback(async () => {
     if (!isFirebaseConfigured()) {
       setUser(MOCK_USER);
       return;
@@ -117,9 +117,9 @@ export function useAuth() {
         console.error("Anonymous fallback failed:", e);
       }
     }
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     if (!isFirebaseConfigured()) {
       setUser(null);
       return;
@@ -129,7 +129,7 @@ export function useAuth() {
     } catch (error) {
       console.error("Logout error:", error);
     }
-  };
+  }, []);
 
   return { user, loading, login, logout };
 }
